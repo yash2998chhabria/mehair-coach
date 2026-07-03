@@ -66,6 +66,14 @@ class AuthService:
 
     async def register_client(self, request: Request) -> JSONResponse:
         body = await request.json()
+        if not body.get("redirect_uris"):
+            return JSONResponse(
+                {
+                    "error": "invalid_client_metadata",
+                    "error_description": "redirect_uris is required.",
+                },
+                status_code=400,
+            )
         client_id = body.get("client_id") or secrets.token_urlsafe(18)
         auth_method = body.get("token_endpoint_auth_method") or "none"
         client_secret = (
@@ -108,7 +116,21 @@ class AuthService:
                 {"error": "unsupported_response_type"},
                 status_code=400,
             )
-        self._ensure_client(params["client_id"], params["redirect_uri"])
+        if params.get("code_challenge_method", "S256") != "S256":
+            return JSONResponse(
+                {
+                    "error": "invalid_request",
+                    "error_description": "Only S256 PKCE is supported.",
+                },
+                status_code=400,
+            )
+        try:
+            self._ensure_client(params["client_id"], params["redirect_uri"])
+        except AuthError as exc:
+            return JSONResponse(
+                {"error": "invalid_request", "error_description": str(exc)},
+                status_code=400,
+            )
 
         if not (
             self.settings.google_client_id
@@ -256,10 +278,14 @@ class AuthService:
 
     def _ensure_client(self, client_id: str, redirect_uri: str) -> None:
         existing = self.db.one(
-            "SELECT client_id FROM oauth_clients WHERE client_id = ?",
+            "SELECT metadata_json FROM oauth_clients WHERE client_id = ?",
             (client_id,),
         )
         if existing:
+            metadata = loads(existing["metadata_json"], {})
+            registered_redirects = metadata.get("redirect_uris") or []
+            if registered_redirects and redirect_uri not in registered_redirects:
+                raise AuthError("redirect_uri is not registered for this client")
             return
         metadata = {
             "client_id": client_id,
@@ -316,6 +342,12 @@ class AuthService:
         if not row:
             return JSONResponse({"error": "invalid_grant"}, status_code=400)
         if not self._verify_pkce(verifier, row["code_challenge"]):
+            return JSONResponse({"error": "invalid_grant"}, status_code=400)
+        redirect_uri = str(form.get("redirect_uri") or "")
+        if redirect_uri and redirect_uri != row["redirect_uri"]:
+            return JSONResponse({"error": "invalid_grant"}, status_code=400)
+        resource = str(form.get("resource") or "")
+        if resource and row["resource"] and resource != row["resource"]:
             return JSONResponse({"error": "invalid_grant"}, status_code=400)
         with self.db.connect() as conn:
             conn.execute("UPDATE oauth_codes SET used = 1 WHERE code = ?", (code,))

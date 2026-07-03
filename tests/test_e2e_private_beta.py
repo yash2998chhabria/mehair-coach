@@ -11,9 +11,11 @@ import httpx
 import pytest
 
 from app.crypto import generate_key
+from app.db import dumps
 from app.google_health import DataTypeSpec
 from app.main import ServerBundle, create_server
 from app.settings import Settings
+from app.time_utils import iso_now
 
 
 def make_bundle(tmp_path) -> ServerBundle:
@@ -442,6 +444,256 @@ async def test_private_beta_oauth_mcp_sync_and_coaching_flow(tmp_path, monkeypat
             )
             assert refresh.status_code == 200
             assert refresh.json()["access_token"] != access_token
+
+
+@pytest.mark.asyncio
+async def test_oauth_rejects_realistic_client_and_pkce_misuse(tmp_path) -> None:
+    bundle = make_bundle(tmp_path)
+    verifier, challenge = pkce_pair()
+    transport = httpx.ASGITransport(app=bundle.app)
+
+    async with bundle.app.router.lifespan_context(bundle.app):
+        async with httpx.AsyncClient(
+            transport=transport,
+            base_url="http://localhost:8787",
+            follow_redirects=False,
+        ) as client:
+            missing_redirects = await client.post(
+                "/oauth/register",
+                json={
+                    "client_name": "bad connector",
+                    "token_endpoint_auth_method": "none",
+                },
+            )
+            assert missing_redirects.status_code == 400
+            assert missing_redirects.json()["error"] == "invalid_client_metadata"
+
+            registration = await client.post(
+                "/oauth/register",
+                json={
+                    "client_name": "ChatGPT private beta connector",
+                    "redirect_uris": ["https://chatgpt.com/connector/oauth/allowed"],
+                    "token_endpoint_auth_method": "none",
+                },
+            )
+            assert registration.status_code == 201
+            client_id = registration.json()["client_id"]
+
+            bad_method = await client.get(
+                "/oauth/authorize",
+                params={
+                    "client_id": client_id,
+                    "redirect_uri": "https://chatgpt.com/connector/oauth/allowed",
+                    "response_type": "code",
+                    "scope": "health.read",
+                    "state": "chatgpt-state",
+                    "resource": "http://localhost:8787",
+                    "code_challenge": challenge,
+                    "code_challenge_method": "plain",
+                },
+            )
+            assert bad_method.status_code == 400
+            assert bad_method.json()["error"] == "invalid_request"
+
+            bad_redirect = await client.get(
+                "/oauth/authorize",
+                params={
+                    "client_id": client_id,
+                    "redirect_uri": "https://evil.example/callback",
+                    "response_type": "code",
+                    "scope": "health.read",
+                    "state": "chatgpt-state",
+                    "resource": "http://localhost:8787",
+                    "code_challenge": challenge,
+                    "code_challenge_method": "S256",
+                },
+            )
+            assert bad_redirect.status_code == 400
+            assert "redirect_uri" in bad_redirect.json()["error_description"]
+
+            user_id = bundle.auth_service._create_user_from_google(
+                {
+                    "access_token": "fake-google-access",
+                    "refresh_token": "fake-google-refresh",
+                    "expires_in": 3600,
+                    "scope": " ".join(bundle.settings.google_scopes),
+                },
+                {"email": "tester@example.com", "sub": "google-subject"},
+            )
+            app_code = bundle.auth_service._create_authorization_code(
+                user_id,
+                {
+                    "client_id": client_id,
+                    "redirect_uri": "https://chatgpt.com/connector/oauth/allowed",
+                    "code_challenge": challenge,
+                    "scope": "health.read",
+                    "resource": "http://localhost:8787",
+                },
+            )
+
+            wrong_redirect_token = await client.post(
+                "/oauth/token",
+                data={
+                    "grant_type": "authorization_code",
+                    "client_id": client_id,
+                    "code": app_code,
+                    "redirect_uri": "https://chatgpt.com/connector/oauth/wrong",
+                    "code_verifier": verifier,
+                    "resource": "http://localhost:8787",
+                },
+            )
+            assert wrong_redirect_token.status_code == 400
+            assert wrong_redirect_token.json()["error"] == "invalid_grant"
+
+            wrong_resource_token = await client.post(
+                "/oauth/token",
+                data={
+                    "grant_type": "authorization_code",
+                    "client_id": client_id,
+                    "code": app_code,
+                    "redirect_uri": "https://chatgpt.com/connector/oauth/allowed",
+                    "code_verifier": verifier,
+                    "resource": "https://other.example",
+                },
+            )
+            assert wrong_resource_token.status_code == 400
+            assert wrong_resource_token.json()["error"] == "invalid_grant"
+
+
+@pytest.mark.asyncio
+async def test_google_access_token_refresh_is_used_for_sync(tmp_path, monkeypatch) -> None:
+    bundle = make_bundle(tmp_path)
+    fake_health = FakeGoogleHealth()
+    bundle.health_store.google = fake_health
+    user_id = bundle.auth_service._create_user_from_google(
+        {
+            "access_token": "expired-google-access",
+            "refresh_token": "fake-google-refresh",
+            "expires_in": -30,
+            "scope": " ".join(bundle.settings.google_scopes),
+        },
+        {"email": "tester@example.com", "sub": "google-subject"},
+    )
+
+    class FakeRefreshResponse:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict[str, Any]:
+            return {"access_token": "fake-google-access", "expires_in": 3600}
+
+    class FakeAsyncClient:
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            return None
+
+        async def __aenter__(self) -> FakeAsyncClient:
+            return self
+
+        async def __aexit__(self, *args: Any) -> None:
+            return None
+
+        async def post(self, url: str, data: dict[str, Any]) -> FakeRefreshResponse:
+            assert url == "https://oauth2.googleapis.com/token"
+            assert data["refresh_token"] == "fake-google-refresh"
+            assert data["grant_type"] == "refresh_token"
+            return FakeRefreshResponse()
+
+    monkeypatch.setattr("app.auth.httpx.AsyncClient", FakeAsyncClient)
+
+    result = await bundle.health_store.sync_latest(user_id)
+
+    assert result["status"] == "ok"
+    assert result["records_upserted"] >= 10
+    assert bundle.auth_service.current_user_google_token(user_id) == "fake-google-access"
+
+
+@pytest.mark.asyncio
+async def test_multi_user_data_isolation_and_no_startup_sync(tmp_path) -> None:
+    bundle = make_bundle(tmp_path)
+    user_a = bundle.auth_service._create_user_from_google(
+        {
+            "access_token": "fake-google-access",
+            "refresh_token": "fake-google-refresh-a",
+            "expires_in": 3600,
+            "scope": " ".join(bundle.settings.google_scopes),
+        },
+        {"email": "a@example.com", "sub": "google-subject-a"},
+    )
+    user_b = bundle.auth_service._create_user_from_google(
+        {
+            "access_token": "fake-google-access",
+            "refresh_token": "fake-google-refresh-b",
+            "expires_in": 3600,
+            "scope": " ".join(bundle.settings.google_scopes),
+        },
+        {"email": "b@example.com", "sub": "google-subject-b"},
+    )
+    client_a = "client-a"
+    client_b = "client-b"
+    now = iso_now()
+    with bundle.db.connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO oauth_clients (client_id, client_secret, metadata_json, created_at)
+            VALUES (?, NULL, ?, ?), (?, NULL, ?, ?)
+            """,
+            (
+                client_a,
+                dumps({"token_endpoint_auth_method": "none"}),
+                now,
+                client_b,
+                dumps({"token_endpoint_auth_method": "none"}),
+                now,
+            ),
+        )
+
+    assert bundle.health_store.connection_status(user_a)["records"] == 0
+    assert bundle.health_store.connection_status(user_b)["records"] == 0
+
+    today = datetime.now(UTC).date().isoformat()
+    bundle.health_store.upsert_records(
+        user_a,
+        "steps",
+        [
+            {
+                "name": "user-a-steps",
+                "steps": {"count": 11111},
+                "interval": {"startTime": f"{today}T10:00:00Z", "endTime": f"{today}T11:00:00Z"},
+            }
+        ],
+    )
+    token_a = json.loads(bundle.auth_service._issue_app_tokens(user_a, client_a, ["health.read"]).body)[
+        "access_token"
+    ]
+    token_b = json.loads(bundle.auth_service._issue_app_tokens(user_b, client_b, ["health.read"]).body)[
+        "access_token"
+    ]
+    transport = httpx.ASGITransport(app=bundle.app)
+
+    async with bundle.app.router.lifespan_context(bundle.app):
+        async with httpx.AsyncClient(transport=transport, base_url="http://localhost:8787") as client:
+            context_a = tool_content(
+                await mcp_request(
+                    client,
+                    token_a,
+                    "tools/call",
+                    {"name": "get_today_context", "arguments": {}},
+                    1,
+                )
+            )
+            context_b = tool_content(
+                await mcp_request(
+                    client,
+                    token_b,
+                    "tools/call",
+                    {"name": "get_today_context", "arguments": {}},
+                    2,
+                )
+            )
+
+    assert context_a["status"] == "ok"
+    assert context_a["today"]["steps"] == 11111
+    assert context_b["status"] == "empty"
 
 
 @pytest.mark.asyncio
