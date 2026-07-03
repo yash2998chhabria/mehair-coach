@@ -249,7 +249,7 @@ def test_active_workout_stops_for_dizziness_even_when_readiness_is_green() -> No
     assert guidance["safety_flags"]
     assert any("urgent care" in item for item in guidance["safety_flags"])
     assert any("Stop the set or interval now" in item for item in guidance["immediate_actions"])
-    assert any("Live heart rate reported: 178 bpm." in item for item in guidance["evidence"])
+    assert any("Live heart rate reported: 178 bpm" in item for item in guidance["evidence"])
     assert guidance["live_inputs"]["current_rpe"] == 9
 
 
@@ -515,9 +515,9 @@ def test_today_recommendation_keeps_sync_first_when_data_is_stale() -> None:
     assert recommendation["data_used"]["freshness_level"] == "stale"
     assert any("No recent subjective check-in" in item for item in recommendation["context_gaps"])
     assert any("No coaching goal" in item for item in recommendation["context_gaps"])
-    assert any("Log a quick energy, soreness, stress, and pain check-in" in item for item in recommendation["next_actions"])
+    assert any("tell me your energy, soreness, stress, and pain" in item for item in recommendation["next_actions"])
     assert any("Data freshness is stale" in item for item in recommendation["evidence"])
-    assert any("Latest sleep used for recommendation: 7.0h." in item for item in recommendation["evidence"])
+    assert any("Latest sleep used for recommendation: 7.0h" in item for item in recommendation["evidence"])
 
 
 def test_today_recommendation_downshifts_when_checkin_mentions_illness() -> None:
@@ -699,12 +699,67 @@ def test_generic_workout_payload_stays_human_readable_for_cached_cards() -> None
     assert plan["planned_activity"] == "Useful Controlled Workout"
     assert plan["planned_activity_raw"] == "general workout"
     assert "Useful Controlled Workout" in plan["summary"]
+    assert "not-100% day" in plan["coach_response"]["short_answer"]
+    assert any(item["label"] == "HRV" for item in plan["coach_response"]["labels_explained"])
+    assert any(item["label"] == "RPE" for item in plan["coach_response"]["labels_explained"])
+    assert any("RPE (how hard it feels)" in item for item in plan["coach_response"]["what_to_do"])
+    assert any("recovery stress signal" in item for item in plan["coach_response"]["why"])
     assert any("HRV (recovery stress signal)" in item for item in plan["limiting_factors"])
     assert any(
-        "Resting heart rate (heart stress signal at rest) is below recent average: 60 bpm vs 62 bpm." in item
+        "Resting HR (resting heart rate; heart stress at rest) is below recent average: 60 bpm vs 62 bpm." in item
         for item in plan["limiting_factors"]
     )
     assert not any("6 bpm vs 62 bpm" in item for item in plan["limiting_factors"])
+
+
+def test_today_recommendation_returns_human_coach_response_without_losing_labels() -> None:
+    context = {
+        "status": "ok",
+        "latest_date": "2026-07-03",
+        "activity_date": "2026-07-03",
+        "recovery_date": "2026-07-03",
+        "readiness": {
+            "score": 84,
+            "label": "green",
+            "recommendation": "A normal training day is reasonable if you feel good.",
+            "evidence": [
+                "Latest sleep is strong at 8.3h.",
+                "HRV is above recent baseline.",
+                "Resting heart rate is steady.",
+            ],
+        },
+        "today": {
+            "steps": 6400,
+            "active_minutes": 42,
+            "active_zone_minutes": 10,
+            "hrv_ms": 62,
+            "resting_heart_rate": 56,
+            "sleep": {"asleep_hours": 8.3, "sessions_count": 1},
+            "latest_training_load": {"date": "2026-07-03", "active_zone_minutes": 10},
+        },
+        "sections": {
+            "heart": {
+                "latest_hrv_ms": 62,
+                "average_hrv_ms": 50,
+                "latest_resting_heart_rate": 56,
+                "average_resting_heart_rate": 58,
+            }
+        },
+    }
+
+    recommendation = workout_recommendation(
+        context=context,
+        current_feeling="I feel a little off today but still want to work out.",
+    )
+
+    assert recommendation["intensity"] == "moderate"
+    assert "let the first 10-15 minutes decide" in recommendation["coach_response"]["short_answer"]
+    assert any(item["label"] == "Readiness" for item in recommendation["coach_response"]["labels_explained"])
+    assert any(item["label"] == "AZM" for item in recommendation["coach_response"]["labels_explained"])
+    assert any("RPE (how hard it feels)" in item for item in recommendation["coach_response"]["what_to_do"])
+    assert any("HRV (recovery stress signal)" in item for item in recommendation["coach_response"]["why"])
+    assert any("Resting HR" in item for item in recommendation["coach_response"]["why"])
+    assert any("I feel a little off" in item for item in recommendation["coach_response"]["realistic_follow_ups"])
 
 
 def test_workout_plan_does_not_flag_negated_illness_terms() -> None:

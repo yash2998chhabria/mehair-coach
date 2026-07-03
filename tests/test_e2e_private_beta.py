@@ -515,7 +515,7 @@ async def test_private_beta_oauth_mcp_sync_and_coaching_flow(tmp_path, monkeypat
             assert recommendation["activity_date"] == today["activity_date"]
             assert any("No recent subjective check-in" in item for item in recommendation["context_gaps"])
             assert any("No coaching goal" in item for item in recommendation["context_gaps"])
-            assert any("Log a quick energy" in item for item in recommendation["next_actions"])
+            assert any("tell me your energy" in item for item in recommendation["next_actions"])
             assert "medical advice" in recommendation["safety_note"]
 
             active_guidance = tool_content(

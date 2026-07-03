@@ -33,14 +33,16 @@ The core UX is:
 Example questions:
 
 ```text
-How hard should I work out today?
-Why do I feel unusually tired?
-Compare my sleep, HRV, resting heart rate, and activity load.
-I want to lift tonight but my lower back is tight. What should I do?
-I am 18 minutes into intervals, HR 150, RPE 7, legs feel heavy. Keep going?
+I feel a little off today but still want to move. What should I do?
+Can I train hard today, or should I keep it controlled?
+Why do I feel more tired than usual?
+I want to lift tonight but my lower back is tight. What should I change?
+I am halfway through intervals, HR 150, RPE 7, legs feel heavy, no pain. Keep going?
 ```
 
 The assistant should combine wearable signals with user context. For example, it can use short sleep, low HRV, elevated resting heart rate, high zone minutes, soreness, goals, and planned workouts together instead of treating any single metric as the whole answer.
+
+Metric labels stay visible, but the app explains them in normal language. For example, `HRV` is shown as a recovery stress signal, `RPE` as how hard the workout feels, `AZM` as Fitbit hard-work minutes, and `Resting HR` as heart stress at rest.
 
 ## Health Data Used
 

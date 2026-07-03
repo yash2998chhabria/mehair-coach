@@ -2264,6 +2264,7 @@ def _metric_query_suggestions(
 def _answer_rubric_for_intents(intents: list[str]) -> list[str]:
     rubric = [
         "Start with the direct answer, then name the strongest supporting signals.",
+        "Keep labels like HRV, RPE, AZM, Readiness, and Resting HR, but explain each one in simple words the first time it appears.",
         "Separate wearable evidence, user-reported context, and missing data.",
         "Mention freshness when the user asks about today, latest data, or real-time decisions.",
     ]
@@ -2803,9 +2804,9 @@ def _daily_coaching_brief(
     if load_minutes is not None:
         add_signal(
             "activity",
-            "Training load",
+            "Training load (AZM)",
             f"{load_minutes} Active Zone Minutes on {latest_load.get('date') or 'latest load day'}.",
-            "High recent load should reduce extra intensity; low load can support easy volume.",
+            "AZM are Fitbit hard-work minutes; high recent load should reduce extra intensity.",
             "watchout" if load_minutes > 45 else "context",
         )
 
@@ -2907,18 +2908,18 @@ def _daily_coaching_brief(
         summary = f"{summary} Main support: {positives[0]}"
 
     prompt_suggestions = [
-        "Plan today's workout using this brief.",
-        "Explain the top recovery signal in plain English.",
-        "Compare sleep, HRV, resting heart rate, and load.",
+        "I feel a little off today but still want to move. What should I do?",
+        "Can I train hard today, or should I keep it controlled?",
+        "What are the main reasons behind today's plan?",
     ]
     if not checkins or energy is None or soreness is None or stress is None:
-        prompt_suggestions.append("Log a quick energy, soreness, and stress check-in.")
+        prompt_suggestions.append("Log how my energy, soreness, and stress feel right now.")
     if not goal_payload:
-        prompt_suggestions.append("Set a weekly fitness goal.")
+        prompt_suggestions.append("Help me set a simple weekly fitness goal.")
     if freshness.get("needs_sync_before_time_sensitive_advice"):
-        prompt_suggestions.insert(0, "Sync latest Fitbit data.")
+        prompt_suggestions.insert(0, "Sync my latest Fitbit data before you answer.")
     if soreness is not None and soreness >= 5:
-        prompt_suggestions.append("Plan around my sore areas.")
+        prompt_suggestions.append("My body feels sore. Plan around that.")
 
     section_count = sum(
         1
