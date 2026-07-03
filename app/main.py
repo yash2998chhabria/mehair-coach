@@ -740,7 +740,17 @@ def workout_recommendation(
         next_actions.append("Sync latest Fitbit data before making a time-sensitive hard training decision.")
         plan = f"{freshness.get('recommendation', 'Sync latest Fitbit data first')} Based on stored data only: {plan}"
     if subjective_limiter:
-        plan += " Since you do not feel fully right, make this a minimum useful dose and let the warm-up decide whether to continue."
+        if label == "green":
+            plan = (
+                "Do a controlled, useful session today. Your recovery signals support training, "
+                "but because you do not feel fully right, do enough to feel better, not something "
+                "you have to survive. Let the first 10-15 minutes decide whether to continue."
+            )
+        else:
+            plan += (
+                " Since you do not feel fully right, do enough to feel better, not something you "
+                "have to survive. Let the warm-up decide whether to continue."
+            )
         if intensity == "moderate-to-hard":
             intensity = "moderate"
         rpe_cap = min(rpe_cap, 7)

@@ -467,7 +467,9 @@ def test_today_recommendation_downshifts_for_current_not_one_hundred_feeling() -
     assert recommendation["rpe_cap"] == 7
     assert recommendation["subjective_context"]["subjective_limiter"] is True
     assert recommendation["data_used"]["current_feeling"].startswith("I do not feel 100 percent")
-    assert any("minimum useful dose" in item for item in recommendation["recommendation"].split(". "))
+    assert recommendation["recommendation"].startswith("Do a controlled, useful session")
+    assert "do enough to feel better" in recommendation["recommendation"]
+    assert "Train normally" not in recommendation["recommendation"]
     assert any("10-15 minutes" in item for item in recommendation["next_actions"])
     assert any("warm-up" in item.lower() for item in recommendation["stop_conditions"])
     assert any("subjective readiness caps" in item for item in recommendation["evidence"])
