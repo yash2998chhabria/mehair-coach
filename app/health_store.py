@@ -33,6 +33,15 @@ INTENT_METRICS = {
         "daily-heart-rate-variability",
         "sleep",
     ],
+    "active_workout": [
+        "heart-rate",
+        "time-in-heart-rate-zone",
+        "active-zone-minutes",
+        "exercise",
+        "daily-resting-heart-rate",
+        "daily-heart-rate-variability",
+        "sleep",
+    ],
     "recovery": [
         "sleep",
         "daily-heart-rate-variability",
@@ -1362,6 +1371,28 @@ def _question_intents(question: str) -> list[str]:
         "shoulder",
     ):
         intents.extend(["workout_decision", "recovery", "activity_load", "heart", "sleep", "subjective", "goal"])
+    live_workout_context = has(
+        "during workout",
+        "during my workout",
+        "in-session",
+        "in session",
+        "mid-workout",
+        "active workout",
+        "keep going",
+        "continue",
+        "push",
+        "hold steady",
+        "back off",
+        "slow down",
+        "stop",
+        "rpe",
+        "elapsed",
+    ) or (
+        has("bpm", "heart rate", "hr ")
+        and has("pain", "dizzy", "dizziness", "chest pain", "chest tightness", "breathing", "rpe")
+    )
+    if live_workout_context:
+        intents.extend(["active_workout", "workout_decision", "heart", "activity_load", "recovery", "subjective"])
     if has("tired", "fatigue", "fatigued", "cooked", "drained", "recovery", "readiness", "ready", "rest", "rested", "why"):
         intents.extend(["recovery", "sleep", "heart", "activity_load", "subjective"])
     if has("sleep", "nap", "bed", "insomnia", "awake", "restless"):
@@ -1429,6 +1460,8 @@ def _recommended_tool_sequence(intents: list[str], freshness: dict[str, Any]) ->
         tools.extend(["get_data_freshness", "sync_latest_fitbit_data"])
     if "general_overview" in intents or "daily_plan" in intents:
         tools.append("get_health_overview")
+    if "active_workout" in intents:
+        tools.append("guide_active_workout")
     if "workout_decision" in intents or "daily_plan" in intents:
         tools.extend(["recommend_workout_today", "plan_workout_with_health_context"])
     if any(intent in intents for intent in ("recovery", "sleep", "heart")):

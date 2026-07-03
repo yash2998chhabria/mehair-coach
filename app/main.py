@@ -42,10 +42,11 @@ SERVER_INSTRUCTIONS = (
     "plan_workout_with_health_context or recommend_workout_today before answering; do not infer "
     "readiness, HRV, sleep, or load from conversation memory. "
     "During an active workout, call guide_active_workout when the user reports live RPE, heart rate, "
-    "pain, symptoms, or asks whether to keep going. Call guide_active_workout directly for these "
-    "in-session questions because it already reads the latest synced readiness/load context and "
-    "renders the active workout card. Prefer one card-rendering tool per answer unless the user "
-    "explicitly asks for multiple cards."
+    "pain, symptoms, elapsed time, or asks whether to keep going, push, hold steady, back off, slow "
+    "down, or stop. Call guide_active_workout directly for these in-session questions because it "
+    "already reads the latest synced readiness/load context and renders the active workout card. Do "
+    "not substitute get_health_overview for live workout decisions. Prefer one card-rendering tool per "
+    "answer unless the user explicitly asks for multiple cards."
 )
 
 READ_ONLY = ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True)
@@ -353,8 +354,10 @@ def create_server(settings_override: Settings | None = None) -> ServerBundle:
     @mcp.tool(
         title="Guide active workout",
         description=(
-            "Give in-session guidance using live user-reported heart rate, RPE, pain, symptoms, "
-            "elapsed time, and the latest synced Fitbit readiness/load context."
+            "Give in-session continue/hold-steady/downshift/stop guidance using live user-reported "
+            "heart rate, RPE, pain, symptoms, elapsed time, and the latest synced Fitbit "
+            "readiness/load context. Use this for during-workout prompts like 'HR 150, RPE 7, "
+            "pain 0/10, should I push or back off?'; it returns the active workout card."
         ),
         annotations=READ_ONLY,
         meta=WIDGET_META,

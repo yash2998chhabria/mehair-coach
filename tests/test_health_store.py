@@ -427,6 +427,18 @@ def test_question_clues_choose_recovery_heart_and_load_metrics(tmp_path, monkeyp
     assert day_plan["overview_context"]["daily_brief"]["training_bias"] == "recovery-first"
     assert day_plan["overview_context"]["daily_brief"]["today_plan"]
 
+    active_prompt = store.health_question_clues(
+        user_id,
+        "During my workout: 12 minutes into cycling, heart rate 150 bpm, RPE 7/10, pain 0/10, should I push or back off?",
+        days=7,
+    )
+
+    assert "active_workout" in active_prompt["intent_hints"]
+    assert "guide_active_workout" in active_prompt["recommended_tool_sequence"]
+    assert active_prompt["recommended_tool_sequence"].index("guide_active_workout") < active_prompt[
+        "recommended_tool_sequence"
+    ].index("recommend_workout_today")
+
 
 def test_partial_today_uses_latest_completed_recovery_signals(tmp_path) -> None:
     db, store = make_store(tmp_path)
