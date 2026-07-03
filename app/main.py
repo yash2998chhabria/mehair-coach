@@ -967,9 +967,10 @@ def workout_plan_for_activity(
         focus.insert(0, "Treat symptoms as the limiter even if wearable readiness is not red.")
         avoid.insert(0, "Sweat-it-out workouts, intervals, heavy sets, or long sessions while sick.")
 
+    display_activity = _display_workout_activity(planned_activity, intensity)
     planned_date_text = planned_date or "next planned session"
     summary = (
-        f"For {planned_date_text}, keep {planned_activity} at {intensity} intensity "
+        f"For {planned_date_text}, keep {display_activity} at {intensity} intensity "
         f"({_intensity_plain(intensity)}) with an RPE cap around {rpe_cap}/10 "
         f"({_rpe_plain(rpe_cap)})."
     )
@@ -980,7 +981,8 @@ def workout_plan_for_activity(
 
     return {
         "status": "ok",
-        "planned_activity": planned_activity,
+        "planned_activity": display_activity,
+        "planned_activity_raw": planned_activity,
         "planned_date": planned_date,
         "target_areas": target_areas,
         "constraints": constraints,
@@ -1786,10 +1788,11 @@ def _hrv_average_evidence(context: dict[str, Any]) -> str | None:
     if latest is None or average in (None, 0):
         return None
     delta = ((latest - average) / average) * 100
+    label = "HRV (recovery stress signal)"
     if abs(delta) < 5:
-        return f"HRV is near recent average: {_fmt_num(latest)} ms vs {_fmt_num(average)} ms."
+        return f"{label} is near recent average: {_fmt_num(latest)} ms vs {_fmt_num(average)} ms."
     direction = "above" if delta > 0 else "below"
-    return f"HRV is {abs(round(delta))}% {direction} recent average: {_fmt_num(latest)} ms vs {_fmt_num(average)} ms."
+    return f"{label} is {abs(round(delta))}% {direction} recent average: {_fmt_num(latest)} ms vs {_fmt_num(average)} ms."
 
 
 def _resting_heart_rate_average_evidence(context: dict[str, Any]) -> str | None:
@@ -1801,11 +1804,12 @@ def _resting_heart_rate_average_evidence(context: dict[str, Any]) -> str | None:
     if latest is None or average is None:
         return None
     delta = latest - average
+    label = "Resting heart rate (heart stress signal at rest)"
     if abs(delta) < 1:
-        return f"Resting heart rate is near recent average: {_fmt_num(latest, 0)} bpm vs {_fmt_num(average)} bpm."
+        return f"{label} is near recent average: {_fmt_num(latest, 0)} bpm vs {_fmt_num(average)} bpm."
     direction = "elevated above" if delta > 0 else "below"
     return (
-        f"Resting heart rate is {direction} recent average: "
+        f"{label} is {direction} recent average: "
         f"{_fmt_num(latest, 0)} bpm vs {_fmt_num(average)} bpm."
     )
 
@@ -1819,7 +1823,18 @@ def _number_or_none(value: Any) -> float | None:
 
 
 def _fmt_num(value: float, digits: int = 1) -> str:
+    if digits <= 0:
+        return f"{value:.0f}"
     return f"{value:.{digits}f}".rstrip("0").rstrip(".")
+
+
+def _display_workout_activity(planned_activity: str, intensity: str) -> str:
+    normalized = (planned_activity or "").strip().lower()
+    if normalized in {"", "general workout", "workout", "workout plan"}:
+        if "easy" in intensity:
+            return "Recovery Workout"
+        return "Useful Controlled Workout"
+    return planned_activity
 
 
 def _dedupe(items: list[str]) -> list[str]:

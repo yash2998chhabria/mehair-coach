@@ -471,7 +471,10 @@ def test_today_recommendation_downshifts_for_current_not_one_hundred_feeling() -
     assert any("10-15 minutes" in item for item in recommendation["next_actions"])
     assert any("warm-up" in item.lower() for item in recommendation["stop_conditions"])
     assert any("subjective readiness caps" in item for item in recommendation["evidence"])
-    assert any("HRV is 24% above recent average: 62 ms vs 50 ms." in item for item in recommendation["evidence"])
+    assert any(
+        "HRV (recovery stress signal) is 24% above recent average: 62 ms vs 50 ms." in item
+        for item in recommendation["evidence"]
+    )
     assert not any("HRV is above recent baseline" in item for item in recommendation["evidence"])
     assert any("free-text feeling was used" in item for item in recommendation["context_gaps"])
 
@@ -648,6 +651,60 @@ def test_workout_plan_makes_not_one_hundred_day_a_minimum_useful_session() -> No
     assert any("pass/fail readiness screen" in item for item in plan["session_guidance"])
     assert any("warm-up" in item.lower() for item in plan["stop_conditions"])
     assert any("not feel 100%" in item for item in plan["limiting_factors"])
+
+
+def test_generic_workout_payload_stays_human_readable_for_cached_cards() -> None:
+    context = {
+        "status": "ok",
+        "latest_date": "2026-07-03",
+        "activity_date": "2026-07-03",
+        "recovery_date": "2026-07-03",
+        "readiness": {
+            "score": 84,
+            "label": "green",
+            "recommendation": "A normal training day is reasonable if you feel good.",
+            "evidence": [
+                "Latest sleep is strong at 9.4h.",
+                "HRV is above recent baseline: 92.1 ms vs 31.3 ms.",
+                "Resting heart rate is steady: 60 bpm.",
+            ],
+        },
+        "today": {
+            "steps": 7200,
+            "active_minutes": 44,
+            "active_zone_minutes": 18,
+            "hrv_ms": 92.1,
+            "resting_heart_rate": 60,
+            "sleep": {"asleep_hours": 9.4, "sessions_count": 1},
+            "latest_training_load": {"date": "2026-07-02", "active_zone_minutes": 9},
+        },
+        "sections": {
+            "heart": {
+                "latest_hrv_ms": 92.1,
+                "average_hrv_ms": 61.7,
+                "latest_resting_heart_rate": 60,
+                "average_resting_heart_rate": 62,
+            }
+        },
+    }
+
+    plan = workout_plan_for_activity(
+        context=context,
+        planned_activity="general workout",
+        target_areas=[],
+        constraints="I do not feel 100 percent but still want a useful session.",
+        duration_minutes=45,
+    )
+
+    assert plan["planned_activity"] == "Useful Controlled Workout"
+    assert plan["planned_activity_raw"] == "general workout"
+    assert "Useful Controlled Workout" in plan["summary"]
+    assert any("HRV (recovery stress signal)" in item for item in plan["limiting_factors"])
+    assert any(
+        "Resting heart rate (heart stress signal at rest) is below recent average: 60 bpm vs 62 bpm." in item
+        for item in plan["limiting_factors"]
+    )
+    assert not any("6 bpm vs 62 bpm" in item for item in plan["limiting_factors"])
 
 
 def test_workout_plan_does_not_flag_negated_illness_terms() -> None:
