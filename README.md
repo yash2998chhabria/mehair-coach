@@ -169,6 +169,20 @@ Developer-mode app routing can occasionally miss a natural prompt. If ChatGPT sa
 
 For friend testing, give your friend the same public `/mcp` URL and add their email to the Google OAuth test users list. They create the connector in their own ChatGPT developer-mode settings and authorize their own Google account. Their data is stored under their own app user id.
 
+## Remote Hosting On Render
+
+The repo includes `render.yaml` for a GitHub-backed Render web service:
+
+- Python runtime with `uv`.
+- `/health` health check.
+- Persistent SQLite storage on `/var/data`.
+- Secret dashboard prompts for `TOKEN_ENCRYPTION_KEY`, `GOOGLE_CLIENT_ID`, and `GOOGLE_CLIENT_SECRET`.
+- Automatic public URL detection from Render's `RENDER_EXTERNAL_URL`.
+
+Create a Render Blueprint from this repository, fill the three secret values, and wait for the first deploy. The service URL will look like `https://<service>.onrender.com`; add `https://<service>.onrender.com/oauth/callback/google` to the Google Web OAuth client's authorized redirect URIs. Then create or refresh the ChatGPT developer-mode connector with `https://<service>.onrender.com/mcp`.
+
+Render persistent disks are required for this SQLite/token-store setup, which means the service should use a paid disk-capable plan.
+
 Official Apps SDK references:
 
 - [Apps SDK quickstart](https://developers.openai.com/apps-sdk/quickstart)

@@ -154,7 +154,7 @@ class AuthService:
 
         google_params = {
             "client_id": self.settings.google_client_id,
-            "redirect_uri": self.settings.google_redirect_uri,
+            "redirect_uri": self.settings.google_callback_url,
             "response_type": "code",
             "scope": " ".join(self.settings.google_scopes),
             "access_type": "offline",
@@ -500,7 +500,7 @@ class AuthService:
                     "client_id": self.settings.google_client_id,
                     "client_secret": self.settings.google_client_secret,
                     "code": code,
-                    "redirect_uri": self.settings.google_redirect_uri,
+                    "redirect_uri": self.settings.google_callback_url,
                     "grant_type": "authorization_code",
                 },
             )

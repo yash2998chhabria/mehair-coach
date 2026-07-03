@@ -6,6 +6,10 @@ from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
+LOCAL_BASE_URL = "http://localhost:8787"
+LOCAL_GOOGLE_REDIRECT_URI = f"{LOCAL_BASE_URL}/oauth/callback/google"
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -13,12 +17,13 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    public_base_url: str = "http://localhost:8787"
+    public_base_url: str = LOCAL_BASE_URL
+    render_external_url: str = ""
     database_url: str = "sqlite:///./data/mehair-coach.sqlite3"
     token_encryption_key: str = ""
     google_client_id: str = ""
     google_client_secret: str = ""
-    google_redirect_uri: str = "http://localhost:8787/oauth/callback/google"
+    google_redirect_uri: str = LOCAL_GOOGLE_REDIRECT_URI
     google_health_api_base: str = "https://health.googleapis.com/v4"
     app_scope: str = "health.read"
     access_token_ttl_seconds: int = 3600
@@ -32,7 +37,15 @@ class Settings(BaseSettings):
 
     @property
     def base_url(self) -> str:
+        if self.public_base_url.rstrip("/") == LOCAL_BASE_URL and self.render_external_url:
+            return self.render_external_url.rstrip("/")
         return self.public_base_url.rstrip("/")
+
+    @property
+    def google_callback_url(self) -> str:
+        if self.google_redirect_uri.rstrip("/") != LOCAL_GOOGLE_REDIRECT_URI:
+            return self.google_redirect_uri.rstrip("/")
+        return f"{self.base_url}/oauth/callback/google"
 
     @property
     def sqlite_path(self) -> Path:

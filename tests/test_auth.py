@@ -36,6 +36,28 @@ def test_oauth_metadata_advertises_pkce_and_dcr(tmp_path) -> None:
     assert metadata["scopes_supported"] == ["health.read"]
 
 
+def test_render_external_url_derives_oauth_urls_for_remote_hosting(tmp_path) -> None:
+    settings = Settings(
+        public_base_url="http://localhost:8787",
+        render_external_url="https://mehair-coach.onrender.com",
+        database_url=f"sqlite:///{tmp_path / 'remote.sqlite3'}",
+        token_encryption_key=generate_key(),
+        google_client_id="google-client",
+        google_client_secret="google-secret",
+        google_redirect_uri="http://localhost:8787/oauth/callback/google",
+    )
+    db = Database(settings.sqlite_path)
+    db.init()
+    auth = AuthService(db, settings)
+
+    metadata = auth.oauth_metadata()
+
+    assert settings.base_url == "https://mehair-coach.onrender.com"
+    assert settings.google_callback_url == "https://mehair-coach.onrender.com/oauth/callback/google"
+    assert metadata["issuer"] == "https://mehair-coach.onrender.com"
+    assert metadata["authorization_endpoint"] == "https://mehair-coach.onrender.com/oauth/authorize"
+
+
 def test_pkce_verifier_validation(tmp_path) -> None:
     auth = make_auth(tmp_path)
     verifier = "correct-horse-battery-staple"
