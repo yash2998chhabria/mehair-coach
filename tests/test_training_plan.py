@@ -448,6 +448,14 @@ def test_today_recommendation_downshifts_for_current_not_one_hundred_feeling() -
             "sleep": {"asleep_hours": 8.3, "sessions_count": 1},
             "latest_training_load": {"date": "2026-07-03", "active_zone_minutes": 8},
         },
+        "sections": {
+            "heart": {
+                "latest_hrv_ms": 62.0,
+                "average_hrv_ms": 50.0,
+                "latest_resting_heart_rate": 56,
+                "average_resting_heart_rate": 58.0,
+            }
+        },
     }
 
     recommendation = workout_recommendation(
@@ -463,6 +471,8 @@ def test_today_recommendation_downshifts_for_current_not_one_hundred_feeling() -
     assert any("10-15 minutes" in item for item in recommendation["next_actions"])
     assert any("warm-up" in item.lower() for item in recommendation["stop_conditions"])
     assert any("subjective readiness caps" in item for item in recommendation["evidence"])
+    assert any("HRV is 24% above recent average: 62 ms vs 50 ms." in item for item in recommendation["evidence"])
+    assert not any("HRV is above recent baseline" in item for item in recommendation["evidence"])
     assert any("free-text feeling was used" in item for item in recommendation["context_gaps"])
 
 

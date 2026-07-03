@@ -766,6 +766,7 @@ def workout_recommendation(
         primary_action = "Rest today, or keep movement to a short easy walk if symptoms are mild and improving."
     next_actions.insert(1 if freshness.get("needs_sync_before_time_sensitive_advice") else 0, primary_action)
     evidence = _workout_evidence(
+        context=context,
         readiness=readiness,
         today=today,
         freshness=freshness,
@@ -892,7 +893,7 @@ def workout_plan_for_activity(
 
     intensity = _base_intensity(readiness_label)
     rpe_cap = {"easy": 6, "moderate": 7, "moderate-to-hard": 8}.get(intensity, 6)
-    limiting_factors = list(readiness.get("evidence", []))
+    limiting_factors = _normalized_readiness_evidence(context)
     if soreness_rating and soreness_rating >= 7:
         intensity = "easy"
         rpe_cap = min(rpe_cap, 6)
@@ -1220,6 +1221,7 @@ def _goal_status(goal_payload: dict[str, Any], workout_count: int) -> dict[str, 
 
 def _workout_evidence(
     *,
+    context: dict[str, Any],
     readiness: dict[str, Any],
     today: dict[str, Any],
     freshness: dict[str, Any],
@@ -1232,7 +1234,7 @@ def _workout_evidence(
     goal_status: dict[str, Any],
     workout_summary: dict[str, Any],
 ) -> list[str]:
-    evidence = list(readiness.get("evidence", []))
+    evidence = _normalized_readiness_evidence(context)
 
     freshness_level = freshness.get("freshness_level")
     if freshness.get("needs_sync_before_time_sensitive_advice") or freshness_level in {"aging", "stale", "empty"}:
@@ -1725,6 +1727,74 @@ def _mentions_upcoming_session(text: str) -> bool:
             or "upcoming" in text
         )
     )
+
+
+def _normalized_readiness_evidence(context: dict[str, Any]) -> list[str]:
+    evidence = list((context.get("readiness") or {}).get("evidence", []))
+    hrv_line = _hrv_average_evidence(context)
+    resting_line = _resting_heart_rate_average_evidence(context)
+    normalized: list[str] = []
+    used_hrv = False
+    used_resting = False
+
+    for item in evidence:
+        lower = item.lower()
+        if "hrv" in lower and hrv_line:
+            if not used_hrv:
+                normalized.append(hrv_line)
+                used_hrv = True
+            continue
+        if "resting heart" in lower and resting_line:
+            if not used_resting:
+                normalized.append(resting_line)
+                used_resting = True
+            continue
+        normalized.append(item)
+
+    return _dedupe(normalized)
+
+
+def _hrv_average_evidence(context: dict[str, Any]) -> str | None:
+    heart = (context.get("sections") or {}).get("heart") or {}
+    latest = _number_or_none(_first_present(heart.get("latest_hrv_ms"), _hrv_ms_from_context(context)))
+    average = _number_or_none(heart.get("average_hrv_ms"))
+    if latest is None or average in (None, 0):
+        return None
+    delta = ((latest - average) / average) * 100
+    if abs(delta) < 5:
+        return f"HRV is near recent average: {_fmt_num(latest)} ms vs {_fmt_num(average)} ms."
+    direction = "above" if delta > 0 else "below"
+    return f"HRV is {abs(round(delta))}% {direction} recent average: {_fmt_num(latest)} ms vs {_fmt_num(average)} ms."
+
+
+def _resting_heart_rate_average_evidence(context: dict[str, Any]) -> str | None:
+    heart = (context.get("sections") or {}).get("heart") or {}
+    latest = _number_or_none(
+        _first_present(heart.get("latest_resting_heart_rate"), _resting_heart_rate_from_context(context))
+    )
+    average = _number_or_none(heart.get("average_resting_heart_rate"))
+    if latest is None or average is None:
+        return None
+    delta = latest - average
+    if abs(delta) < 1:
+        return f"Resting heart rate is near recent average: {_fmt_num(latest, 0)} bpm vs {_fmt_num(average)} bpm."
+    direction = "elevated above" if delta > 0 else "below"
+    return (
+        f"Resting heart rate is {direction} recent average: "
+        f"{_fmt_num(latest, 0)} bpm vs {_fmt_num(average)} bpm."
+    )
+
+
+def _number_or_none(value: Any) -> float | None:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number
+
+
+def _fmt_num(value: float, digits: int = 1) -> str:
+    return f"{value:.{digits}f}".rstrip("0").rstrip(".")
 
 
 def _dedupe(items: list[str]) -> list[str]:
