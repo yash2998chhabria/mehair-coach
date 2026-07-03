@@ -421,6 +421,13 @@ def test_question_clues_choose_recovery_heart_and_load_metrics(tmp_path, monkeyp
     assert {"sleep", "daily-heart-rate-variability", "daily-resting-heart-rate"} <= metric_ids
     assert "recommend_workout_today" in clues["recommended_tool_sequence"]
     assert "get_recovery_signal_comparison" in clues["recommended_tool_sequence"]
+    recovery_query = next(item for item in clues["query_suggestions"] if item["purpose"] == "recovery")
+    assert recovery_query["tool"] == "query_health_metrics"
+    assert recovery_query["arguments"]["days"] == 7
+    assert {"sleep", "daily-heart-rate-variability", "daily-resting-heart-rate"} <= set(
+        recovery_query["arguments"]["metrics"]
+    )
+    assert any("intensity" in item.lower() for item in clues["answer_rubric"])
     assert any("HRV" in item for item in clues["clues"] + clues["watchouts"])
 
     day_plan = store.health_question_clues(user_id, "What should I do today?", days=7)
@@ -446,6 +453,8 @@ def test_question_clues_choose_recovery_heart_and_load_metrics(tmp_path, monkeyp
     assert active_prompt["recommended_tool_sequence"].index("guide_active_workout") < active_prompt[
         "recommended_tool_sequence"
     ].index("recommend_workout_today")
+    assert any(item["purpose"] == "heart" for item in active_prompt["query_suggestions"])
+    assert any("in-session" in item for item in active_prompt["answer_rubric"])
 
 
 def test_question_clues_surface_illness_checkin_before_workout_advice(tmp_path) -> None:
@@ -524,6 +533,10 @@ def test_question_clues_surface_illness_checkin_before_workout_advice(tmp_path) 
     assert any("Illness symptoms" in item for item in clues["safety_flags"])
     assert any("avoid hard training" in item for item in clues["watchouts"])
     assert "Latest check-in note: Woke up with fever, chills, and a sore throat." in clues["clues"]
+    symptom_query = next(item for item in clues["query_suggestions"] if item["purpose"] == "symptom_safety")
+    assert symptom_query["tool"] == "query_health_metrics"
+    assert "daily-resting-heart-rate" in symptom_query["arguments"]["metrics"]
+    assert any("avoid diagnosis" in item for item in clues["answer_rubric"])
     assert "recommend_workout_today" in clues["recommended_tool_sequence"]
 
 

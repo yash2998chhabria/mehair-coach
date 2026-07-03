@@ -96,6 +96,15 @@ INTENT_METRICS = {
     ],
     "subjective": ["sleep", "exercise", "active-zone-minutes", "daily-heart-rate-variability"],
     "goal": ["exercise", "active-zone-minutes", "steps", "sleep"],
+    "symptom_safety": [
+        "daily-resting-heart-rate",
+        "heart-rate",
+        "daily-heart-rate-variability",
+        "sleep",
+        "daily-respiratory-rate",
+        "daily-oxygen-saturation",
+        "daily-sleep-temperature-derivations",
+    ],
     "general_overview": [
         "sleep",
         "daily-heart-rate-variability",
@@ -874,7 +883,7 @@ class HealthStore:
             "relevant_metrics": relevant_metrics,
             "available_metric_ids": [item["id"] for item in relevant_metrics if item["records"] > 0],
             "missing_metric_ids": [item["id"] for item in relevant_metrics if item["records"] == 0],
-            "query_suggestions": _metric_query_suggestions(intents, relevant_metrics),
+            "query_suggestions": _metric_query_suggestions(intents, relevant_metrics, safe_days),
             "clues": _dedupe(clues),
             "positives": _dedupe(positives),
             "watchouts": _dedupe(watchouts),
@@ -892,6 +901,7 @@ class HealthStore:
                 "For workout decisions, combine readiness, sleep, HRV, resting HR, load, recent workouts, goals, and check-ins.",
                 "For symptom, pain, illness, or abnormal-heart-rate concerns, recommend appropriate clinical care instead of diagnosing.",
             ],
+            "answer_rubric": _answer_rubric_for_intents(intents),
             "data_used": {
                 "activity_date": context.get("activity_date"),
                 "recovery_date": context.get("recovery_date"),
@@ -1576,6 +1586,7 @@ def _recommended_tool_sequence(intents: list[str], freshness: dict[str, Any]) ->
 def _metric_query_suggestions(
     intents: list[str],
     relevant_metrics: list[dict[str, Any]],
+    days: int,
 ) -> list[dict[str, Any]]:
     available = {item["id"] for item in relevant_metrics if item.get("records", 0) > 0}
     groups = [
@@ -1599,6 +1610,18 @@ def _metric_query_suggestions(
             "Inspect sleep and overnight recovery context.",
             ["sleep", "daily-respiratory-rate", "daily-oxygen-saturation", "daily-sleep-temperature-derivations"],
         ),
+        (
+            "symptom_safety",
+            "Inspect recovery and cardiopulmonary clues while keeping the answer non-diagnostic.",
+            [
+                "daily-resting-heart-rate",
+                "heart-rate",
+                "daily-heart-rate-variability",
+                "sleep",
+                "daily-respiratory-rate",
+                "daily-oxygen-saturation",
+            ],
+        ),
     ]
     suggestions = []
     for purpose, description, metric_ids in groups:
@@ -1606,8 +1629,40 @@ def _metric_query_suggestions(
             continue
         usable = [metric_id for metric_id in metric_ids if metric_id in available]
         if usable:
-            suggestions.append({"purpose": purpose, "description": description, "metrics": usable})
+            suggestions.append(
+                {
+                    "purpose": purpose,
+                    "description": description,
+                    "metrics": usable,
+                    "tool": "query_health_metrics",
+                    "arguments": {
+                        "metrics": usable,
+                        "days": days,
+                        "include_records": False,
+                    },
+                    "when_to_use": "Call this when the overview/clues are not enough detail for the user's question.",
+                }
+            )
     return suggestions
+
+
+def _answer_rubric_for_intents(intents: list[str]) -> list[str]:
+    rubric = [
+        "Start with the direct answer, then name the strongest supporting signals.",
+        "Separate wearable evidence, user-reported context, and missing data.",
+        "Mention freshness when the user asks about today, latest data, or real-time decisions.",
+    ]
+    if "workout_decision" in intents or "daily_plan" in intents:
+        rubric.append("For training advice, convert the signals into intensity, RPE cap, session type, and avoid-list.")
+    if "active_workout" in intents:
+        rubric.append("For in-session advice, prioritize stop/continue/downshift guidance from symptoms, RPE, pain, and heart rate.")
+    if any(intent in intents for intent in ("recovery", "sleep", "heart")):
+        rubric.append("For recovery explanations, compare latest sleep, HRV, resting heart rate, and load against recent baseline.")
+    if "symptom_safety" in intents:
+        rubric.append("For symptoms or illness, avoid diagnosis, advise rest or easy movement, and suggest clinical care for severe or worsening symptoms.")
+    if "goal" in intents:
+        rubric.append("Tie the recommendation back to the user's stored goal without overriding recovery or safety signals.")
+    return _dedupe(rubric)
 
 
 def _question_clue_takeaways(

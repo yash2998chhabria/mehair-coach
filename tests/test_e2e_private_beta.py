@@ -639,6 +639,13 @@ async def test_private_beta_oauth_mcp_sync_and_coaching_flow(tmp_path, monkeypat
             assert {"sleep", "daily-heart-rate-variability", "daily-resting-heart-rate"} <= {
                 item["id"] for item in clues["relevant_metrics"]
             }
+            recovery_query = next(item for item in clues["query_suggestions"] if item["purpose"] == "recovery")
+            assert recovery_query["tool"] == "query_health_metrics"
+            assert recovery_query["arguments"]["days"] == 7
+            assert {"sleep", "daily-heart-rate-variability", "daily-resting-heart-rate"} <= set(
+                recovery_query["arguments"]["metrics"]
+            )
+            assert any("RPE cap" in item for item in clues["answer_rubric"])
 
             day_plan_clues = tool_content(
                 await mcp_request(
