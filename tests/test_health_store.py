@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
+import app.health_store as health_store_module
 from app.auth import AuthService
 from app.crypto import generate_key
 from app.db import Database
@@ -41,7 +44,10 @@ def test_empty_states_do_not_fabricate_data(tmp_path) -> None:
     assert "No Fitbit data" in empty_context["message"]
 
 
-def test_synthetic_records_calculate_context(tmp_path) -> None:
+def test_synthetic_records_calculate_context(tmp_path, monkeypatch) -> None:
+    fixed_now = datetime(2026, 7, 3, 12, 0, tzinfo=UTC)
+    monkeypatch.setattr(health_store_module, "utc_now", lambda: fixed_now)
+    monkeypatch.setattr(health_store_module, "iso_now", lambda: fixed_now.isoformat())
     db, store = make_store(tmp_path)
     user_id = create_user(db)
 
@@ -236,11 +242,58 @@ def test_synthetic_records_calculate_context(tmp_path) -> None:
     assert overview["sections"]["recovery"]["latest_spo2"] == 98.4
     assert overview["personal_context"]["goal"]["goal"]["target"] == "Run four days per week"
     assert overview["personal_context"]["recent_checkins"][0]["checkin"]["energy"] == 8
+    assert overview["data_freshness"]["freshness_level"] == "fresh"
+    assert overview["sync_state"]["needs_sync_before_time_sensitive_advice"] is False
     synced_ids = {item["id"] for item in overview["data_used"]["synced_metrics"]}
     assert {"steps", "sleep", "heart-rate", "oxygen-saturation"} <= synced_ids
     assert overview["daily"][-1]["time_in_hr_zones_minutes"]["fat_burn"] == 20.0
     assert overview["positives"]
     assert overview["next_actions"]
+
+
+def test_overview_flags_stale_data_before_time_sensitive_advice(tmp_path, monkeypatch) -> None:
+    fixed_now = datetime(2026, 7, 3, 12, 0, tzinfo=UTC)
+    monkeypatch.setattr(health_store_module, "utc_now", lambda: fixed_now)
+    monkeypatch.setattr(health_store_module, "iso_now", lambda: fixed_now.isoformat())
+    db, store = make_store(tmp_path)
+    user_id = create_user(db)
+
+    store.upsert_records(
+        user_id,
+        "steps",
+        [
+            {
+                "name": "old-steps",
+                "steps": {"count": 7200},
+                "interval": {"startTime": "2026-07-01T17:00:00Z"},
+            }
+        ],
+    )
+    store.upsert_records(
+        user_id,
+        "sleep",
+        [
+            {
+                "name": "old-sleep",
+                "sleep": {
+                    "interval": {
+                        "startTime": "2026-07-01T00:00:00Z",
+                        "endTime": "2026-07-01T07:30:00Z",
+                    }
+                },
+            }
+        ],
+    )
+
+    freshness = store.freshness(user_id)
+    overview = store.health_overview(user_id, days=7)
+
+    assert freshness["freshness_level"] == "stale"
+    assert freshness["observed_days_ago"] == 2
+    assert overview["sync_state"]["needs_sync_before_time_sensitive_advice"] is True
+    assert overview["data_freshness"]["freshness_label"] == "sync recommended"
+    assert any("stale" in item.lower() for item in overview["watchouts"])
+    assert overview["next_actions"][0] == "Run sync_latest_fitbit_data before time-sensitive workout decisions."
 
 
 def test_partial_today_uses_latest_completed_recovery_signals(tmp_path) -> None:

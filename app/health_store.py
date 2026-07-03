@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import hashlib
 from collections import Counter, defaultdict
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
 from .auth import AuthService
@@ -308,6 +308,7 @@ class HealthStore:
             "records": row["records"],
             "latest_observed_date": row["latest_observed"],
             "last_sync": row["last_sync"],
+            **freshness_details(row["latest_observed"], row["last_sync"]),
         }
 
     def latest_context(self, user_id: str) -> dict[str, Any]:
@@ -380,6 +381,7 @@ class HealthStore:
         readiness = context["readiness"]
         goal = self.latest_goal(user_id)
         checkins = self.recent_checkins(user_id)
+        freshness = context["data_freshness"]
         positives, watchouts, next_actions = _overview_coaching(
             context=context,
             activity=activity,
@@ -389,6 +391,7 @@ class HealthStore:
             workouts=workouts,
             goal=goal,
             checkins=checkins,
+            freshness=freshness,
         )
         return {
             "status": "ok",
@@ -418,6 +421,14 @@ class HealthStore:
             "daily": daily_rows,
             "data_coverage": context["data_coverage"],
             "data_freshness": context["data_freshness"],
+            "sync_state": {
+                "freshness_level": freshness.get("freshness_level"),
+                "freshness_label": freshness.get("freshness_label"),
+                "needs_sync_before_time_sensitive_advice": freshness.get(
+                    "needs_sync_before_time_sensitive_advice"
+                ),
+                "recommendation": freshness.get("recommendation"),
+            },
             "data_used": {
                 "synced_metric_count": len(synced_metrics),
                 "synced_metrics": synced_metrics,
@@ -650,6 +661,46 @@ def empty_data(message: str = "No Fitbit data has synced yet.") -> dict[str, Any
     }
 
 
+def freshness_details(latest_observed_date: str | None, last_sync: str | None) -> dict[str, Any]:
+    now = utc_now()
+    observed_date = _date_from_iso(latest_observed_date)
+    observed_days_ago = None
+    if observed_date:
+        observed_days_ago = max(0, (now.date() - observed_date).days)
+
+    sync_age_minutes = None
+    synced_at = _datetime_from_iso(last_sync)
+    if synced_at:
+        sync_age_minutes = max(0, round((now - synced_at).total_seconds() / 60))
+
+    if observed_days_ago is None:
+        level = "unknown"
+        label = "unknown freshness"
+        recommendation = "Run sync_latest_fitbit_data before using health data."
+    elif observed_days_ago == 0 and (sync_age_minutes is None or sync_age_minutes <= 120):
+        level = "fresh"
+        label = "fresh today"
+        recommendation = "Synced data is current enough for normal coaching."
+    elif observed_days_ago == 0 and (sync_age_minutes is None or sync_age_minutes <= 720):
+        level = "aging"
+        label = "sync if needed"
+        recommendation = "Data is from today, but sync again before time-sensitive workout decisions."
+    else:
+        level = "stale"
+        label = "sync recommended"
+        recommendation = "Run sync_latest_fitbit_data before time-sensitive workout decisions."
+
+    return {
+        "freshness_level": level,
+        "freshness_label": label,
+        "observed_days_ago": observed_days_ago,
+        "sync_age_minutes": sync_age_minutes,
+        "is_observed_today": observed_days_ago == 0,
+        "needs_sync_before_time_sensitive_advice": level in {"aging", "stale", "unknown"},
+        "recommendation": recommendation,
+    }
+
+
 def _overview_activity(daily_rows: list[dict[str, Any]]) -> dict[str, Any]:
     step_days = [day for day in daily_rows if day.get("steps") is not None]
     active_days = [
@@ -825,6 +876,7 @@ def _overview_coaching(
     workouts: dict[str, Any],
     goal: dict[str, Any] | None,
     checkins: list[dict[str, Any]],
+    freshness: dict[str, Any] | None = None,
 ) -> tuple[list[str], list[str], list[str]]:
     readiness = context["readiness"]
     today = context.get("today", {})
@@ -832,6 +884,16 @@ def _overview_coaching(
     positives: list[str] = []
     watchouts: list[str] = []
     next_actions: list[str] = []
+    freshness = freshness or {}
+
+    if freshness.get("freshness_level") == "stale":
+        watchouts.append(
+            f"Synced data may be stale: latest observed date is {freshness.get('latest_observed_date') or context.get('latest_date')}."
+        )
+        next_actions.append("Run sync_latest_fitbit_data before time-sensitive workout decisions.")
+    elif freshness.get("freshness_level") == "aging":
+        watchouts.append("Data is from today, but the last sync is aging.")
+        next_actions.append("Sync latest Fitbit data before making a hard training call.")
 
     if label == "green":
         positives.append(f"Readiness is green at {readiness.get('score')}/100.")
@@ -934,6 +996,27 @@ def _latest_number(daily_rows: list[dict[str, Any]], key: str) -> float | None:
     if not latest:
         return None
     return _float({"value": latest.get(key)}, ["value"])
+
+
+def _date_from_iso(value: str | None) -> date | None:
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value[:10]).date()
+    except ValueError:
+        return None
+
+
+def _datetime_from_iso(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
 
 
 def _average(values: list[float]) -> float | None:

@@ -14,6 +14,7 @@ The project starts empty. It does not import any existing Fitbit export and it d
 - Lets ChatGPT query specific synced metrics over bounded date windows.
 - Summarizes readiness, sleep, activity load, heart trends, and workout history.
 - Produces an all-data health overview with positives, watchouts, and next actions.
+- Flags whether synced data is fresh, aging, or stale before time-sensitive coaching.
 - Plans specific workouts using synced recovery/load data plus goals, check-ins, and constraints.
 - Stores local goals and subjective check-ins for better coaching prompts.
 - Returns clear setup and empty-state responses when a user has not connected or synced yet.
@@ -62,9 +63,9 @@ flowchart LR
 - `list_available_health_metrics` lists every device-first metric this beta can sync and query, including local record counts.
 - `query_health_metrics` queries selected synced metrics over a bounded date range from the local store.
 - `sync_latest_fitbit_data` pulls the latest available Google Health/Fitbit records.
-- `get_data_freshness` reports last observed and last synced dates.
+- `get_data_freshness` reports last observed date, last sync time, and whether data is fresh, aging, or stale.
 - `get_today_context` returns the latest daily activity, sleep, heart, readiness, and evidence.
-- `get_health_overview` returns an all-data overview across readiness, activity, sleep, heart, recovery, workouts, goals, check-ins, coverage, positives, watchouts, and next actions.
+- `get_health_overview` returns an all-data overview across readiness, activity, sleep, heart, recovery, workouts, goals, check-ins, freshness, coverage, positives, watchouts, and next actions.
 - `get_recovery_readiness` returns the readiness score and evidence.
 - `recommend_workout_today` recommends the day’s training intensity.
 - `plan_workout_with_health_context` plans a specific workout, sport session, or muscle-group day from synced data and user constraints.

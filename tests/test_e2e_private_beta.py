@@ -506,6 +506,8 @@ async def test_private_beta_oauth_mcp_sync_and_coaching_flow(tmp_path, monkeypat
             assert overview["sections"]["sleep"]["latest_asleep_hours"] == 7.5
             assert overview["sections"]["heart"]["latest_hrv_ms"] == 48.5
             assert overview["sections"]["workouts"]["workout_count"] == 1
+            assert overview["data_freshness"]["freshness_level"] == "fresh"
+            assert overview["sync_state"]["needs_sync_before_time_sensitive_advice"] is False
             assert overview["personal_context"]["goal"]["goal"]["days_per_week"] == 4
             assert overview["personal_context"]["recent_checkins"][0]["checkin"]["soreness"] == 6
             assert "food" not in {item["id"] for item in overview["data_used"]["synced_metrics"]}

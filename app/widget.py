@@ -449,6 +449,7 @@ TODAY_WIDGET_HTML = """
         const recovery = sections.recovery || {};
         const workouts = sections.workouts || {};
         const dataUsed = data.data_used || {};
+        const freshness = data.data_freshness || {};
         const dateRange = data.date_range || {};
         const range = dateRange.start && dateRange.end ? `${dateRange.start} to ${dateRange.end}` : "";
         const sleepHours = sleep.latest_asleep_hours ?? data.today?.sleep?.asleep_hours ?? data.today?.sleep?.duration_hours;
@@ -464,7 +465,7 @@ TODAY_WIDGET_HTML = """
             label,
             `${data.window_days || 14} days`,
             `${dataUsed.synced_metric_count || 0} metrics`,
-            data.data_freshness?.latest_observed_date ? `fresh ${data.data_freshness.latest_observed_date}` : "",
+            freshnessChip(freshness),
           ].filter(Boolean),
           score: finiteNumber(readiness.score, 0),
           primaryLabel: "Readiness",
@@ -737,6 +738,14 @@ TODAY_WIDGET_HTML = """
       function metric(label, value, detail) {
         const detailHtml = detail ? `<small>${escapeHtml(detail)}</small>` : "";
         return `<div class="metric"><b>${escapeHtml(value ?? "No data")}</b><span>${escapeHtml(label)}</span>${detailHtml}</div>`;
+      }
+
+      function freshnessChip(freshness) {
+        if (!freshness || !freshness.freshness_level) return "";
+        if (freshness.freshness_level === "fresh") return "fresh today";
+        if (freshness.freshness_level === "aging") return "sync if needed";
+        if (freshness.freshness_level === "stale") return "sync recommended";
+        return "sync status unknown";
       }
 
       function listItems(items, fallback) {
