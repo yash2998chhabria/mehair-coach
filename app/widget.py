@@ -3,13 +3,14 @@ from __future__ import annotations
 import json
 
 
-WIDGET_URI = "ui://mehair/today-v6.html"
+WIDGET_URI = "ui://mehair/today-v7.html"
 LEGACY_WIDGET_URIS = (
     "ui://mehair/today-v1.html",
     "ui://mehair/today-v2.html",
     "ui://mehair/today-v3.html",
     "ui://mehair/today-v4.html",
     "ui://mehair/today-v5.html",
+    "ui://mehair/today-v6.html",
 )
 WIDGET_RESOURCE_URIS = (WIDGET_URI, *LEGACY_WIDGET_URIS)
 WIDGET_MIME_TYPE = "text/html;profile=mcp-app"
@@ -139,15 +140,15 @@ TODAY_WIDGET_HTML = """
         display: inline-flex;
         align-items: center;
         min-height: 24px;
+        max-width: 100%;
         border: 1px solid #d9e1dc;
         border-radius: 999px;
         background: #fff;
         color: #313940;
         font-size: 12px;
         font-weight: 720;
-        line-height: 1;
+        line-height: 1.15;
         padding: 5px 9px;
-        text-transform: capitalize;
       }
 
       .chip.accent {
@@ -295,7 +296,7 @@ TODAY_WIDGET_HTML = """
       .metric {
         display: grid;
         align-content: center;
-        min-height: 76px;
+        min-height: 92px;
         border: 1px solid #e4e9e4;
         border-radius: 8px;
         background: var(--tile);
@@ -325,6 +326,15 @@ TODAY_WIDGET_HTML = """
         color: #89939a;
         font-size: 11px;
         line-height: 1.25;
+      }
+
+      .metric em {
+        display: block;
+        margin-top: 5px;
+        color: #4b565e;
+        font-size: 11px;
+        font-style: normal;
+        line-height: 1.28;
       }
 
       .details {
@@ -583,7 +593,7 @@ TODAY_WIDGET_HTML = """
           eyebrow: "Mehair Coach",
           date: range || data.data_freshness?.latest_observed_date || "",
           chips: [
-            label,
+            readinessChip(label),
             brief.training_bias ? titleCase(brief.training_bias) : "",
             `${dataUsed.synced_metric_count || 0} metrics`,
             freshnessChip(freshness),
@@ -595,10 +605,10 @@ TODAY_WIDGET_HTML = """
           focus: primaryActions,
           metrics: [
             ["Move Today", todaySteps != null ? intText(todaySteps) : null, windowSteps != null && range ? `${intText(windowSteps)} in window` : latestActivity.date || ""],
-            ["Training Load", latestLoadAzm != null ? `${intText(latestLoadAzm)} AZM` : null, latestLoadDetail],
+            ["Training Load", latestLoadAzm != null ? `${intText(latestLoadAzm)} AZM` : null, latestLoadDetail, "AZM = Fitbit hard-work minutes."],
             ["Sleep vs Avg", sleepDelta != null ? `${signed(sleepDelta)}h` : (sleepHours != null ? `${num(sleepHours, 1)}h` : null), sleepHours != null ? `latest ${num(sleepHours, 1)}h` : ""],
-            ["HRV vs Avg", hrvDelta != null ? `${signed(hrvDelta)}%` : (hrv != null ? `${num(hrv, 1)} ms` : null), hrv != null && heart.average_hrv_ms ? `${num(hrv, 1)} vs ${num(heart.average_hrv_ms, 1)} ms` : ""],
-            ["RHR vs Avg", rhrDelta != null ? `${signed(rhrDelta)} bpm` : (rhr != null ? `${num(rhr, 1)} bpm` : null), rhr != null && heart.average_resting_heart_rate ? `${num(rhr, 0)} vs ${num(heart.average_resting_heart_rate, 0)} bpm` : ""],
+            ["HRV vs Avg", hrvDelta != null ? `${signed(hrvDelta)}%` : (hrv != null ? `${num(hrv, 1)} ms` : null), hrv != null && heart.average_hrv_ms ? `${num(hrv, 1)} vs ${num(heart.average_hrv_ms, 1)} ms` : "", "HRV = recovery stress signal."],
+            ["RHR vs Avg", rhrDelta != null ? `${signed(rhrDelta)} bpm` : (rhr != null ? `${num(rhr, 1)} bpm` : null), rhr != null && heart.average_resting_heart_rate ? `${num(rhr, 0)} vs ${num(heart.average_resting_heart_rate, 0)} bpm` : "", "RHR = resting heart rate."],
             workouts.workout_count > 0
               ? ["Workouts", intText(workouts.workout_count), range || "window"]
               : vitalsValue
@@ -705,19 +715,19 @@ TODAY_WIDGET_HTML = """
             ? `Activity ${data.activity_date}; recovery ${data.recovery_date}`
             : data.activity_date || data.latest_date || "",
           chips: [
-            data.intensity,
-            data.rpe_cap != null ? `RPE ${data.rpe_cap}` : "",
-            label,
+            intensityChip(data.intensity),
+            rpeChip(data.rpe_cap),
+            readinessChip(label),
             freshnessChip(freshness),
           ].filter(Boolean),
           score: finiteNumber(readiness.score, 0),
           primaryLabel: "Readiness",
-          headline: data.recommendation || readiness.recommendation || "Workout guidance ready.",
-          focusTitle: "Do Today",
+          headline: workoutHeadline(data),
+          focusTitle: "What To Do",
           focus: data.next_actions || [],
           metrics: [
-            ["Steps", intText(today.steps ?? data.data_used?.steps_today ?? 0), "today"],
-            ["Zone min", intText(today.active_zone_minutes ?? data.data_used?.active_zone_minutes_today ?? 0), "today"],
+            ["Steps", intText(today.steps ?? data.data_used?.steps_today ?? 0), "today", "Light movement context."],
+            ["Zone min", intText(today.active_zone_minutes ?? data.data_used?.active_zone_minutes_today ?? 0), "today", "Minutes Fitbit counted as cardio effort."],
             ["Sleep", sleepHours != null ? `${num(sleepHours, 1)}h` : null],
             ["HRV", data.data_used?.hrv_ms != null ? `${num(data.data_used.hrv_ms, 1)} ms` : null],
             ["Soreness", subjective.soreness != null ? `${subjective.soreness}/10` : null, subjective.energy != null ? `energy ${subjective.energy}/10` : ""],
@@ -804,25 +814,25 @@ TODAY_WIDGET_HTML = """
         ];
         return {
           accent: readinessAccent(label),
-          title: titleCase(data.planned_activity || "Workout Plan"),
+          title: workoutTitle(data.planned_activity, data.recommended_intensity),
           eyebrow: "Workout Plan",
           date: data.planned_date ? `Planned for ${data.planned_date}` : "Next planned session",
-          chips: [data.recommended_intensity, `RPE ${data.rpe_cap || "?"}`, label].filter(Boolean),
+          chips: [intensityChip(data.recommended_intensity), rpeChip(data.rpe_cap), readinessChip(label)].filter(Boolean),
           score: finiteNumber(readiness.score ?? dataUsed.readiness_score, 0),
           primaryLabel: "Readiness",
-          headline: data.summary || "Workout adjusted to your synced health context.",
-          focusTitle: "Session",
+          headline: workoutHeadline(data),
+          focusTitle: "What To Do",
           focus: planFocus,
           blocks: data.exercise_blocks || [],
           metrics: [
-            ["RPE cap", data.rpe_cap != null ? `${data.rpe_cap}/10` : null],
-            ["Intensity", titleCase(data.recommended_intensity || "")],
+            ["RPE cap", data.rpe_cap != null ? `${data.rpe_cap}/10` : null, rpePlain(data.rpe_cap)],
+            ["Intensity", titleCase(data.recommended_intensity || ""), "", "The workout should feel this aggressive."],
             ["Sleep", dataUsed.sleep_asleep_hours != null ? `${num(dataUsed.sleep_asleep_hours, 1)}h` : null, dataUsed.sleep_sessions ? `${dataUsed.sleep_sessions} sessions` : ""],
             ["HRV", dataUsed.hrv_ms != null ? `${num(dataUsed.hrv_ms, 1)} ms` : null],
             ["Resting HR", dataUsed.resting_heart_rate ? `${dataUsed.resting_heart_rate} bpm` : null],
-            ["Latest load", dataUsed.latest_training_load?.active_zone_minutes != null ? `${dataUsed.latest_training_load.active_zone_minutes} AZM` : null, dataUsed.latest_training_load?.date || ""],
+            ["Latest load", dataUsed.latest_training_load?.active_zone_minutes != null ? `${dataUsed.latest_training_load.active_zone_minutes} AZM` : null, dataUsed.latest_training_load?.date || "", "AZM = Fitbit hard-work minutes."],
           ],
-          evidenceTitle: "Fitbit Evidence",
+          evidenceTitle: "Why This Plan",
           evidence: (data.limiting_factors || data.why || []).slice(0, 5),
           secondaryTitle: substitutions.length ? "Substitutions" : "Avoid",
           secondary: (substitutions.length ? substitutions : data.avoid || []).slice(0, 5),
@@ -843,7 +853,7 @@ TODAY_WIDGET_HTML = """
           chips: [
             titleCase(data.decision || "guidance"),
             live.current_heart_rate_bpm != null ? `${live.current_heart_rate_bpm} bpm` : "",
-            live.current_rpe != null ? `RPE ${live.current_rpe}` : "",
+            live.current_rpe != null ? rpeChip(live.current_rpe) : "",
             live.pain_level != null ? `Pain ${live.pain_level}/10` : "",
           ].filter(Boolean),
           score: finiteNumber(readiness.score ?? dataUsed.readiness_score, 0),
@@ -853,11 +863,11 @@ TODAY_WIDGET_HTML = """
           focus: data.immediate_actions || [],
           metrics: [
             ["Heart rate", live.current_heart_rate_bpm != null ? `${live.current_heart_rate_bpm} bpm` : null],
-            ["RPE", live.current_rpe != null ? `${live.current_rpe}/10` : null],
+            ["RPE", live.current_rpe != null ? `${live.current_rpe}/10` : null, rpePlain(live.current_rpe)],
             ["Pain", live.pain_level != null ? `${live.pain_level}/10` : null],
             ["Elapsed", live.elapsed_minutes != null ? `${live.elapsed_minutes} min` : null],
-            ["Readiness", readiness.label || dataUsed.readiness_label || null],
-            ["Latest load", dataUsed.latest_training_load?.active_zone_minutes != null ? `${dataUsed.latest_training_load.active_zone_minutes} AZM` : null],
+            ["Readiness", readiness.label || dataUsed.readiness_label || null, readiness.label ? readinessChip(readiness.label) : ""],
+            ["Latest load", dataUsed.latest_training_load?.active_zone_minutes != null ? `${dataUsed.latest_training_load.active_zone_minutes} AZM` : null, "", "AZM = Fitbit hard-work minutes."],
           ],
           evidenceTitle: safety.length ? "Safety Flags" : "Evidence",
           evidence,
@@ -1028,7 +1038,7 @@ TODAY_WIDGET_HTML = """
           </div>
           ${blocks}
           <div class="metrics">
-            ${(model.metrics || []).slice(0, 6).map((item) => metric(item[0], item[1], item[2])).join("")}
+            ${(model.metrics || []).slice(0, 6).map((item) => metric(item[0], item[1], item[2], item[3])).join("")}
           </div>
           <div class="details">
             <div class="section">
@@ -1043,9 +1053,11 @@ TODAY_WIDGET_HTML = """
         `;
       }
 
-      function metric(label, value, detail) {
+      function metric(label, value, detail, explanation) {
         const detailHtml = detail ? `<small>${escapeHtml(detail)}</small>` : "";
-        return `<div class="metric"><b>${escapeHtml(value ?? "No data")}</b><span>${escapeHtml(label)}</span>${detailHtml}</div>`;
+        const explain = explanation || metricHint(label);
+        const explainHtml = explain ? `<em>${escapeHtml(explain)}</em>` : "";
+        return `<div class="metric"><b>${escapeHtml(value ?? "No data")}</b><span>${escapeHtml(label)}</span>${detailHtml}${explainHtml}</div>`;
       }
 
       function renderBlocks(blocks) {
@@ -1059,7 +1071,7 @@ TODAY_WIDGET_HTML = """
           return `<div class="workout-block"><b>${escapeHtml(block)}</b></div>`;
         }
         const name = block.exercise || block.name || "Exercise";
-        const prescription = [block.sets ? `${block.sets} sets` : "", block.reps || "", block.intensity || ""]
+        const prescription = [block.sets ? `${block.sets} sets` : "", block.reps || "", explainPrescription(block.intensity || "")]
           .filter(Boolean)
           .join(" | ");
         const note = [block.note || "", block.alternative ? `Alt: ${block.alternative}` : ""]
@@ -1085,7 +1097,101 @@ TODAY_WIDGET_HTML = """
       function listItems(items, fallback) {
         const usable = (items || []).filter(Boolean).slice(0, 5);
         const content = usable.length ? usable : [fallback];
-        return content.map((item) => `<li>${escapeHtml(item)}</li>`).join("");
+        return content.map((item) => `<li>${escapeHtml(explainEvidenceItem(item))}</li>`).join("");
+      }
+
+      function intensityChip(value) {
+        const label = titleCase(value || "guided");
+        const lower = String(value || "").toLowerCase();
+        if (lower.includes("easy")) return `${label}: recovery pace`;
+        if (lower.includes("moderate-to-hard")) return `${label}: challenging`;
+        if (lower.includes("moderate")) return `${label}: controlled`;
+        return label;
+      }
+
+      function readinessChip(label) {
+        const clean = titleCase(label || "pending");
+        const lower = String(label || "").toLowerCase();
+        if (lower === "green") return `${clean}: recovery supports training`;
+        if (lower === "yellow") return `${clean}: use caution`;
+        if (lower === "red") return `${clean}: recovery first`;
+        return clean;
+      }
+
+      function rpeChip(value) {
+        if (value == null) return "";
+        return `RPE ${value}: ${rpePlain(value)}`;
+      }
+
+      function rpePlain(value) {
+        const number = Number(value);
+        if (!Number.isFinite(number)) return "effort cap";
+        if (number <= 4) return "easy";
+        if (number <= 6) return "comfortable";
+        if (number <= 7) return "hard but controlled";
+        if (number <= 8) return "challenging";
+        return "very hard";
+      }
+
+      function workoutTitle(activity, intensity) {
+        const normalized = String(activity || "").trim().toLowerCase();
+        if (!normalized || normalized === "general workout" || normalized === "workout plan") {
+          if (String(intensity || "").includes("easy")) return "Recovery Workout";
+          return "Useful Controlled Workout";
+        }
+        return titleCase(activity);
+      }
+
+      function workoutHeadline(data) {
+        const intensity = titleCase(data.recommended_intensity || data.intensity || "guided");
+        const cap = data.rpe_cap != null ? ` Keep it at RPE ${data.rpe_cap}/10, which means ${rpePlain(data.rpe_cap)}.` : "";
+        if (String(data.recommended_intensity || data.intensity || "").includes("easy")) {
+          return `Make this an easy session that leaves you feeling better.${cap}`;
+        }
+        if (String(data.recommended_intensity || data.intensity || "").includes("moderate")) {
+          return `Do a useful ${intensity.toLowerCase()} session, not a prove-it workout.${cap}`;
+        }
+        return data.summary || data.recommendation || `Training looks available today.${cap}`;
+      }
+
+      function metricHint(label) {
+        const lower = String(label || "").toLowerCase();
+        if (lower.includes("rpe")) return "RPE = how hard it feels: 1 easy, 10 max.";
+        if (lower.includes("intensity")) return "How aggressive the workout should feel.";
+        if (lower.includes("hrv")) return "HRV = recovery stress signal compared with your usual.";
+        if (lower.includes("resting") || lower.includes("rhr")) return "Resting HR = heart stress signal at rest.";
+        if (lower.includes("load") || lower.includes("azm") || lower.includes("zone")) return "AZM = Fitbit hard-work minutes.";
+        if (lower.includes("sleep")) return "Sleep is the biggest recovery input.";
+        if (lower.includes("readiness")) return "Readiness blends sleep, heart, and load signals.";
+        if (lower.includes("move")) return "Today's movement, not the whole week.";
+        if (lower.includes("soreness")) return "Your check-in can override good wearable scores.";
+        if (lower.includes("goal")) return "Goal pressure comes after recovery signals.";
+        if (lower.includes("vitals")) return "Extra recovery context from Fitbit.";
+        return "";
+      }
+
+      function explainEvidenceItem(item) {
+        let text = String(item || "");
+        if (text.includes("HRV") && !text.includes("recovery stress signal")) {
+          text = text.replaceAll("HRV", "HRV (recovery stress signal)");
+        }
+        if (text.includes("RHR") && !text.includes("resting heart rate")) {
+          text = text.replaceAll("RHR", "RHR (resting heart rate)");
+        }
+        if (/resting heart rate/i.test(text) && !text.includes("heart stress signal")) {
+          text = text.replace(/Resting heart rate/i, "Resting heart rate (heart stress signal)");
+        }
+        if (/Active Zone Minutes/.test(text) && !text.includes("hard-work minutes")) {
+          text = text.replaceAll("Active Zone Minutes", "Active Zone Minutes (Fitbit hard-work minutes)");
+        }
+        return text;
+      }
+
+      function explainPrescription(value) {
+        const text = String(value || "");
+        const match = text.match(/RPE\\s*<=\\s*(\\d+)/i);
+        if (!match) return text;
+        return `${text} (${rpePlain(match[1])})`;
       }
 
       function readinessAccent(label) {
@@ -1423,7 +1529,7 @@ WIDGET_PREVIEW_STATES: dict[str, dict] = {
         "planned_date": "today",
         "target_areas": ["chest", "back"],
         "constraints": "lower back soreness after squash",
-        "summary": "For today, keep chest and back at easy intensity with an RPE cap around 6/10. Treat this as a quality/recovery-biased session because recovery signals are red.",
+        "summary": "For today, keep chest and back at easy intensity (recovery pace) with an RPE cap around 6/10 (comfortable, should not feel like a grind). Treat this as a quality/recovery-biased session because recovery signals are red.",
         "recommended_intensity": "easy",
         "rpe_cap": 6,
         "readiness": {
@@ -1471,7 +1577,7 @@ WIDGET_PREVIEW_STATES: dict[str, dict] = {
         ],
         "session_guidance": [
             "Do not chase PRs; keep every compound lift 3-4 reps in reserve.",
-            "Keep working sets at or below RPE 6/10.",
+            "Keep working sets at or below RPE 6/10 (comfortable, should not feel like a grind).",
             "Keep the session near 60 minutes including warm-up.",
         ],
         "avoid": ["Heavy deadlifts", "Heavy bent-over rows", "Aggressive bench arch if low back feels sensitive"],

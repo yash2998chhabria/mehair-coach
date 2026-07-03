@@ -32,6 +32,8 @@ from .widget import (
 
 SERVER_INSTRUCTIONS = (
     "Mehair Coach provides read-only Google Health/Fitbit context for a connected user. "
+    "Use plain English before statistics. Keep metric labels such as HRV, RPE, AZM, and resting "
+    "heart rate, but briefly explain what they mean when they appear in user-facing advice. "
     "If connection or synced data is missing, call status/freshness tools and explain setup; "
     "never invent health data. Use already-synced local data for normal current/latest/today questions, "
     "because every overview includes freshness metadata. Sync only when the user explicitly says sync, "
@@ -968,7 +970,8 @@ def workout_plan_for_activity(
     planned_date_text = planned_date or "next planned session"
     summary = (
         f"For {planned_date_text}, keep {planned_activity} at {intensity} intensity "
-        f"with an RPE cap around {rpe_cap}/10."
+        f"({_intensity_plain(intensity)}) with an RPE cap around {rpe_cap}/10 "
+        f"({_rpe_plain(rpe_cap)})."
     )
     if readiness_label == "red":
         summary += " Treat this as a quality/recovery-biased session because recovery signals are red."
@@ -1372,13 +1375,35 @@ def _workout_stop_conditions(
     conditions = [
         "Stop or downshift for dizziness, chest pain/tightness, faintness, severe shortness of breath, or symptoms that are new or worsening.",
         "Stop the movement if pain rises above 3/10, becomes sharp, or changes your form.",
-        f"Cap effort if RPE drifts above {rpe_cap}/10 or breathing/heart rate does not settle after easy minutes.",
+        f"Cap effort if RPE (how hard it feels from 1 easy to 10 max) drifts above {rpe_cap}/10 or breathing/heart rate does not settle after easy minutes.",
     ]
     if subjective_limiter:
         conditions.append("End early if the warm-up does not make you feel better within 10-15 minutes.")
     if illness_flags:
         conditions.append("Skip hard training while fever, flu-like symptoms, vomiting, or worsening illness signs are present.")
     return _dedupe(conditions)
+
+
+def _rpe_plain(rpe_cap: int) -> str:
+    if rpe_cap <= 4:
+        return "easy effort"
+    if rpe_cap <= 6:
+        return "comfortable, should not feel like a grind"
+    if rpe_cap <= 7:
+        return "hard but controlled"
+    if rpe_cap <= 8:
+        return "challenging, but not a max attempt"
+    return "very hard"
+
+
+def _intensity_plain(intensity: str) -> str:
+    if intensity == "easy":
+        return "recovery pace"
+    if intensity == "moderate":
+        return "useful work, not all-out"
+    if intensity == "moderate-to-hard":
+        return "challenging work if the warm-up feels good"
+    return "adjust based on the warm-up"
 
 
 def _active_workout_safety_flags(
@@ -1433,7 +1458,7 @@ def _activity_guidance(planned: str, rpe_cap: int, intensity: str) -> tuple[list
     ]
     focus = ["Move well first, then add load only if the warm-up feels better than expected."]
     avoid = ["Max-effort attempts", "Adding extra hard conditioning after the session"]
-    session = [f"Keep working sets at or below RPE {rpe_cap}/10."]
+    session = [f"Keep working sets at or below RPE {rpe_cap}/10 ({_rpe_plain(rpe_cap)})."]
 
     if _mentions(planned, ("chest", "bench", "press", "push")):
         focus.extend(

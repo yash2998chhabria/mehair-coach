@@ -49,6 +49,8 @@ async def test_mcp_tool_list_matches_private_beta_plan() -> None:
 
 
 def test_server_instructions_keep_normal_latest_questions_fast() -> None:
+    assert "Use plain English before statistics" in SERVER_INSTRUCTIONS
+    assert "Keep metric labels such as HRV, RPE, AZM" in SERVER_INSTRUCTIONS
     assert "Use already-synced local data for normal current/latest/today questions" in SERVER_INSTRUCTIONS
     assert "Sync only when the user explicitly says sync" in SERVER_INSTRUCTIONS
     assert "use list_available_health_metrics to inspect the per-user metric catalog" in SERVER_INSTRUCTIONS
@@ -121,6 +123,8 @@ async def test_widget_preview_route_renders_real_card_state() -> None:
     assert "Training Load" in overview.text
     assert "HRV vs Avg" in overview.text
     assert "RHR vs Avg" in overview.text
+    assert "HRV = recovery stress signal" in overview.text
+    assert "AZM = Fitbit hard-work minutes" in overview.text
     assert "Vitals" in overview.text
     assert "recovery-first" in overview.text
     assert "Priority Signals" in overview.text
@@ -143,6 +147,8 @@ async def test_widget_preview_route_renders_real_card_state() -> None:
     assert workout_plan.status_code == 200
     assert "Machine chest press" in workout_plan.text
     assert "Chest-supported row" in workout_plan.text
+    assert "RPE = how hard it feels" in workout_plan.text
+    assert "hard but controlled" in workout_plan.text
     assert "Bent-over row -> chest-supported row." in workout_plan.text
     assert "sleep_asleep_hours" in workout_plan.text
     assert "31.3" in workout_plan.text
