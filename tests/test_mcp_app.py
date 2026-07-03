@@ -71,6 +71,8 @@ async def test_widget_resource_is_registered() -> None:
     assert "Preparing card" in html
     assert 'renderEmpty("Preparing the health card from the latest tool result.", "waiting")' in html
     assert "function hasCardData(data)" in html
+    assert "function renderLabelKey(labels)" in html
+    assert "label-key" in html
     assert "dataUsed.sleep_asleep_hours != null" in html
     assert "dataUsed.hrv_ms != null" in html
 
@@ -144,8 +146,12 @@ async def test_widget_preview_route_renders_real_card_state() -> None:
     assert "dizzy during the interval" in active_workout.text
     assert today_workout.status_code == 200
     assert "Today's Workout" in today_workout.text
+    assert "Next Session" in today_workout.text
+    assert "The useful read: sleep is limiting recovery" in today_workout.text
+    assert "Metric label explanations" in today_workout.text
     assert "Goal progress: 2/4 sessions logged; 2 remaining." in today_workout.text
     assert workout_plan.status_code == 200
+    assert "Session Blueprint" in workout_plan.text
     assert "Machine chest press" in workout_plan.text
     assert "Chest-supported row" in workout_plan.text
     assert "RPE = how hard it feels" in workout_plan.text

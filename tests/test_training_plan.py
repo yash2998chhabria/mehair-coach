@@ -702,6 +702,9 @@ def test_generic_workout_payload_stays_human_readable_for_cached_cards() -> None
     assert "not-100% day" in plan["coach_response"]["short_answer"]
     assert any(item["label"] == "HRV" for item in plan["coach_response"]["labels_explained"])
     assert any(item["label"] == "RPE" for item in plan["coach_response"]["labels_explained"])
+    assert plan["coach_response"]["session_blueprint"]
+    assert any("RPE <=" in item for item in plan["coach_response"]["session_blueprint"])
+    assert "The useful read:" in plan["coach_response"]["data_story"]
     assert any("RPE (how hard it feels)" in item for item in plan["coach_response"]["what_to_do"])
     assert any("recovery stress signal" in item for item in plan["coach_response"]["why"])
     assert any("HRV (recovery stress signal)" in item for item in plan["limiting_factors"])
@@ -756,6 +759,8 @@ def test_today_recommendation_returns_human_coach_response_without_losing_labels
     assert "let the first 10-15 minutes decide" in recommendation["coach_response"]["short_answer"]
     assert any(item["label"] == "Readiness" for item in recommendation["coach_response"]["labels_explained"])
     assert any(item["label"] == "AZM" for item in recommendation["coach_response"]["labels_explained"])
+    assert any("10-15 minutes" in item for item in recommendation["coach_response"]["session_blueprint"])
+    assert "current body feel caps the ceiling" in recommendation["coach_response"]["data_story"]
     assert any("RPE (how hard it feels)" in item for item in recommendation["coach_response"]["what_to_do"])
     assert any("HRV (recovery stress signal)" in item for item in recommendation["coach_response"]["why"])
     assert any("Resting HR" in item for item in recommendation["coach_response"]["why"])

@@ -35,8 +35,8 @@ SERVER_INSTRUCTIONS = (
     "Use plain English before statistics. Keep metric labels such as HRV, RPE, AZM, and resting "
     "heart rate, but briefly explain what they mean when they appear in user-facing advice. "
     "When a tool returns coach_response, use it as the answer skeleton: direct human answer first, "
-    "then the explained metric labels, then stop conditions or caveats. Avoid leading with raw tables "
-    "or unexplained evidence logs. "
+    "then the session_blueprint or what_to_do, then the explained metric labels, then stop conditions "
+    "or caveats. Avoid leading with raw tables or unexplained evidence logs. "
     "If connection or synced data is missing, call status/freshness tools and explain setup; "
     "never invent health data. Use already-synced local data for normal current/latest/today questions, "
     "because every overview includes freshness metadata. Sync only when the user explicitly says sync, "
@@ -1019,11 +1019,14 @@ def workout_plan_for_activity(
         rpe_cap=rpe_cap,
         readiness=readiness,
         focus=focus,
+        warmup=warmup,
         session=session,
+        exercise_blocks=exercise_blocks,
         limiting_factors=deduped_limiting_factors,
         avoid=deduped_avoid,
         substitutions=deduped_substitutions,
         subjective_limiter=subjective_limiter,
+        preserving_next_session=preserving_next_session,
         illness_flags=illness_flags,
         stop_conditions=stop_conditions,
     )
@@ -1212,6 +1215,7 @@ def active_workout_guidance(
         avoid=deduped_avoid,
         safety_flags=safety_flags,
         evidence=deduped_evidence,
+        readiness=readiness,
         rpe=rpe,
         current_heart_rate_bpm=current_heart_rate_bpm,
         pain=pain,
@@ -1298,6 +1302,263 @@ def _coach_metric_glossary(labels: list[str] | tuple[str, ...] | None = None) ->
     ]
 
 
+def _coach_data_story(readiness: dict[str, Any], evidence: list[str]) -> str:
+    label = readiness.get("label")
+    evidence_items = [str(item).lower() for item in evidence]
+    constraints: list[str] = []
+    supports: list[str] = []
+
+    sleep_items = [item for item in evidence_items if "sleep" in item]
+    hrv_items = [item for item in evidence_items if "hrv" in item]
+    resting_items = [item for item in evidence_items if "resting" in item or "rhr" in item]
+    load_items = [
+        item
+        for item in evidence_items
+        if "active zone minutes" in item or "training load" in item or "zone minutes" in item
+    ]
+    freshness_items = [item for item in evidence_items if "data freshness" in item or "sync latest" in item]
+    checkin_items = [item for item in evidence_items if "check-in" in item]
+    safety_items = [
+        item
+        for item in evidence_items
+        if "medical caution" in item
+        or "urgent care" in item
+        or "reported symptoms" in item
+        or "dizzy" in item
+        or "dizziness" in item
+    ]
+    illness_items = [
+        item
+        for item in evidence_items
+        if item.startswith("illness symptoms")
+        or (
+            item.startswith("current user-stated feeling")
+            and any(term in item for term in ("fever", "chills", "flu", "sore throat", "vomit", "nausea"))
+        )
+    ]
+    subjective_items = [
+        item
+        for item in evidence_items
+        if "do not feel fully right" in item or "not feel 100" in item or "current user-stated feeling" in item
+    ]
+    preserve_items = [
+        item
+        for item in evidence_items
+        if "preserve readiness" in item or "preserve" in item or "another sport" in item or "tomorrow" in item
+    ]
+
+    if safety_items:
+        constraints.append("live symptoms override the workout plan")
+    if illness_items:
+        constraints.append("symptoms override the wearable score")
+    if any("stale" in item or "sync latest" in item for item in freshness_items):
+        constraints.append("data needs a fresh sync before a hard call")
+
+    if any("short" in item or "below" in item for item in sleep_items):
+        constraints.append("sleep is limiting recovery")
+    elif any("strong" in item or "supportive" in item or "above" in item for item in sleep_items):
+        supports.append("sleep supports training")
+
+    if any("below" in item or "suppressed" in item or "lagging" in item for item in hrv_items):
+        constraints.append("HRV is lower than usual")
+    elif any("above" in item for item in hrv_items):
+        supports.append("HRV is above usual")
+
+    if any("elevated" in item or "above recent average" in item for item in resting_items):
+        constraints.append("Resting HR is elevated")
+    elif any("steady" in item or "below recent average" in item or "not elevated" in item for item in resting_items):
+        supports.append("Resting HR is calm")
+
+    if load_items:
+        load_values: list[int] = []
+        for item in load_items:
+            for match in re.finditer(r"(\d+)\s+(?:active zone minutes|zone minutes)", item):
+                load_values.append(int(match.group(1)))
+        if any(value >= 45 for value in load_values) or any("high" in item for item in load_items):
+            constraints.append("recent training load matters today")
+        else:
+            supports.append("recent load is manageable")
+
+    limiting_checkins = any(
+        "soreness check-in is high" in item
+        or "soreness check-in is moderate" in item
+        or "energy check-in is low" in item
+        or "stress check-in is high" in item
+        or re.search(r"energy check-in is [0-4]/10", item)
+        or re.search(r"soreness check-in is [5-9]/10", item)
+        or re.search(r"stress check-in is [7-9]/10", item)
+        for item in checkin_items
+    )
+    if limiting_checkins:
+        constraints.append("your check-in changes the plan")
+    elif checkin_items:
+        supports.append("your check-in supports training")
+    if subjective_items:
+        constraints.append("your current body feel caps the ceiling")
+    if preserve_items:
+        constraints.append("tomorrow's session is the priority")
+
+    if constraints:
+        return "The useful read: " + "; ".join(_dedupe(constraints)[:4]) + "."
+    if supports:
+        return "The useful read: " + "; ".join(_dedupe(supports)[:4]) + "."
+    if label == "green":
+        return "The useful read: recovery signals are supportive, so the warm-up decides how hard to go."
+    if label == "yellow":
+        return "The useful read: recovery is mixed, so useful controlled work beats max effort."
+    return "The useful read: recovery signals are constrained, so the best workout is the one you recover from."
+
+
+def _today_session_blueprint(
+    *,
+    intensity: str,
+    rpe_cap: int,
+    subjective_limiter: bool,
+    illness_flags: list[str],
+) -> list[str]:
+    if illness_flags:
+        return [
+            "Today: skip hard training.",
+            "If symptoms are mild and improving, do 10-20 minutes of easy walking or mobility only.",
+            "End the session if symptoms worsen, breathing feels unusual, or energy drops.",
+        ]
+
+    if intensity == "easy":
+        blueprint = [
+            "Start with 10 minutes easy walking, cycling, or mobility to see if you feel better.",
+            f"Then do 10-25 minutes easy movement at RPE <= {rpe_cap}/10; stop before it feels like work.",
+            "Finish while you feel better than when you started.",
+        ]
+    elif intensity == "moderate":
+        blueprint = [
+            "Start with a 10-15 minute gradual warm-up.",
+            f"Main work: 20-40 minutes of zone 2, technique, or submax strength at RPE <= {rpe_cap}/10.",
+            "Cool down for 5 minutes and leave 2-3 reps or one more interval in reserve.",
+        ]
+    else:
+        blueprint = [
+            "Start with a 10-15 minute warm-up and check breathing, form, and pain.",
+            f"Main work can be challenging, but keep the ceiling at RPE <= {rpe_cap}/10.",
+            "Skip max attempts if the warm-up feels off; cool down before you feel cooked.",
+        ]
+
+    if subjective_limiter:
+        blueprint.insert(
+            1,
+            "At 10-15 minutes, continue only if energy improves and pain, breathing, and heart rate feel normal.",
+        )
+    return _dedupe(blueprint)
+
+
+def _workout_session_blueprint(
+    *,
+    warmup: list[str],
+    session: list[str],
+    focus: list[str],
+    exercise_blocks: list[dict[str, Any]],
+    rpe_cap: int,
+    subjective_limiter: bool,
+    illness_flags: list[str],
+) -> list[str]:
+    if illness_flags:
+        return [
+            "Do not do the planned workout hard today.",
+            "Use rest, fluids, and at most very easy walking or mobility while symptoms are present.",
+            "Come back to the plan after symptoms improve and normal daily movement feels okay.",
+        ]
+
+    blueprint: list[str] = []
+    if warmup:
+        blueprint.append(f"Warm-up: {warmup[0]}")
+    else:
+        blueprint.append("Warm-up: 10 minutes easy and only continue if movement feels better.")
+
+    if subjective_limiter:
+        blueprint.append("Readiness screen: after 10-15 minutes, continue only if you feel better, not worse.")
+
+    block_names = _representative_exercise_names(exercise_blocks)
+    if block_names:
+        blueprint.append(f"Main work: {', '.join(block_names[:3])}; keep every set at RPE <= {rpe_cap}/10.")
+    elif session:
+        blueprint.append(session[0])
+    elif focus:
+        blueprint.append(focus[0])
+
+    if len(session) > 1:
+        blueprint.append(session[1])
+    else:
+        blueprint.append(f"Stop with energy in reserve; RPE stays <= {rpe_cap}/10.")
+
+    if focus:
+        blueprint.append(f"Main coaching cue: {focus[0]}")
+
+    return _dedupe(blueprint)[:5]
+
+
+def _representative_exercise_names(exercise_blocks: list[dict[str, Any]]) -> list[str]:
+    names = [
+        str(block.get("exercise"))
+        for block in exercise_blocks
+        if isinstance(block, dict) and block.get("exercise")
+    ]
+    if len(names) <= 3:
+        return names
+
+    lower_names = [(name, name.lower()) for name in names]
+
+    def first_with(*terms: str) -> str | None:
+        for name, lower in lower_names:
+            if any(term in lower for term in terms):
+                return name
+        return None
+
+    selected = [
+        first_with("press", "chest"),
+        first_with("row"),
+        first_with("pulldown", "pull-up", "pullup"),
+    ]
+    selected = [name for name in selected if name]
+    if len(selected) >= 2:
+        return _dedupe(selected + names)
+    return names
+
+
+def _active_workout_next_check(
+    *,
+    decision: str,
+    rpe: int | None,
+    current_heart_rate_bpm: int | None,
+    pain: int | None,
+) -> list[str]:
+    if decision in {"stop_and_assess", "stop_session"}:
+        return [
+            "Next 3-5 minutes: stop hard work, breathe normally, and let heart rate and symptoms settle.",
+            "Do not restart hard training today if symptoms are new, severe, or return.",
+            "Seek urgent help for chest pain, fainting, severe shortness of breath, or worsening symptoms.",
+        ]
+    if decision == "downshift_now":
+        return [
+            "Next 3-5 minutes: go easy until breathing and heart rate clearly settle.",
+            "Resume only one level easier, and stop the hard work if RPE climbs back near the ceiling.",
+            "Cut the next block by 25-50% or switch to zone 2.",
+        ]
+    if decision == "modify":
+        return [
+            "Next set: reduce load, range, speed, or impact before pain changes your form.",
+            "Continue only if pain stays at 3/10 or lower.",
+            "Switch movements if the same pain repeats.",
+        ]
+
+    checks = ["Next 5-10 minutes: hold steady instead of chasing a harder effort."]
+    if rpe is not None:
+        checks.append(f"Keep RPE at or below {min(max(rpe, 6), 8)}/10 unless the plan intentionally calls for more.")
+    if current_heart_rate_bpm is not None:
+        checks.append("Heart rate should rise and settle predictably for the work you are doing.")
+    if pain is not None:
+        checks.append("Pain stays 3/10 or lower and does not change your form.")
+    return _dedupe(checks)
+
+
 def _today_workout_coach_response(
     *,
     intensity: str,
@@ -1310,7 +1571,11 @@ def _today_workout_coach_response(
     subjective_limiter: bool,
     illness_flags: list[str],
 ) -> dict[str, Any]:
-    if illness_flags:
+    evidence_text = " ".join(evidence).lower()
+    has_stale_data = "data freshness is stale" in evidence_text or "sync latest fitbit data" in evidence_text
+    if has_stale_data:
+        short_answer = "Sync latest Fitbit data before a time-sensitive hard workout decision. If you train before syncing, keep it controlled."
+    elif illness_flags:
         short_answer = "Skip hard training today. If symptoms are mild and improving, keep it to a short easy walk or mobility."
     elif intensity == "easy":
         short_answer = "Make today recovery-biased: useful movement is fine, but do not chase fitness today."
@@ -1325,9 +1590,17 @@ def _today_workout_coach_response(
     what_to_do = list(next_actions[:3])
     rpe_line = f"Keep RPE (how hard it feels) at or below {rpe_cap}/10, which means {_rpe_plain(rpe_cap)}."
     what_to_do.insert(1 if what_to_do else 0, rpe_line)
+    session_blueprint = _today_session_blueprint(
+        intensity=intensity,
+        rpe_cap=rpe_cap,
+        subjective_limiter=subjective_limiter,
+        illness_flags=illness_flags,
+    )
 
     return {
         "short_answer": short_answer,
+        "data_story": _coach_data_story(readiness, evidence),
+        "session_blueprint": session_blueprint,
         "what_to_do": _dedupe(what_to_do)[:5],
         "why": _humanized_evidence(evidence)[:6],
         "labels_explained": _coach_metric_glossary(),
@@ -1350,16 +1623,21 @@ def _workout_plan_coach_response(
     rpe_cap: int,
     readiness: dict[str, Any],
     focus: list[str],
+    warmup: list[str],
     session: list[str],
+    exercise_blocks: list[dict[str, Any]],
     limiting_factors: list[str],
     avoid: list[str],
     substitutions: list[str],
     subjective_limiter: bool,
+    preserving_next_session: bool,
     illness_flags: list[str],
     stop_conditions: list[str],
 ) -> dict[str, Any]:
     if illness_flags:
         short_answer = f"For {display_activity}, keep this as rest or very easy movement until symptoms improve."
+    elif preserving_next_session:
+        short_answer = f"For {display_activity}, train controlled enough that tomorrow still stays available."
     elif intensity == "easy":
         short_answer = f"For {display_activity}, make the win leaving better than you started."
     elif intensity == "moderate":
@@ -1376,8 +1654,19 @@ def _workout_plan_coach_response(
         *session[:2],
         *focus[:2],
     ]
+    session_blueprint = _workout_session_blueprint(
+        warmup=warmup,
+        session=session,
+        focus=focus,
+        exercise_blocks=exercise_blocks,
+        rpe_cap=rpe_cap,
+        subjective_limiter=subjective_limiter,
+        illness_flags=illness_flags,
+    )
     return {
         "short_answer": short_answer,
+        "data_story": _coach_data_story(readiness, limiting_factors),
+        "session_blueprint": session_blueprint,
         "what_to_do": _dedupe(what_to_do)[:5],
         "why": _humanized_evidence(limiting_factors)[:6],
         "labels_explained": _coach_metric_glossary(),
@@ -1402,6 +1691,7 @@ def _active_workout_coach_response(
     avoid: list[str],
     safety_flags: list[str],
     evidence: list[str],
+    readiness: dict[str, Any],
     rpe: int | None,
     current_heart_rate_bpm: int | None,
     pain: int | None,
@@ -1431,6 +1721,13 @@ def _active_workout_coach_response(
 
     return {
         "short_answer": short_answer,
+        "data_story": _coach_data_story(readiness, safety_flags or evidence),
+        "next_check": _active_workout_next_check(
+            decision=decision,
+            rpe=rpe,
+            current_heart_rate_bpm=current_heart_rate_bpm,
+            pain=pain,
+        ),
         "what_to_do": _dedupe([headline, *immediate_actions, *modifications])[:5],
         "live_context": live_context,
         "why": _humanized_evidence(safety_flags or evidence)[:6],

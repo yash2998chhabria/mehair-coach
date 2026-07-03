@@ -385,6 +385,8 @@ def test_eval_green_day_keeps_training_available_but_grounded_in_data(tmp_path, 
     assert any("1 goal session(s) remain" in item for item in clues["next_actions"])
     assert recommendation["intensity"] == "moderate-to-hard"
     assert recommendation["rpe_cap"] == 8
+    assert "sleep supports training" in recommendation["coach_response"]["data_story"]
+    assert "your check-in changes the plan" not in recommendation["coach_response"]["data_story"]
     assert recommendation["data_used"]["recent_workouts"] == 2
     assert recommendation["goal_context"]["remaining_sessions"] == 1
     assert any("normal" in item.lower() or "train" in item.lower() for item in recommendation["next_actions"])

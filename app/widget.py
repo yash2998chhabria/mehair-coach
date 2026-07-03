@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 
 
-WIDGET_URI = "ui://mehair/today-v8.html"
+WIDGET_URI = "ui://mehair/today-v9.html"
 LEGACY_WIDGET_URIS = (
     "ui://mehair/today-v1.html",
     "ui://mehair/today-v2.html",
@@ -12,6 +12,7 @@ LEGACY_WIDGET_URIS = (
     "ui://mehair/today-v5.html",
     "ui://mehair/today-v6.html",
     "ui://mehair/today-v7.html",
+    "ui://mehair/today-v8.html",
 )
 WIDGET_RESOURCE_URIS = (WIDGET_URI, *LEGACY_WIDGET_URIS)
 WIDGET_MIME_TYPE = "text/html;profile=mcp-app"
@@ -338,6 +339,38 @@ TODAY_WIDGET_HTML = """
         line-height: 1.28;
       }
 
+      .label-key {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 8px;
+        border-top: 1px solid #edf0ea;
+        padding: 0 14px 14px;
+      }
+
+      .label-pill {
+        min-width: 0;
+        border: 1px solid #e4e9e4;
+        border-radius: 8px;
+        background: #fbfcfb;
+        padding: 9px 10px;
+      }
+
+      .label-pill b {
+        display: block;
+        color: var(--ink);
+        font-size: 12px;
+        font-weight: 820;
+        line-height: 1.2;
+      }
+
+      .label-pill span {
+        display: block;
+        margin-top: 3px;
+        color: #59636b;
+        font-size: 11px;
+        line-height: 1.3;
+      }
+
       .details {
         display: grid;
         grid-template-columns: 1fr 1fr;
@@ -398,6 +431,7 @@ TODAY_WIDGET_HTML = """
 
       @media (max-width: 340px) {
         .metrics { grid-template-columns: 1fr; }
+        .label-key { grid-template-columns: 1fr; }
       }
     </style>
   </head>
@@ -461,7 +495,7 @@ TODAY_WIDGET_HTML = """
       async function initialize() {
         try {
           await rpcRequest("ui/initialize", {
-            appInfo: { name: "mehair-coach-widget", version: "0.4.0" },
+            appInfo: { name: "mehair-coach-widget", version: "0.5.0" },
             appCapabilities: {},
             protocolVersion: "2026-01-26",
           });
@@ -604,8 +638,9 @@ TODAY_WIDGET_HTML = """
           headline: brief.summary || data.headline || readiness.recommendation || "All synced health data summarized.",
           focusTitle: "Today Plan",
           focus: primaryActions,
+          labels: defaultLabelKey(["Readiness", "HRV", "Resting HR", "AZM"]),
           metrics: [
-            ["Move Today", todaySteps != null ? intText(todaySteps) : null, windowSteps != null && range ? `${intText(windowSteps)} in window` : latestActivity.date || ""],
+            ["Move Today", todaySteps != null ? intText(todaySteps) : null, windowSteps != null && range ? `${intText(windowSteps)} in window` : "today so far"],
             ["Training Load", latestLoadAzm != null ? `${intText(latestLoadAzm)} AZM` : null, latestLoadDetail, "AZM = Fitbit hard-work minutes."],
             ["Sleep vs Avg", sleepDelta != null ? `${signed(sleepDelta)}h` : (sleepHours != null ? `${num(sleepHours, 1)}h` : null), sleepHours != null ? `latest ${num(sleepHours, 1)}h` : ""],
             ["HRV vs Avg", hrvDelta != null ? `${signed(hrvDelta)}%` : (hrv != null ? `${num(hrv, 1)} ms` : null), hrv != null && heart.average_hrv_ms ? `${num(hrv, 1)} vs ${num(heart.average_hrv_ms, 1)} ms` : "", "HRV = recovery stress signal."],
@@ -725,20 +760,21 @@ TODAY_WIDGET_HTML = """
           score: finiteNumber(readiness.score, 0),
           primaryLabel: "Readiness",
           headline: coach.short_answer || workoutHeadline(data),
-          focusTitle: "What To Do",
-          focus: coach.what_to_do || data.next_actions || [],
+          focusTitle: coach.session_blueprint ? "Next Session" : "What To Do",
+          focus: coach.session_blueprint || coach.what_to_do || data.next_actions || [],
+          labels: coach.labels_explained || defaultLabelKey(["Readiness", "RPE", "HRV", "Resting HR", "AZM"]),
           metrics: [
-            ["Move Today", intText(today.steps ?? data.data_used?.steps_today ?? 0), "steps today", "Light movement context, not the whole decision."],
-            ["AZM Today", intText(today.active_zone_minutes ?? data.data_used?.active_zone_minutes_today ?? 0), "today", "AZM = Fitbit hard-work minutes."],
+            ["Move Today", intText(today.steps ?? data.data_used?.steps_today ?? 0), "today so far", "Light movement context, not the whole decision."],
+            ["AZM Today", intText(today.active_zone_minutes ?? data.data_used?.active_zone_minutes_today ?? 0), "today so far", "AZM = Fitbit hard-work minutes."],
             ["Sleep", sleepHours != null ? `${num(sleepHours, 1)}h` : null],
             ["HRV", data.data_used?.hrv_ms != null ? `${num(data.data_used.hrv_ms, 1)} ms` : null],
             ["Soreness", subjective.soreness != null ? `${subjective.soreness}/10` : null, subjective.energy != null ? `energy ${subjective.energy}/10` : ""],
             ["Goal", goal.remaining_sessions != null ? intText(goal.remaining_sessions) : "No goal", goalDetail],
           ],
           evidenceTitle: "Why",
-          evidence: coach.why || prioritizeWorkoutEvidence(data.evidence || data.why || []),
-          secondaryTitle: "Avoid",
-          secondary: coach.avoid || data.avoid || [],
+          evidence: [coach.data_story, ...(coach.why || prioritizeWorkoutEvidence(data.evidence || data.why || []))].filter(Boolean),
+          secondaryTitle: coach.stop_if ? "Stop If" : "Avoid",
+          secondary: coach.stop_if || coach.avoid || data.avoid || [],
         };
       }
 
@@ -824,9 +860,10 @@ TODAY_WIDGET_HTML = """
           score: finiteNumber(readiness.score ?? dataUsed.readiness_score, 0),
           primaryLabel: "Readiness",
           headline: coach.short_answer || workoutHeadline(data),
-          focusTitle: "What To Do",
-          focus: coach.what_to_do || planFocus,
+          focusTitle: coach.session_blueprint ? "Session Blueprint" : "What To Do",
+          focus: coach.session_blueprint || coach.what_to_do || planFocus,
           blocks: data.exercise_blocks || [],
+          labels: coach.labels_explained || defaultLabelKey(["Readiness", "RPE", "HRV", "Resting HR", "AZM"]),
           metrics: [
             ["RPE cap", data.rpe_cap != null ? `${data.rpe_cap}/10` : null, rpePlain(data.rpe_cap)],
             ["Intensity", titleCase(data.recommended_intensity || ""), "", "The workout should feel this aggressive."],
@@ -836,7 +873,7 @@ TODAY_WIDGET_HTML = """
             ["Latest load", dataUsed.latest_training_load?.active_zone_minutes != null ? `${dataUsed.latest_training_load.active_zone_minutes} AZM` : null, dataUsed.latest_training_load?.date || "", "AZM = Fitbit hard-work minutes."],
           ],
           evidenceTitle: "Why This Plan",
-          evidence: (coach.why || data.limiting_factors || data.why || []).slice(0, 5),
+          evidence: [coach.data_story, ...(coach.why || data.limiting_factors || data.why || [])].filter(Boolean).slice(0, 5),
           secondaryTitle: substitutions.length ? "Substitutions" : "Avoid",
           secondary: (substitutions.length ? substitutions : coach.avoid || data.avoid || []).slice(0, 5),
         };
@@ -865,6 +902,7 @@ TODAY_WIDGET_HTML = """
           headline: coach.short_answer || data.headline || "Use live symptoms and effort to adjust the session.",
           focusTitle: "Do Now",
           focus: coach.what_to_do || data.immediate_actions || [],
+          labels: coach.labels_explained || defaultLabelKey(["HR", "RPE", "Readiness", "AZM"]),
           metrics: [
             ["Heart rate", live.current_heart_rate_bpm != null ? `${live.current_heart_rate_bpm} bpm` : null],
             ["RPE", live.current_rpe != null ? `${live.current_rpe}/10` : null, rpePlain(live.current_rpe)],
@@ -874,9 +912,9 @@ TODAY_WIDGET_HTML = """
             ["Latest load", dataUsed.latest_training_load?.active_zone_minutes != null ? `${dataUsed.latest_training_load.active_zone_minutes} AZM` : null, "", "AZM = Fitbit hard-work minutes."],
           ],
           evidenceTitle: safety.length ? "Safety Flags" : "Evidence",
-          evidence,
-          secondaryTitle: safety.length ? "Stop If" : "Modify / Avoid",
-          secondary: (safety.length ? coach.stop_if || safety : [...(data.modifications || []), ...(coach.avoid || data.avoid || [])]).slice(0, 5),
+          evidence: [coach.data_story, ...evidence].filter(Boolean),
+          secondaryTitle: safety.length || coach.next_check ? "Next Check" : "Modify / Avoid",
+          secondary: (coach.next_check || (safety.length ? coach.stop_if || safety : [...(data.modifications || []), ...(coach.avoid || data.avoid || [])])).slice(0, 5),
         };
       }
 
@@ -1044,6 +1082,7 @@ TODAY_WIDGET_HTML = """
           <div class="metrics">
             ${(model.metrics || []).slice(0, 6).map((item) => metric(item[0], item[1], item[2], item[3])).join("")}
           </div>
+          ${renderLabelKey(model.labels)}
           <div class="details">
             <div class="section">
               <h3>${escapeHtml(model.evidenceTitle || "Evidence")}</h3>
@@ -1053,6 +1092,21 @@ TODAY_WIDGET_HTML = """
               <h3>${escapeHtml(secondaryTitle)}</h3>
               <ul class="evidence">${listItems(secondary, "No extra limits detected.")}</ul>
             </div>
+          </div>
+        `;
+      }
+
+      function renderLabelKey(labels) {
+        const usable = (labels || []).filter((item) => item && item.label && item.meaning).slice(0, 4);
+        if (!usable.length) return "";
+        return `
+          <div class="label-key" aria-label="Metric label explanations">
+            ${usable.map((item) => `
+              <div class="label-pill">
+                <b>${escapeHtml(item.label)}</b>
+                <span>${escapeHtml(item.meaning)}</span>
+              </div>
+            `).join("")}
           </div>
         `;
       }
@@ -1173,6 +1227,18 @@ TODAY_WIDGET_HTML = """
         if (lower.includes("goal")) return "Goal pressure comes after recovery signals.";
         if (lower.includes("vitals")) return "Extra recovery context from Fitbit.";
         return "";
+      }
+
+      function defaultLabelKey(labels) {
+        const meanings = {
+          "Readiness": "sleep, heart, and recent load blended into one recovery cue",
+          "RPE": "how hard it feels from 1 easy to 10 max",
+          "HR": "heart rate right now, in beats per minute",
+          "HRV": "recovery stress signal compared with your usual",
+          "Resting HR": "heart stress signal at rest",
+          "AZM": "Fitbit hard-work minutes from elevated heart-rate zones",
+        };
+        return (labels || []).map((label) => ({ label, meaning: meanings[label] })).filter((item) => item.meaning);
       }
 
       function explainEvidenceItem(item) {
@@ -1528,6 +1594,12 @@ WIDGET_PREVIEW_STATES: dict[str, dict] = {
         "subjective_context": {"energy": 3, "soreness": 7, "stress": 6},
         "coach_response": {
             "short_answer": "Make today recovery-biased: useful movement is fine, but do not chase fitness today.",
+            "data_story": "The useful read: sleep is limiting recovery; HRV is lower than usual; Resting HR is elevated.",
+            "session_blueprint": [
+                "Start with 10 minutes easy walking, cycling, or mobility to see if you feel better.",
+                "Then do 10-25 minutes easy movement at RPE <= 6/10; stop before it feels like work.",
+                "Finish while you feel better than when you started.",
+            ],
             "what_to_do": [
                 "Make today recovery-biased: walk, mobility, easy cardio, or rest.",
                 "Keep RPE (how hard it feels) at or below 6/10, which means comfortable.",
@@ -1539,6 +1611,16 @@ WIDGET_PREVIEW_STATES: dict[str, dict] = {
                 "Resting HR (resting heart rate; heart stress at rest) is elevated: 67 bpm vs 58 bpm baseline. Elevated versus your usual can point to stress, illness, fatigue, or under-recovery.",
                 "Latest training load: 72 Active Zone Minutes (AZM, Fitbit hard-work minutes) on 2026-07-02.",
                 "Latest soreness check-in is 7/10. Your own body report can override a good wearable score.",
+            ],
+            "labels_explained": [
+                {"label": "Readiness", "meaning": "a quick recovery score built from sleep, heart, and recent load signals"},
+                {"label": "RPE", "meaning": "how hard it feels from 1 easy to 10 max"},
+                {"label": "HRV", "meaning": "recovery stress signal compared with your usual"},
+                {"label": "AZM", "meaning": "Fitbit hard-work minutes from elevated heart-rate zones"},
+            ],
+            "stop_if": [
+                "Stop if pain rises above 3/10, becomes sharp, or changes your form.",
+                "End early if the warm-up does not make you feel better within 10-15 minutes.",
             ],
             "avoid": ["Loading sore areas aggressively", "Another hard conditioning block today"],
         },
@@ -1623,6 +1705,13 @@ WIDGET_PREVIEW_STATES: dict[str, dict] = {
         },
         "coach_response": {
             "short_answer": "For chest and back gym session, make the win leaving better than you started.",
+            "data_story": "The useful read: HRV is lower than usual; Resting HR is elevated; recent training load matters today.",
+            "session_blueprint": [
+                "Warm-up: 5-8 minutes easy cardio to check readiness.",
+                "Main work: Machine chest press, Chest-supported row, Neutral-grip lat pulldown; keep every set at RPE <= 6/10.",
+                "Keep working sets at or below RPE 6/10 (comfortable, should not feel like a grind).",
+                "Main coaching cue: Prefer chest-supported rows, pulldowns, and cable work.",
+            ],
             "what_to_do": [
                 "For today, keep chest and back at easy intensity with an RPE cap around 6/10.",
                 "RPE (how hard it feels) cap: 6/10, which means comfortable.",
@@ -1633,6 +1722,12 @@ WIDGET_PREVIEW_STATES: dict[str, dict] = {
                 "HRV (recovery stress signal) is below recent baseline: 31.3 ms vs 60.9 ms. Lower HRV than usual is a caution signal, so cap intensity.",
                 "Resting HR (resting heart rate; heart stress at rest) is slightly elevated: 65 bpm.",
                 "User-stated lower-back or hip constraint should cap spinal loading.",
+            ],
+            "labels_explained": [
+                {"label": "Readiness", "meaning": "a quick recovery score built from sleep, heart, and recent load signals"},
+                {"label": "RPE", "meaning": "how hard it feels from 1 easy to 10 max"},
+                {"label": "HRV", "meaning": "recovery stress signal compared with your usual"},
+                {"label": "Resting HR", "meaning": "heart stress signal at rest, best judged against your usual"},
             ],
             "avoid": ["Heavy deadlifts", "Heavy bent-over rows", "Aggressive bench arch if low back feels sensitive"],
         },
@@ -1674,6 +1769,12 @@ WIDGET_PREVIEW_STATES: dict[str, dict] = {
         },
         "coach_response": {
             "short_answer": "Stop the hard part now. Treat this as a safety decision, not a toughness decision.",
+            "data_story": "The useful read: live symptoms override the workout plan.",
+            "next_check": [
+                "Next 3-5 minutes: stop hard work, breathe normally, and let heart rate and symptoms settle.",
+                "Do not restart hard training today if symptoms are new, severe, or return.",
+                "Seek urgent help for chest pain, fainting, severe shortness of breath, or worsening symptoms.",
+            ],
             "what_to_do": [
                 "Stop the set or interval now and move to a safe seated or standing position.",
                 "Do not resume hard training while these symptoms are present.",
@@ -1686,6 +1787,12 @@ WIDGET_PREVIEW_STATES: dict[str, dict] = {
             ],
             "why": [
                 "Reported symptoms may need medical caution; stop hard training and seek urgent care for chest pain, fainting, severe shortness of breath, or new/worsening symptoms.",
+            ],
+            "labels_explained": [
+                {"label": "HR", "meaning": "heart rate right now, in beats per minute"},
+                {"label": "RPE", "meaning": "how hard it feels from 1 easy to 10 max"},
+                {"label": "Readiness", "meaning": "a quick recovery score built from sleep, heart, and recent load signals"},
+                {"label": "AZM", "meaning": "Fitbit hard-work minutes from elevated heart-rate zones"},
             ],
             "stop_if": [
                 "Stop if symptoms are new, severe, or worsening.",
