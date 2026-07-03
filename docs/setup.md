@@ -46,6 +46,7 @@ Use read-only Google Health scopes. This project intentionally excludes nutritio
 The repo includes a Render Blueprint at `render.yaml`:
 
 - Python web service on the `main` branch.
+- Python 3.12.12 runtime pinned with `PYTHON_VERSION`.
 - `uv sync --frozen --no-dev` build.
 - `uv run --no-sync python -m app.main` start.
 - `/health` health check.

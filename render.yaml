@@ -16,6 +16,8 @@ services:
     envVars:
       - key: UV_VERSION
         value: 0.10.8
+      - key: PYTHON_VERSION
+        value: 3.12.12
       - key: DATABASE_URL
         value: sqlite:////var/data/mehair-coach.sqlite3
       - key: TOKEN_ENCRYPTION_KEY
