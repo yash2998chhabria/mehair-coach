@@ -1,4 +1,4 @@
-WIDGET_URI = "ui://mehair/today-v3.html"
+WIDGET_URI = "ui://mehair/today-v4.html"
 WIDGET_MIME_TYPE = "text/html;profile=mcp-app"
 
 
@@ -427,6 +427,8 @@ TODAY_WIDGET_HTML = """
 
       function toViewModel(data) {
         if (data?.overview_type === "health_overview" && data?.sections) return healthOverviewModel(data);
+        if (data?.clue_type === "health_question_clues") return questionCluesModel(data);
+        if (data?.comparison_type === "sleep_heart_recovery") return recoveryComparisonModel(data);
         if (data?.planned_activity && Array.isArray(data.session_guidance)) return workoutPlanModel(data);
         if (data?.recommendation && Array.isArray(data.next_actions) && data?.goal_context) return todayWorkoutModel(data);
         if (data?.latest && Array.isArray(data.days) && (data.latest.stages_minutes || data.latest.sessions_count != null)) {
@@ -480,6 +482,78 @@ TODAY_WIDGET_HTML = """
             ["HRV", hrv ? `${num(hrv, 1)} ms` : null, heart.average_hrv_ms ? `avg ${num(heart.average_hrv_ms, 1)}` : ""],
             ["Resting HR", rhr ? `${num(rhr, 1)} bpm` : null, heart.average_resting_heart_rate ? `avg ${num(heart.average_resting_heart_rate, 1)}` : ""],
             ["Workouts", intText(workouts.workout_count ?? 0), recovery.latest_spo2 ? `SpO2 ${num(recovery.latest_spo2, 1)}%` : ""],
+          ],
+          evidenceTitle: "Positives",
+          evidence: data.positives || [],
+          secondaryTitle: "Watchouts",
+          secondary: data.watchouts || [],
+        };
+      }
+
+      function questionCluesModel(data) {
+        const readiness = data.readiness || {};
+        const metrics = data.relevant_metrics || [];
+        const available = metrics.filter((item) => Number(item.records || 0) > 0);
+        const intents = data.intent_hints || [];
+        const freshness = data.data_freshness || {};
+        const topMetrics = (available.length ? available : metrics).slice(0, 6);
+        return {
+          accent: "#4b6f8f",
+          title: "Health Clues",
+          eyebrow: "Metric Finder",
+          date: data.today?.activity_date && data.today?.recovery_date && data.today.activity_date !== data.today.recovery_date
+            ? `Activity ${data.today.activity_date}; recovery ${data.today.recovery_date}`
+            : data.today?.activity_date || freshness.latest_observed_date || "",
+          chips: [
+            intents[0] || "overview",
+            `${available.length}/${metrics.length || 0} metrics`,
+            freshnessChip(freshness),
+          ].filter(Boolean),
+          score: finiteNumber(readiness.score, 0),
+          primaryLabel: "Readiness",
+          headline: data.headline || "Useful Fitbit signals selected for this question.",
+          focusTitle: "Best Clues",
+          focus: data.clues || [],
+          metrics: topMetrics.map((item) => [
+            item.label || item.id,
+            intText(item.records ?? 0),
+            item.latest_observed_date || "not synced",
+          ]),
+          evidenceTitle: "Why These",
+          evidence: topMetrics.map((item) => `${item.label || item.id}: ${item.reason || "Useful context."}`),
+          secondaryTitle: "Watchouts",
+          secondary: data.watchouts || [],
+        };
+      }
+
+      function recoveryComparisonModel(data) {
+        const readiness = data.readiness || {};
+        const latest = data.latest || {};
+        const baseline = data.baseline || {};
+        const deltas = data.current_vs_baseline || {};
+        const label = readiness.label || "pending";
+        return {
+          accent: readinessAccent(label),
+          title: "Recovery Comparison",
+          eyebrow: "Sleep + Heart",
+          date: data.date_range?.start && data.date_range?.end ? `${data.date_range.start} to ${data.date_range.end}` : latest.date || "",
+          chips: [
+            label,
+            `${data.data_used?.days_compared || data.window_days || 14} days`,
+            freshnessChip(data.data_freshness || {}),
+          ].filter(Boolean),
+          score: finiteNumber(readiness.score, 0),
+          primaryLabel: "Readiness",
+          headline: data.headline || "Sleep, heart, and load compared against baseline.",
+          focusTitle: "Pattern",
+          focus: data.insights || [],
+          metrics: [
+            ["Sleep", latest.sleep_hours != null ? `${num(latest.sleep_hours, 1)}h` : null, baseline.sleep_hours != null ? `base ${num(baseline.sleep_hours, 1)}h` : ""],
+            ["Sleep delta", deltas.sleep_hours_delta != null ? `${signed(deltas.sleep_hours_delta)}h` : null],
+            ["HRV", latest.hrv_ms != null ? `${num(latest.hrv_ms, 1)} ms` : null, baseline.hrv_ms != null ? `base ${num(baseline.hrv_ms, 1)}` : ""],
+            ["HRV delta", deltas.hrv_percent_delta != null ? `${signed(deltas.hrv_percent_delta)}%` : null],
+            ["Resting HR", latest.resting_heart_rate != null ? `${latest.resting_heart_rate} bpm` : null, baseline.resting_heart_rate != null ? `base ${num(baseline.resting_heart_rate, 1)}` : ""],
+            ["Load", latest.active_zone_minutes != null ? `${latest.active_zone_minutes} AZM` : null, baseline.active_zone_minutes != null ? `base ${num(baseline.active_zone_minutes, 1)}` : ""],
           ],
           evidenceTitle: "Positives",
           evidence: data.positives || [],
@@ -841,6 +915,12 @@ TODAY_WIDGET_HTML = """
         const number = Number(value);
         if (!Number.isFinite(number)) return "0";
         return Math.round(number).toLocaleString();
+      }
+
+      function signed(value) {
+        const number = Number(value);
+        if (!Number.isFinite(number)) return "";
+        return `${number >= 0 ? "+" : ""}${num(number, Math.abs(number) < 10 ? 1 : 0)}`;
       }
 
       function optionalInt(value) {

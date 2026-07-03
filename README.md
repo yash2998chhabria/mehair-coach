@@ -14,6 +14,8 @@ The project starts empty. It does not import any existing Fitbit export and it d
 - Lets ChatGPT query specific synced metrics over bounded date windows.
 - Summarizes readiness, sleep, activity load, heart trends, and workout history.
 - Produces an all-data health overview with positives, watchouts, and next actions.
+- Lets ChatGPT decide which Fitbit metrics matter for vague questions like “why am I tired?” or “how hard should I train today?”
+- Compares sleep, HRV, resting heart rate, overnight recovery context, and zone-minute load against recent baseline.
 - Flags whether synced data is fresh, aging, or stale before time-sensitive coaching.
 - Plans specific workouts using synced recovery/load data plus goals, check-ins, and constraints.
 - Stores local goals and subjective check-ins for better coaching prompts.
@@ -42,7 +44,7 @@ The sync tool queries read-only Google Health data categories that are useful fo
 
 Food and nutrition are intentionally excluded because the first version is device-first coaching, and the user may not log food data.
 
-The app exposes this in three layers: a high-level overview tool for normal “what does my data say?” prompts, coaching tools for workout decisions, and a metric catalog/query layer so ChatGPT can inspect specific signals when a question needs more detail.
+The app exposes this in four layers: a high-level overview tool for normal “what does my data say?” prompts, a question-clue tool that chooses useful signals for vague questions, coaching tools for workout decisions, and a metric catalog/query layer so ChatGPT can inspect specific signals when a question needs more detail.
 
 ## Architecture
 
@@ -67,6 +69,8 @@ flowchart LR
 - `get_today_context` returns the latest daily activity, sleep, heart, readiness, and evidence.
 - `get_health_overview` returns an all-data overview across readiness, activity, sleep, heart, recovery, workouts, goals, check-ins, freshness, coverage, positives, watchouts, and next actions.
 - `get_recovery_readiness` returns the readiness score and evidence.
+- `get_health_question_clues` maps a natural-language health or workout question to likely intents, useful synced metrics, visible clues, watchouts, and follow-up tools.
+- `get_recovery_signal_comparison` compares sleep, HRV, resting heart rate, overnight recovery signals, and activity load against recent baseline.
 - `recommend_workout_today` recommends the day’s training intensity using freshness, readiness, activity load, goals, recent workouts, and check-ins.
 - `plan_workout_with_health_context` plans a specific workout, sport session, or muscle-group day from synced data and user constraints.
 - `get_sleep_analysis` summarizes recent sleep.
@@ -152,6 +156,7 @@ How hard should I work out today?
 I want to train chest tomorrow, but my lower back is sore from squash. Plan it using my data.
 Why?
 Compare my sleep and heart rate.
+I feel cooked today. Which metrics matter, and what clues do you see?
 ```
 
 For friend testing, give your friend the same public `/mcp` URL and add their email to the Google OAuth test users list. They create the connector in their own ChatGPT developer-mode settings and authorize their own Google account. Their data is stored under their own app user id.
@@ -183,7 +188,7 @@ Use MCP Inspector:
 npx @modelcontextprotocol/inspector@latest --server-url http://localhost:8787/mcp --transport http
 ```
 
-The current automated tests cover OAuth metadata, encrypted token storage, setup/empty states, synthetic health calculations, all-data overview summaries, workout planning, MCP tool registration, widget registration, HTTP metadata routes, and a local private-beta E2E flow that simulates ChatGPT plus Google Health without creating live credentials.
+The current automated tests cover OAuth metadata, encrypted token storage, setup/empty states, synthetic health calculations, all-data overview summaries, metric clue selection, recovery signal comparison, workout planning, MCP tool registration, widget registration, HTTP metadata routes, and a local private-beta E2E flow that simulates ChatGPT plus Google Health without creating live credentials.
 
 ### ChatGPT Connector Cache
 

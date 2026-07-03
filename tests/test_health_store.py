@@ -296,6 +296,111 @@ def test_overview_flags_stale_data_before_time_sensitive_advice(tmp_path, monkey
     assert overview["next_actions"][0] == "Run sync_latest_fitbit_data before time-sensitive workout decisions."
 
 
+def test_question_clues_choose_recovery_heart_and_load_metrics(tmp_path, monkeypatch) -> None:
+    fixed_now = datetime(2026, 7, 3, 12, 0, tzinfo=UTC)
+    monkeypatch.setattr(health_store_module, "utc_now", lambda: fixed_now)
+    monkeypatch.setattr(health_store_module, "iso_now", lambda: fixed_now.isoformat())
+    db, store = make_store(tmp_path)
+    user_id = create_user(db)
+
+    for day, asleep_minutes, hrv, resting_hr, zone_minutes in [
+        ("2026-07-01", 450, 56.0, 58, 22),
+        ("2026-07-02", 455, 54.0, 58, 28),
+        ("2026-07-03", 305, 39.0, 65, 52),
+    ]:
+        year, month, day_num = [int(part) for part in day.split("-")]
+        store.upsert_records(
+            user_id,
+            "sleep",
+            [
+                {
+                    "name": f"sleep-{day}",
+                    "sleep": {
+                        "interval": {
+                            "startTime": f"{day}T00:00:00Z",
+                            "endTime": f"{day}T08:00:00Z",
+                        },
+                        "summary": {
+                            "minutesAsleep": str(asleep_minutes),
+                            "minutesAwake": "35",
+                            "minutesInSleepPeriod": str(asleep_minutes + 35),
+                        },
+                    },
+                }
+            ],
+        )
+        store.upsert_records(
+            user_id,
+            "daily-heart-rate-variability",
+            [
+                {
+                    "name": f"hrv-{day}",
+                    "dailyHeartRateVariability": {
+                        "averageHeartRateVariabilityMilliseconds": hrv
+                    },
+                    "date": {"year": year, "month": month, "day": day_num},
+                }
+            ],
+        )
+        store.upsert_records(
+            user_id,
+            "daily-resting-heart-rate",
+            [
+                {
+                    "name": f"rhr-{day}",
+                    "dailyRestingHeartRate": {"beatsPerMinute": resting_hr},
+                    "date": {"year": year, "month": month, "day": day_num},
+                }
+            ],
+        )
+        store.upsert_records(
+            user_id,
+            "active-zone-minutes",
+            [
+                {
+                    "name": f"azm-{day}",
+                    "activeZoneMinutes": {"activeZoneMinutes": zone_minutes},
+                    "interval": {"startTime": f"{day}T18:00:00Z"},
+                }
+            ],
+        )
+        store.upsert_records(
+            user_id,
+            "steps",
+            [
+                {
+                    "name": f"steps-{day}",
+                    "steps": {"count": 9000},
+                    "interval": {"startTime": f"{day}T12:00:00Z"},
+                }
+            ],
+        )
+
+    comparison = store.recovery_signal_comparison(user_id, days=7)
+    clues = store.health_question_clues(
+        user_id,
+        "How hard should I work out today, and why am I so tired?",
+        days=7,
+    )
+
+    assert comparison["status"] == "ok"
+    assert comparison["comparison_type"] == "sleep_heart_recovery"
+    assert comparison["current_vs_baseline"]["hrv_percent_delta"] < -20
+    assert comparison["current_vs_baseline"]["resting_heart_rate_delta"] >= 7
+    assert any("HRV" in item for item in comparison["watchouts"])
+    assert any("hard conditioning" in item for item in comparison["next_actions"])
+
+    assert clues["status"] == "ok"
+    assert clues["clue_type"] == "health_question_clues"
+    assert "workout_decision" in clues["intent_hints"]
+    assert "recovery" in clues["intent_hints"]
+    metric_ids = {item["id"] for item in clues["relevant_metrics"]}
+    assert {"sleep", "daily-heart-rate-variability", "daily-resting-heart-rate"} <= metric_ids
+    assert "recommend_workout_today" in clues["recommended_tool_sequence"]
+    assert "get_recovery_signal_comparison" in clues["recommended_tool_sequence"]
+    assert any("HRV" in item for item in clues["clues"] + clues["watchouts"])
+
+
 def test_partial_today_uses_latest_completed_recovery_signals(tmp_path) -> None:
     db, store = make_store(tmp_path)
     user_id = create_user(db)

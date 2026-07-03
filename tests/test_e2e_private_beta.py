@@ -353,6 +353,8 @@ async def test_private_beta_oauth_mcp_sync_and_coaching_flow(tmp_path, monkeypat
             assert "get_today_context" in tool_names
             assert "get_health_overview" in tool_names
             assert "plan_workout_with_health_context" in tool_names
+            assert "get_health_question_clues" in tool_names
+            assert "get_recovery_signal_comparison" in tool_names
             assert "list_available_health_metrics" in tool_names
             assert "query_health_metrics" in tool_names
 
@@ -513,6 +515,44 @@ async def test_private_beta_oauth_mcp_sync_and_coaching_flow(tmp_path, monkeypat
             assert "food" not in {item["id"] for item in overview["data_used"]["synced_metrics"]}
             assert overview["positives"]
             assert overview["next_actions"]
+
+            comparison = tool_content(
+                await mcp_request(
+                    client,
+                    access_token,
+                    "tools/call",
+                    {"name": "get_recovery_signal_comparison", "arguments": {"days": 7}},
+                    101,
+                )
+            )
+            assert comparison["status"] == "ok"
+            assert comparison["comparison_type"] == "sleep_heart_recovery"
+            assert comparison["latest"]["sleep_hours"] == 7.5
+            assert "sleep_hours" in comparison["data_used"]["signals"]
+
+            clues = tool_content(
+                await mcp_request(
+                    client,
+                    access_token,
+                    "tools/call",
+                    {
+                        "name": "get_health_question_clues",
+                        "arguments": {
+                            "question": "How hard should I work out today, and why?",
+                            "days": 7,
+                        },
+                    },
+                    102,
+                )
+            )
+            assert clues["status"] == "ok"
+            assert clues["clue_type"] == "health_question_clues"
+            assert "workout_decision" in clues["intent_hints"]
+            assert "recommend_workout_today" in clues["recommended_tool_sequence"]
+            assert "get_recovery_signal_comparison" in clues["recommended_tool_sequence"]
+            assert {"sleep", "daily-heart-rate-variability", "daily-resting-heart-rate"} <= {
+                item["id"] for item in clues["relevant_metrics"]
+            }
 
             plan = tool_content(
                 await mcp_request(

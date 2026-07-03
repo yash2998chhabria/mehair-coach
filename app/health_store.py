@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import math
 from collections import Counter, defaultdict
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
@@ -12,6 +13,83 @@ from .settings import Settings
 from .time_utils import iso_now, utc_now
 
 RECOVERY_KEYS = ("sleep", "hrv_ms", "resting_heart_rate", "spo2_avg", "respiratory_rate")
+
+INTENT_METRICS = {
+    "workout_decision": [
+        "exercise",
+        "active-zone-minutes",
+        "time-in-heart-rate-zone",
+        "steps",
+        "heart-rate",
+        "daily-resting-heart-rate",
+        "daily-heart-rate-variability",
+        "sleep",
+    ],
+    "recovery": [
+        "sleep",
+        "daily-heart-rate-variability",
+        "daily-resting-heart-rate",
+        "active-zone-minutes",
+        "daily-respiratory-rate",
+        "daily-oxygen-saturation",
+        "daily-sleep-temperature-derivations",
+    ],
+    "sleep": [
+        "sleep",
+        "daily-heart-rate-variability",
+        "daily-resting-heart-rate",
+        "daily-respiratory-rate",
+        "respiratory-rate-sleep-summary",
+        "daily-sleep-temperature-derivations",
+        "daily-oxygen-saturation",
+    ],
+    "heart": [
+        "daily-heart-rate-variability",
+        "daily-resting-heart-rate",
+        "heart-rate",
+        "heart-rate-variability",
+        "time-in-heart-rate-zone",
+    ],
+    "activity_load": [
+        "active-zone-minutes",
+        "time-in-heart-rate-zone",
+        "active-minutes",
+        "steps",
+        "distance",
+        "exercise",
+    ],
+    "subjective": ["sleep", "exercise", "active-zone-minutes", "daily-heart-rate-variability"],
+    "goal": ["exercise", "active-zone-minutes", "steps", "sleep"],
+    "general_overview": [
+        "sleep",
+        "daily-heart-rate-variability",
+        "daily-resting-heart-rate",
+        "active-zone-minutes",
+        "steps",
+        "exercise",
+        "daily-respiratory-rate",
+        "daily-oxygen-saturation",
+    ],
+}
+
+METRIC_COACHING_REASONS = {
+    "sleep": "Sleep duration, timing, and stages are primary recovery and fatigue context.",
+    "daily-heart-rate-variability": "Daily HRV helps spot autonomic recovery changes versus baseline.",
+    "heart-rate-variability": "HRV samples can add detail when daily HRV is sparse.",
+    "daily-resting-heart-rate": "Resting heart rate often rises with stress, fatigue, illness, or under-recovery.",
+    "heart-rate": "Heart-rate samples help explain intensity, unusual spikes, and workout effort.",
+    "time-in-heart-rate-zone": "Time in zones shows how much cardiovascular stress was accumulated.",
+    "active-zone-minutes": "Active Zone Minutes are a compact Fitbit load signal for workout decisions.",
+    "active-minutes": "Active minutes show movement volume even when zone minutes are low.",
+    "steps": "Steps are the simplest daily movement and load signal.",
+    "distance": "Distance helps interpret walking or running volume.",
+    "exercise": "Exercise sessions provide workout type, duration, calories, and session heart-rate context.",
+    "daily-respiratory-rate": "Respiratory rate can support sleep and recovery interpretation.",
+    "respiratory-rate-sleep-summary": "Sleep respiratory summaries can add overnight recovery context.",
+    "daily-oxygen-saturation": "SpO2 can provide extra overnight recovery context when available.",
+    "oxygen-saturation": "SpO2 samples can provide extra recovery context when daily summaries are sparse.",
+    "daily-sleep-temperature-derivations": "Sleep temperature deviation can be a useful recovery clue when available.",
+}
 
 
 class HealthStore:
@@ -527,6 +605,136 @@ class HealthStore:
             },
         }
 
+    def recovery_signal_comparison(self, user_id: str, days: int = 14) -> dict[str, Any]:
+        context = self.latest_context(user_id)
+        if context.get("status") != "ok":
+            return context
+        summary = summarize_records(self.records_for_user(user_id))
+        recent_days = sorted(summary["daily"].items())[-max(1, min(days, 30)):]
+        rows = [_recovery_row(day, values) for day, values in recent_days]
+        rows = [row for row in rows if _has_recovery_comparison_signal(row)]
+        if not rows:
+            return empty_data("No comparable sleep or heart recovery records have synced yet.")
+
+        latest = _latest_recovery_row(rows)
+        baseline_rows = [row for row in rows if row["date"] < latest["date"]]
+        baseline = {
+            "sleep_hours": _average([row["sleep_hours"] for row in baseline_rows]),
+            "hrv_ms": _average([row["hrv_ms"] for row in baseline_rows]),
+            "resting_heart_rate": _average([row["resting_heart_rate"] for row in baseline_rows]),
+            "active_zone_minutes": _average([row["active_zone_minutes"] for row in baseline_rows]),
+        }
+        current_vs_baseline = _current_vs_baseline(latest, baseline)
+        insights, watchouts, positives, next_actions = _recovery_comparison_takeaways(
+            latest,
+            baseline,
+            current_vs_baseline,
+            context,
+        )
+        paired_sleep_hrv = [
+            (row["sleep_hours"], row["hrv_ms"])
+            for row in rows
+            if row.get("sleep_hours") is not None and row.get("hrv_ms") is not None
+        ]
+        paired_sleep_rhr = [
+            (row["sleep_hours"], row["resting_heart_rate"])
+            for row in rows
+            if row.get("sleep_hours") is not None and row.get("resting_heart_rate") is not None
+        ]
+        return {
+            "status": "ok",
+            "comparison_type": "sleep_heart_recovery",
+            "window_days": max(1, min(days, 30)),
+            "date_range": {
+                "start": rows[0]["date"],
+                "end": rows[-1]["date"],
+            },
+            "headline": _recovery_comparison_headline(latest, current_vs_baseline),
+            "latest": latest,
+            "baseline": baseline,
+            "current_vs_baseline": current_vs_baseline,
+            "correlations": {
+                "sleep_vs_hrv": _pearson(paired_sleep_hrv),
+                "sleep_vs_resting_heart_rate": _pearson(paired_sleep_rhr),
+                "sample_size_sleep_hrv": len(paired_sleep_hrv),
+                "sample_size_sleep_resting_hr": len(paired_sleep_rhr),
+            },
+            "insights": insights,
+            "positives": positives,
+            "watchouts": watchouts,
+            "next_actions": next_actions,
+            "readiness": context["readiness"],
+            "data_freshness": context["data_freshness"],
+            "daily": rows,
+            "data_used": {
+                "activity_date": context.get("activity_date"),
+                "recovery_date": context.get("recovery_date"),
+                "days_compared": len(rows),
+                "signals": ["sleep_hours", "hrv_ms", "resting_heart_rate", "active_zone_minutes"],
+            },
+            "safety_note": "This is fitness coaching context, not medical advice.",
+        }
+
+    def health_question_clues(self, user_id: str, question: str, days: int = 14) -> dict[str, Any]:
+        context = self.latest_context(user_id)
+        if context.get("status") != "ok":
+            return context
+
+        safe_days = max(1, min(int(days or 14), 30))
+        question_text = str(question or "").strip()
+        intents = _question_intents(question_text)
+        catalog = self.available_metrics(user_id)
+        catalog_by_id = {item["id"]: item for item in catalog.get("metrics", [])}
+        metric_ids = _metric_ids_for_intents(intents)
+        relevant_metrics = _relevant_metric_cards(metric_ids, catalog_by_id, intents)
+        overview = self.health_overview(user_id, safe_days)
+        comparison = self.recovery_signal_comparison(user_id, safe_days)
+        clues, positives, watchouts, next_actions = _question_clue_takeaways(
+            intents=intents,
+            context=context,
+            overview=overview,
+            comparison=comparison,
+        )
+        if context.get("data_freshness", {}).get("needs_sync_before_time_sensitive_advice"):
+            next_actions.insert(0, "Run sync_latest_fitbit_data before answering time-sensitive training questions.")
+
+        return {
+            "status": "ok",
+            "clue_type": "health_question_clues",
+            "question": question_text or "General health and fitness coaching question",
+            "window_days": safe_days,
+            "headline": _question_clue_headline(intents, context, comparison),
+            "intent_hints": intents,
+            "recommended_tool_sequence": _recommended_tool_sequence(intents, context.get("data_freshness", {})),
+            "relevant_metrics": relevant_metrics,
+            "available_metric_ids": [item["id"] for item in relevant_metrics if item["records"] > 0],
+            "missing_metric_ids": [item["id"] for item in relevant_metrics if item["records"] == 0],
+            "query_suggestions": _metric_query_suggestions(intents, relevant_metrics),
+            "clues": _dedupe(clues),
+            "positives": _dedupe(positives),
+            "watchouts": _dedupe(watchouts),
+            "next_actions": _dedupe(next_actions),
+            "readiness": context["readiness"],
+            "today": _compact_today_context(context["today"]),
+            "overview_context": _compact_overview_context(overview),
+            "recovery_comparison": _compact_recovery_comparison(comparison),
+            "data_freshness": context["data_freshness"],
+            "answering_guidance": [
+                "Use the relevant_metrics list to decide which synced signals to inspect next.",
+                "Treat missing metrics as absent, not zero.",
+                "For workout decisions, combine readiness, sleep, HRV, resting HR, load, recent workouts, goals, and check-ins.",
+                "For symptom, pain, illness, or abnormal-heart-rate concerns, recommend appropriate clinical care instead of diagnosing.",
+            ],
+            "data_used": {
+                "activity_date": context.get("activity_date"),
+                "recovery_date": context.get("recovery_date"),
+                "synced_metric_count": catalog.get("synced_metric_count", 0),
+                "supported_metric_count": catalog.get("supported_metric_count", 0),
+                "comparison_available": comparison.get("status") == "ok",
+            },
+            "safety_note": "This is fitness coaching context, not medical advice.",
+        }
+
     def workout_history(self, user_id: str, days: int = 14) -> dict[str, Any]:
         cutoff = (utc_now() - timedelta(days=days)).date().isoformat()
         records = [
@@ -833,6 +1041,427 @@ def _overview_recovery(daily_rows: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+def _recovery_row(day: str, values: dict[str, Any]) -> dict[str, Any]:
+    sleep = values.get("sleep", {})
+    return {
+        "date": day,
+        "sleep_hours": sleep.get("asleep_hours") or sleep.get("duration_hours"),
+        "sleep_sessions": sleep.get("sessions_count"),
+        "hrv_ms": values.get("hrv_ms"),
+        "resting_heart_rate": values.get("resting_heart_rate"),
+        "active_zone_minutes": values.get("active_zone_minutes", 0),
+        "steps": values.get("steps", 0),
+        "respiratory_rate": values.get("respiratory_rate"),
+        "spo2_avg": values.get("spo2_avg") or values.get("spo2_sample", {}).get("avg"),
+    }
+
+
+def _has_recovery_comparison_signal(row: dict[str, Any]) -> bool:
+    return any(row.get(key) is not None for key in ("sleep_hours", "hrv_ms", "resting_heart_rate"))
+
+
+def _latest_recovery_row(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    for row in reversed(rows):
+        if _has_recovery_comparison_signal(row):
+            return row
+    return rows[-1]
+
+
+def _current_vs_baseline(latest: dict[str, Any], baseline: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "sleep_hours_delta": _delta(latest.get("sleep_hours"), baseline.get("sleep_hours")),
+        "hrv_ms_delta": _delta(latest.get("hrv_ms"), baseline.get("hrv_ms")),
+        "hrv_percent_delta": _percent_delta(latest.get("hrv_ms"), baseline.get("hrv_ms")),
+        "resting_heart_rate_delta": _delta(
+            latest.get("resting_heart_rate"), baseline.get("resting_heart_rate")
+        ),
+        "active_zone_minutes_delta": _delta(
+            latest.get("active_zone_minutes"), baseline.get("active_zone_minutes")
+        ),
+    }
+
+
+def _recovery_comparison_takeaways(
+    latest: dict[str, Any],
+    baseline: dict[str, Any],
+    current_vs_baseline: dict[str, Any],
+    context: dict[str, Any],
+) -> tuple[list[str], list[str], list[str], list[str]]:
+    insights: list[str] = []
+    watchouts: list[str] = []
+    positives: list[str] = []
+    next_actions: list[str] = []
+    sleep = latest.get("sleep_hours")
+    hrv = latest.get("hrv_ms")
+    rhr = latest.get("resting_heart_rate")
+    hrv_pct_delta = current_vs_baseline.get("hrv_percent_delta")
+    rhr_delta = current_vs_baseline.get("resting_heart_rate_delta")
+    sleep_delta = current_vs_baseline.get("sleep_hours_delta")
+    load = latest.get("active_zone_minutes") or 0
+
+    if sleep is not None and sleep < 6 and ((hrv_pct_delta is not None and hrv_pct_delta <= -10) or (rhr_delta is not None and rhr_delta >= 4)):
+        insights.append("Short sleep is lining up with weaker heart recovery signals.")
+        watchouts.append("Sleep is short while HRV is suppressed or resting heart rate is elevated.")
+        next_actions.append("Keep training easy until sleep and heart recovery rebound.")
+    elif sleep is not None and sleep >= 7 and ((hrv_pct_delta is not None and hrv_pct_delta >= -5) or (rhr_delta is not None and rhr_delta <= 2)):
+        insights.append("Sleep duration and heart recovery are broadly aligned.")
+        positives.append("Sleep is supportive and heart signals are near baseline.")
+        next_actions.append("A normal session can be reasonable if warm-up feels good.")
+    elif sleep is not None and sleep >= 7 and (hrv_pct_delta is not None and hrv_pct_delta < -10):
+        insights.append("Sleep duration looks fine, but HRV is still lagging.")
+        watchouts.append("Good sleep hours are not fully translating into autonomic recovery yet.")
+        next_actions.append("Use a controlled session and watch how quickly heart rate settles in warm-up.")
+    elif sleep_delta is not None and sleep_delta < -0.75:
+        insights.append("Sleep is meaningfully below your recent baseline.")
+        watchouts.append("Lower sleep may be dragging down readiness even if other signals are incomplete.")
+        next_actions.append("Protect sleep tonight and keep intensity capped today.")
+
+    if load > 45:
+        insights.append(f"Recent training load is high at {load} zone minutes.")
+        watchouts.append("High zone-minute load can suppress HRV or elevate resting heart rate.")
+        next_actions.append("Avoid stacking another hard conditioning session today.")
+    if hrv is not None and hrv_pct_delta is not None:
+        if hrv_pct_delta <= -15:
+            watchouts.append(f"HRV is {abs(round(hrv_pct_delta))}% below baseline.")
+        elif hrv_pct_delta >= 10:
+            positives.append(f"HRV is {round(hrv_pct_delta)}% above baseline.")
+    if rhr is not None and rhr_delta is not None:
+        if rhr_delta >= 5:
+            watchouts.append(f"Resting heart rate is {round(rhr_delta, 1)} bpm above baseline.")
+        elif rhr_delta <= 2:
+            positives.append("Resting heart rate is near baseline.")
+
+    freshness = context.get("data_freshness", {})
+    if freshness.get("needs_sync_before_time_sensitive_advice"):
+        watchouts.insert(0, "Data should be synced before making a time-sensitive recovery call.")
+        next_actions.insert(0, "Run sync_latest_fitbit_data for the freshest recovery comparison.")
+
+    if not insights:
+        insights.append("Synced sleep and heart signals are available, but the pattern is not strong yet.")
+    if not watchouts:
+        watchouts.append("No major sleep-heart recovery mismatch was detected.")
+    if not positives:
+        positives.append("The comparison has enough data to ground the recovery discussion.")
+    if not next_actions:
+        next_actions.append("Use this comparison as context, then ask for a specific workout plan if needed.")
+    return _dedupe(insights), _dedupe(watchouts), _dedupe(positives), _dedupe(next_actions)
+
+
+def _recovery_comparison_headline(
+    latest: dict[str, Any],
+    current_vs_baseline: dict[str, Any],
+) -> str:
+    parts = []
+    if latest.get("sleep_hours") is not None:
+        delta = current_vs_baseline.get("sleep_hours_delta")
+        parts.append(f"sleep {latest['sleep_hours']:.1f}h" + (f" ({delta:+.1f}h)" if delta is not None else ""))
+    if latest.get("hrv_ms") is not None:
+        pct = current_vs_baseline.get("hrv_percent_delta")
+        parts.append(f"HRV {latest['hrv_ms']:.1f} ms" + (f" ({pct:+.0f}%)" if pct is not None else ""))
+    if latest.get("resting_heart_rate") is not None:
+        delta = current_vs_baseline.get("resting_heart_rate_delta")
+        parts.append(
+            f"RHR {latest['resting_heart_rate']} bpm" + (f" ({delta:+.1f})" if delta is not None else "")
+        )
+    return "Latest recovery comparison: " + "; ".join(parts) + "."
+
+
+def _question_intents(question: str) -> list[str]:
+    text = question.lower()
+    intents: list[str] = []
+
+    def has(*words: str) -> bool:
+        return any(word in text for word in words)
+
+    if has(
+        "workout",
+        "work out",
+        "working out",
+        "how hard",
+        "train",
+        "training",
+        "exercise",
+        "lift",
+        "run",
+        "cardio",
+        "squash",
+        "sport",
+        "legs",
+        "chest",
+        "back",
+        "shoulder",
+    ):
+        intents.extend(["workout_decision", "recovery", "activity_load", "heart", "sleep", "subjective", "goal"])
+    if has("tired", "fatigue", "fatigued", "cooked", "drained", "recovery", "readiness", "ready", "rest", "rested", "why"):
+        intents.extend(["recovery", "sleep", "heart", "activity_load", "subjective"])
+    if has("sleep", "nap", "bed", "insomnia", "awake", "restless"):
+        intents.extend(["sleep", "recovery", "heart"])
+    if has("heart", "hrv", "bpm", "pulse", "resting", "cardio"):
+        intents.extend(["heart", "recovery", "activity_load"])
+    if has("sore", "soreness", "pain", "injury", "ache", "stress", "energy", "feel"):
+        intents.extend(["subjective", "recovery", "activity_load", "sleep"])
+    if has("step", "steps", "calorie", "calories", "zone", "active", "load", "distance", "walk"):
+        intents.extend(["activity_load", "workout_decision"])
+    if has("goal", "goals", "progress", "week", "weekly"):
+        intents.extend(["goal", "workout_decision", "activity_load"])
+
+    if not intents:
+        intents = ["general_overview", "recovery", "heart", "sleep", "activity_load"]
+    return _dedupe(intents)
+
+
+def _metric_ids_for_intents(intents: list[str]) -> list[str]:
+    metric_ids: list[str] = []
+    for intent in intents:
+        metric_ids.extend(INTENT_METRICS.get(intent, []))
+    return _dedupe(metric_ids)
+
+
+def _relevant_metric_cards(
+    metric_ids: list[str],
+    catalog_by_id: dict[str, dict[str, Any]],
+    intents: list[str],
+) -> list[dict[str, Any]]:
+    cards = []
+    for priority, metric_id in enumerate(metric_ids):
+        item = catalog_by_id.get(metric_id)
+        if not item:
+            continue
+        cards.append(
+            {
+                "id": metric_id,
+                "label": item.get("label", metric_id),
+                "category": item.get("category", "Other"),
+                "records": int(item.get("records") or 0),
+                "latest_observed_date": item.get("latest_observed_date"),
+                "first_observed_date": item.get("first_observed_date"),
+                "reason": _metric_reason(metric_id, intents, item),
+                "priority": priority,
+            }
+        )
+    return sorted(cards, key=lambda item: (item["records"] == 0, item["priority"]))
+
+
+def _metric_reason(metric_id: str, intents: list[str], catalog_item: dict[str, Any]) -> str:
+    reason = METRIC_COACHING_REASONS.get(metric_id) or catalog_item.get("description") or "Useful health context."
+    if "workout_decision" in intents and metric_id in {"active-zone-minutes", "time-in-heart-rate-zone", "exercise"}:
+        return f"{reason} This is especially useful for deciding today's intensity."
+    if "recovery" in intents and metric_id in {"sleep", "daily-heart-rate-variability", "daily-resting-heart-rate"}:
+        return f"{reason} This is a core recovery signal."
+    if "sleep" in intents and metric_id.startswith("daily-sleep"):
+        return f"{reason} This can explain sleep quality beyond duration."
+    return reason
+
+
+def _recommended_tool_sequence(intents: list[str], freshness: dict[str, Any]) -> list[str]:
+    tools: list[str] = ["get_health_question_clues"]
+    if freshness.get("needs_sync_before_time_sensitive_advice"):
+        tools.extend(["get_data_freshness", "sync_latest_fitbit_data"])
+    if "general_overview" in intents:
+        tools.append("get_health_overview")
+    if "workout_decision" in intents:
+        tools.extend(["recommend_workout_today", "plan_workout_with_health_context"])
+    if any(intent in intents for intent in ("recovery", "sleep", "heart")):
+        tools.extend(["get_recovery_signal_comparison", "get_sleep_analysis", "get_heart_trends"])
+    if "activity_load" in intents:
+        tools.extend(["get_activity_load", "get_workout_history"])
+    return _dedupe(tools)
+
+
+def _metric_query_suggestions(
+    intents: list[str],
+    relevant_metrics: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    available = {item["id"] for item in relevant_metrics if item.get("records", 0) > 0}
+    groups = [
+        (
+            "recovery",
+            "Compare sleep, HRV, resting heart rate, and load.",
+            ["sleep", "daily-heart-rate-variability", "daily-resting-heart-rate", "active-zone-minutes"],
+        ),
+        (
+            "heart",
+            "Inspect heart-rate and HRV details.",
+            ["heart-rate", "heart-rate-variability", "daily-heart-rate-variability", "daily-resting-heart-rate"],
+        ),
+        (
+            "load",
+            "Inspect movement and workout load.",
+            ["active-zone-minutes", "time-in-heart-rate-zone", "active-minutes", "steps", "exercise"],
+        ),
+        (
+            "sleep",
+            "Inspect sleep and overnight recovery context.",
+            ["sleep", "daily-respiratory-rate", "daily-oxygen-saturation", "daily-sleep-temperature-derivations"],
+        ),
+    ]
+    suggestions = []
+    for purpose, description, metric_ids in groups:
+        if purpose not in intents and purpose != "load":
+            continue
+        usable = [metric_id for metric_id in metric_ids if metric_id in available]
+        if usable:
+            suggestions.append({"purpose": purpose, "description": description, "metrics": usable})
+    return suggestions
+
+
+def _question_clue_takeaways(
+    intents: list[str],
+    context: dict[str, Any],
+    overview: dict[str, Any],
+    comparison: dict[str, Any],
+) -> tuple[list[str], list[str], list[str], list[str]]:
+    clues: list[str] = []
+    positives: list[str] = []
+    watchouts: list[str] = []
+    next_actions: list[str] = []
+    readiness = context.get("readiness", {})
+    today = context.get("today", {})
+    sections = overview.get("sections", {}) if overview.get("status") == "ok" else {}
+    sleep = sections.get("sleep", {})
+    heart = sections.get("heart", {})
+    activity = sections.get("activity", {})
+    workouts = sections.get("workouts", {})
+    freshness = context.get("data_freshness", {})
+
+    if readiness:
+        clues.append(
+            f"Readiness is {readiness.get('label', 'unknown')} at {readiness.get('score', '?')}/100."
+        )
+        clues.extend(readiness.get("evidence", [])[:3])
+
+    latest_sleep = sleep.get("latest_asleep_hours") or today.get("sleep", {}).get("asleep_hours") or today.get("sleep", {}).get("duration_hours")
+    average_sleep = sleep.get("average_asleep_hours")
+    if latest_sleep is not None:
+        clues.append(f"Latest sleep is {latest_sleep:.1f}h.")
+        if latest_sleep < 6:
+            watchouts.append("Latest sleep is short enough to affect training intensity and recovery.")
+        elif latest_sleep >= 7:
+            positives.append("Latest sleep duration is supportive for training.")
+        if average_sleep is not None:
+            delta = _delta(latest_sleep, average_sleep)
+            if delta is not None and delta <= -0.75:
+                watchouts.append(f"Latest sleep is {abs(delta):.1f}h below the recent average.")
+
+    if heart.get("latest_hrv_ms") is not None:
+        clues.append(f"Latest HRV is {heart['latest_hrv_ms']:.1f} ms.")
+    if heart.get("latest_resting_heart_rate") is not None:
+        clues.append(f"Latest resting heart rate is {heart['latest_resting_heart_rate']} bpm.")
+
+    if comparison.get("status") == "ok":
+        current = comparison.get("current_vs_baseline", {})
+        hrv_pct = current.get("hrv_percent_delta")
+        rhr_delta = current.get("resting_heart_rate_delta")
+        if hrv_pct is not None:
+            direction = "above" if hrv_pct >= 0 else "below"
+            clues.append(f"HRV is {abs(round(hrv_pct))}% {direction} recent baseline.")
+            if hrv_pct <= -15:
+                watchouts.append("HRV is meaningfully suppressed versus baseline.")
+            elif hrv_pct >= 10:
+                positives.append("HRV is above recent baseline.")
+        if rhr_delta is not None:
+            direction = "above" if rhr_delta >= 0 else "below"
+            clues.append(f"Resting heart rate is {abs(round(rhr_delta, 1))} bpm {direction} baseline.")
+            if rhr_delta >= 5:
+                watchouts.append("Resting heart rate is elevated versus baseline.")
+        clues.extend(comparison.get("insights", [])[:3])
+        positives.extend(comparison.get("positives", [])[:2])
+        watchouts.extend(comparison.get("watchouts", [])[:3])
+
+    latest_load = today.get("latest_training_load", {})
+    active_zone_minutes = today.get("active_zone_minutes") or latest_load.get("active_zone_minutes")
+    if active_zone_minutes is not None:
+        clues.append(f"Latest available load is {active_zone_minutes} Active Zone Minutes.")
+        if active_zone_minutes > 45:
+            watchouts.append("Recent zone-minute load is high, so avoid stacking hard conditioning.")
+    if activity.get("totals", {}).get("steps") is not None:
+        clues.append(f"Window step volume is {activity['totals']['steps']} steps.")
+    if workouts.get("workout_count"):
+        clues.append(f"{workouts['workout_count']} recent workout(s) are available for context.")
+
+    if "workout_decision" in intents:
+        next_actions.append("Use recommend_workout_today for the broad daily intensity call.")
+        next_actions.append("Use plan_workout_with_health_context when the user names a specific workout.")
+    if any(intent in intents for intent in ("recovery", "sleep", "heart")):
+        next_actions.append("Use get_recovery_signal_comparison to explain sleep, HRV, resting heart rate, and load together.")
+    if "activity_load" in intents:
+        next_actions.append("Use get_activity_load and get_workout_history to understand recent load before prescribing intensity.")
+    if freshness.get("freshness_level") == "fresh":
+        positives.append("Synced data is fresh enough for normal coaching context.")
+    elif freshness.get("freshness_level"):
+        watchouts.append(f"Data freshness is {freshness.get('freshness_label', freshness['freshness_level'])}.")
+
+    if not clues:
+        clues.append("Use the available synced metric catalog to choose follow-up queries.")
+    if not next_actions:
+        next_actions.append("Use get_health_overview before answering broad health and fitness questions.")
+    return clues, positives, watchouts, next_actions
+
+
+def _question_clue_headline(
+    intents: list[str],
+    context: dict[str, Any],
+    comparison: dict[str, Any],
+) -> str:
+    readiness = context.get("readiness", {})
+    if comparison.get("status") == "ok" and any(intent in intents for intent in ("recovery", "sleep", "heart")):
+        return comparison.get("headline", "Sleep, heart, and load signals are ready to compare.")
+    if "workout_decision" in intents:
+        return f"Use readiness {readiness.get('score', '?')}/100 plus sleep, HRV, resting HR, load, goals, and check-ins."
+    return "Use the synced Fitbit metric catalog plus overview context to choose the right follow-up tools."
+
+
+def _compact_today_context(today: dict[str, Any]) -> dict[str, Any]:
+    sleep = today.get("sleep", {})
+    return {
+        "activity_date": today.get("activity_date"),
+        "recovery_date": today.get("recovery_date"),
+        "steps": today.get("steps"),
+        "active_minutes": today.get("active_minutes"),
+        "active_zone_minutes": today.get("active_zone_minutes"),
+        "sleep_hours": sleep.get("asleep_hours") or sleep.get("duration_hours"),
+        "sleep_sessions": sleep.get("sessions_count"),
+        "hrv_ms": today.get("hrv_ms"),
+        "resting_heart_rate": today.get("resting_heart_rate"),
+        "heart": today.get("heart"),
+        "latest_training_load": today.get("latest_training_load"),
+    }
+
+
+def _compact_overview_context(overview: dict[str, Any]) -> dict[str, Any]:
+    if overview.get("status") != "ok":
+        return {"status": overview.get("status"), "message": overview.get("message")}
+    sections = overview.get("sections", {})
+    return {
+        "status": "ok",
+        "headline": overview.get("headline"),
+        "date_range": overview.get("date_range"),
+        "activity": sections.get("activity"),
+        "sleep": sections.get("sleep"),
+        "heart": sections.get("heart"),
+        "recovery": sections.get("recovery"),
+        "workouts": sections.get("workouts"),
+        "personal_context": overview.get("personal_context"),
+        "data_coverage": overview.get("data_coverage"),
+    }
+
+
+def _compact_recovery_comparison(comparison: dict[str, Any]) -> dict[str, Any]:
+    if comparison.get("status") != "ok":
+        return {"status": comparison.get("status"), "message": comparison.get("message")}
+    return {
+        "status": "ok",
+        "headline": comparison.get("headline"),
+        "latest": comparison.get("latest"),
+        "baseline": comparison.get("baseline"),
+        "current_vs_baseline": comparison.get("current_vs_baseline"),
+        "correlations": comparison.get("correlations"),
+        "insights": comparison.get("insights"),
+        "watchouts": comparison.get("watchouts"),
+        "positives": comparison.get("positives"),
+    }
+
+
 def _overview_workouts(records: list[dict[str, Any]]) -> dict[str, Any]:
     workouts = []
     for item in records:
@@ -1019,11 +1648,57 @@ def _datetime_from_iso(value: str | None) -> datetime | None:
     return parsed.astimezone(UTC)
 
 
-def _average(values: list[float]) -> float | None:
-    usable = [value for value in values if value is not None and value > 0]
+def _average(values: list[Any]) -> float | None:
+    usable = [number for value in values if (number := _number_or_none(value)) is not None and number > 0]
     if not usable:
         return None
     return round(sum(usable) / len(usable), 2)
+
+
+def _number_or_none(value: Any) -> float | None:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(number):
+        return None
+    return number
+
+
+def _delta(current: Any, baseline: Any) -> float | None:
+    current_number = _number_or_none(current)
+    baseline_number = _number_or_none(baseline)
+    if current_number is None or baseline_number is None:
+        return None
+    return round(current_number - baseline_number, 2)
+
+
+def _percent_delta(current: Any, baseline: Any) -> float | None:
+    current_number = _number_or_none(current)
+    baseline_number = _number_or_none(baseline)
+    if current_number is None or baseline_number in (None, 0):
+        return None
+    return round(((current_number - baseline_number) / baseline_number) * 100, 1)
+
+
+def _pearson(pairs: list[tuple[Any, Any]]) -> float | None:
+    usable = [
+        (x_number, y_number)
+        for x, y in pairs
+        if (x_number := _number_or_none(x)) is not None and (y_number := _number_or_none(y)) is not None
+    ]
+    if len(usable) < 3:
+        return None
+    xs = [x for x, _ in usable]
+    ys = [y for _, y in usable]
+    mean_x = sum(xs) / len(xs)
+    mean_y = sum(ys) / len(ys)
+    numerator = sum((x - mean_x) * (y - mean_y) for x, y in usable)
+    denominator_x = math.sqrt(sum((x - mean_x) ** 2 for x in xs))
+    denominator_y = math.sqrt(sum((y - mean_y) ** 2 for y in ys))
+    if denominator_x == 0 or denominator_y == 0:
+        return None
+    return round(numerator / (denominator_x * denominator_y), 3)
 
 
 def _stage_averages(sleep_days: list[dict[str, Any]]) -> dict[str, float]:

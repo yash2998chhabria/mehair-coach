@@ -27,6 +27,10 @@ SERVER_INSTRUCTIONS = (
     "never invent health data. Sync only when the user asks for fresh Fitbit data. "
     "For broad health, fitness, recovery, or 'use all my data' overview questions, call "
     "get_health_overview before answering. "
+    "For vague or diagnostic-sounding coaching questions like why the user feels tired, how hard "
+    "to train, whether heart signals look off, or which metrics matter, call get_health_question_clues "
+    "first so the model can choose the right follow-up metrics. "
+    "For sleep/HRV/resting-heart-rate/load comparisons, call get_recovery_signal_comparison. "
     "For any specific workout, sport, muscle-group, soreness, or recovery decision, call "
     "plan_workout_with_health_context or recommend_workout_today before answering; do not infer "
     "readiness, HRV, sleep, or load from conversation memory."
@@ -212,6 +216,37 @@ def create_server(settings_override: Settings | None = None) -> ServerBundle:
             "today": context["today"],
             "evidence": context["evidence"],
         }
+
+    @mcp.tool(
+        title="Health question clues",
+        description=(
+            "For a user's natural-language health, recovery, sleep, heart, soreness, or workout question, "
+            "identify likely intents, the best synced Fitbit metrics to inspect, clues already visible "
+            "from overview data, and recommended follow-up tools."
+        ),
+        annotations=READ_ONLY,
+        meta=WIDGET_META,
+    )
+    def get_health_question_clues(question: str, days: int = 14) -> dict[str, Any]:
+        user_id = current_user_id()
+        if not user_id:
+            return setup_required()
+        return health_store.health_question_clues(user_id, question, max(1, min(days, 30)))
+
+    @mcp.tool(
+        title="Recovery signal comparison",
+        description=(
+            "Compare recent sleep, HRV, resting heart rate, respiratory/SpO2 context, and activity load "
+            "against baseline to explain recovery patterns."
+        ),
+        annotations=READ_ONLY,
+        meta=WIDGET_META,
+    )
+    def get_recovery_signal_comparison(days: int = 14) -> dict[str, Any]:
+        user_id = current_user_id()
+        if not user_id:
+            return setup_required()
+        return health_store.recovery_signal_comparison(user_id, max(1, min(days, 30)))
 
     @mcp.tool(
         title="Recommend workout today",

@@ -22,6 +22,8 @@ async def test_mcp_tool_list_matches_private_beta_plan() -> None:
         "get_today_context",
         "get_health_overview",
         "get_recovery_readiness",
+        "get_health_question_clues",
+        "get_recovery_signal_comparison",
         "recommend_workout_today",
         "plan_workout_with_health_context",
         "get_sleep_analysis",
