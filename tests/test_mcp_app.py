@@ -53,7 +53,9 @@ def test_server_instructions_keep_normal_latest_questions_fast() -> None:
     assert "Keep metric labels such as HRV, RPE, AZM" in SERVER_INSTRUCTIONS
     assert "When a tool returns coach_response" in SERVER_INSTRUCTIONS
     assert "Use already-synced local data for normal current/latest/today questions" in SERVER_INSTRUCTIONS
-    assert "Sync only when the user explicitly says sync" in SERVER_INSTRUCTIONS
+    assert "Sync only when the user explicitly asks for a fresh sync" in SERVER_INSTRUCTIONS
+    assert "Treat phrases like check my Fitbit context" in SERVER_INSTRUCTIONS
+    assert "call recommend_workout_today directly" in SERVER_INSTRUCTIONS
     assert "use list_available_health_metrics to inspect the per-user metric catalog" in SERVER_INSTRUCTIONS
     assert "query_health_metrics to fetch the specific signals you choose" in SERVER_INSTRUCTIONS
     assert "call get_health_overview" in SERVER_INSTRUCTIONS

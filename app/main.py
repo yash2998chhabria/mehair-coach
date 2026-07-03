@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import Any
+from typing import Annotated, Any
 
 import uvicorn
 from mcp.server.auth.middleware.auth_context import get_access_token
@@ -10,6 +10,7 @@ from mcp.server.auth.settings import AuthSettings
 from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
 from mcp.types import ToolAnnotations
+from pydantic import Field
 from starlette.applications import Starlette
 from starlette.background import BackgroundTask
 from starlette.middleware.cors import CORSMiddleware
@@ -39,20 +40,23 @@ SERVER_INSTRUCTIONS = (
     "or caveats. Avoid leading with raw tables or unexplained evidence logs. "
     "If connection or synced data is missing, call status/freshness tools and explain setup; "
     "never invent health data. Use already-synced local data for normal current/latest/today questions, "
-    "because every overview includes freshness metadata. Sync only when the user explicitly says sync, "
-    "refresh, pull, or update Fitbit/Google Health data now, or when a freshness result says the data "
-    "is stale for time-sensitive advice. For explicit requests to sync or refresh and then summarize, "
-    "use all data, or give an overview, call sync_and_get_health_overview so the answer is based on "
-    "one fresh overview result. For broad health, fitness, recovery, current/latest/today, or 'use all "
-    "my data' overview questions that do not explicitly request sync/refresh, call get_health_overview "
-    "before answering. "
+    "because every overview includes freshness metadata. Treat phrases like check my Fitbit context, "
+    "look at my data, use my data, or what should I do today as already-synced reads unless the user "
+    "literally asks to sync, refresh, pull, or update Fitbit/Google Health data now. Sync only when "
+    "the user explicitly asks for a fresh sync/refresh/pull/update, or when a freshness result says "
+    "the data is stale for time-sensitive advice. For explicit requests to sync or refresh and then "
+    "summarize, analyze all available metrics, explain changes, or give an overview, call "
+    "sync_and_get_health_overview so the answer is based on one fresh overview result. For broad "
+    "health, fitness, recovery, current/latest/today, or 'use all my data' overview questions that "
+    "do not explicitly request sync/refresh, call get_health_overview before answering. "
     "For exploratory or unusual questions, use list_available_health_metrics to inspect the per-user "
     "metric catalog and query_health_metrics to fetch the specific signals you choose; let the user's "
     "question decide the metric mix instead of following a fixed recipe. "
-    "For vague or diagnostic-sounding coaching questions like what the user should do today, "
-    "why the user feels tired, how hard to train, whether heart signals look off, or which metrics matter, "
-    "call get_health_question_clues "
-    "first so the model can choose the right follow-up metrics. "
+    "For everyday coaching questions like 'I feel off, what should I do today?' or 'how hard should "
+    "I train?', call recommend_workout_today directly and pass the user's plain-language feeling into "
+    "current_feeling. Use get_health_question_clues for exploratory or diagnostic-sounding questions "
+    "where the user asks which metrics matter, why they may feel tired, or what signals to inspect "
+    "before choosing follow-up tools. "
     "For sleep/HRV/resting-heart-rate/load comparisons, call get_recovery_signal_comparison. "
     "For any specific workout, sport, muscle-group, soreness, or recovery decision, call "
     "plan_workout_with_health_context or recommend_workout_today before answering; do not infer "
@@ -373,11 +377,26 @@ def create_server(settings_override: Settings | None = None) -> ServerBundle:
 
     @mcp.tool(
         title="Recommend workout today",
-        description="Recommend how hard to work out today using synced Fitbit context and logged goals/check-ins.",
+        description=(
+            "Fast, card-ready answer for normal day-of coaching questions like 'I feel off, should I "
+            "work out?', 'how hard should I train today?', or 'what should I do today?'. Uses already-"
+            "synced Fitbit context, goals, check-ins, recent workouts, and the optional current_feeling "
+            "text. Does not start a sync."
+        ),
         annotations=READ_ONLY,
         meta=WIDGET_META,
     )
-    def recommend_workout_today(current_feeling: str | None = None) -> dict[str, Any]:
+    def recommend_workout_today(
+        current_feeling: Annotated[
+            str | None,
+            Field(
+                description=(
+                    "The user's current plain-language feeling, symptoms, soreness, energy, time limit, "
+                    "or concern, for example 'I feel a little off but want to work out'."
+                )
+            ),
+        ] = None,
+    ) -> dict[str, Any]:
         user_id = current_user_id()
         if not user_id:
             return setup_required()
