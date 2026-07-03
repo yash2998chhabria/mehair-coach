@@ -73,6 +73,8 @@ async def test_widget_preview_route_renders_real_card_state() -> None:
     assert "state.data =" in response.text
     assert "initialize();" not in response.text
     assert "Health Clues" in response.text
+    assert "Latest energy check-in is 3/10." in response.text
+    assert "Goal progress in this window: 1/4 workout sessions logged." in response.text
     assert safety.status_code == 200
     assert "Should I worry about my high heart rate and dizziness?" in safety.text
     assert "Health Check" in safety.text

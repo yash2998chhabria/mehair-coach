@@ -699,6 +699,8 @@ class HealthStore:
         watchouts = safety_flags + watchouts
         if context.get("data_freshness", {}).get("needs_sync_before_time_sensitive_advice"):
             next_actions.insert(0, "Run sync_latest_fitbit_data before answering time-sensitive training questions.")
+        personal_context = overview.get("personal_context", {}) if overview.get("status") == "ok" else {}
+        workout_context = overview.get("sections", {}).get("workouts", {}) if overview.get("status") == "ok" else {}
 
         return {
             "status": "ok",
@@ -720,6 +722,7 @@ class HealthStore:
             "readiness": context["readiness"],
             "today": _compact_today_context(context["today"]),
             "overview_context": _compact_overview_context(overview),
+            "personal_context": personal_context,
             "recovery_comparison": _compact_recovery_comparison(comparison),
             "data_freshness": context["data_freshness"],
             "answering_guidance": [
@@ -734,6 +737,9 @@ class HealthStore:
                 "synced_metric_count": catalog.get("synced_metric_count", 0),
                 "supported_metric_count": catalog.get("supported_metric_count", 0),
                 "comparison_available": comparison.get("status") == "ok",
+                "goal_present": bool((personal_context.get("goal") or {}).get("goal")),
+                "recent_checkins_count": len(personal_context.get("recent_checkins") or []),
+                "recent_workout_count": workout_context.get("workout_count", 0),
             },
             "safety_note": "This is fitness coaching context, not medical advice.",
         }
@@ -1326,6 +1332,10 @@ def _question_clue_takeaways(
     activity = sections.get("activity", {})
     workouts = sections.get("workouts", {})
     freshness = context.get("data_freshness", {})
+    personal_context = overview.get("personal_context", {}) if overview.get("status") == "ok" else {}
+    recent_checkins = personal_context.get("recent_checkins") or []
+    goal = personal_context.get("goal") or {}
+    goal_payload = goal.get("goal") or {}
 
     if readiness:
         clues.append(
@@ -1381,6 +1391,61 @@ def _question_clue_takeaways(
         clues.append(f"Window step volume is {activity['totals']['steps']} steps.")
     if workouts.get("workout_count"):
         clues.append(f"{workouts['workout_count']} recent workout(s) are available for context.")
+        hardest = workouts.get("hardest_workout") or {}
+        if hardest:
+            name = hardest.get("display_name") or hardest.get("type") or "workout"
+            load = hardest.get("active_zone_minutes")
+            if load is not None:
+                clues.append(f"Hardest recent workout was {name} with {load} Active Zone Minutes.")
+
+    soreness = _rating_from_checkins(recent_checkins, "soreness")
+    energy = _rating_from_checkins(recent_checkins, "energy")
+    stress = _rating_from_checkins(recent_checkins, "stress")
+    latest_note = _latest_checkin_note(recent_checkins)
+    if energy is not None:
+        clues.append(f"Latest energy check-in is {energy}/10.")
+        if energy <= 4:
+            watchouts.append("Low self-reported energy supports a conservative training call.")
+        elif energy >= 7:
+            positives.append("Self-reported energy is strong.")
+    if soreness is not None:
+        clues.append(f"Latest soreness check-in is {soreness}/10.")
+        if soreness >= 7:
+            watchouts.append("High soreness should cap intensity and avoid loading sore areas.")
+        elif soreness >= 5:
+            watchouts.append("Moderate soreness means warm-up quality should decide final intensity.")
+        elif soreness <= 3:
+            positives.append("Self-reported soreness is low.")
+    if stress is not None:
+        clues.append(f"Latest stress check-in is {stress}/10.")
+        if stress >= 7:
+            watchouts.append("High stress can reduce recovery tolerance even if wearable signals look okay.")
+        elif stress <= 4:
+            positives.append("Self-reported stress is not elevated.")
+    if latest_note:
+        clues.append(f"Latest check-in note: {latest_note}.")
+
+    goal_target = goal_payload.get("target")
+    days_per_week = goal_payload.get("days_per_week")
+    if goal_target:
+        clues.append(f"Current goal: {goal_target}.")
+    if days_per_week is not None:
+        try:
+            target_sessions = max(0, int(days_per_week))
+        except (TypeError, ValueError):
+            target_sessions = None
+        if target_sessions is not None:
+            workout_count = int(workouts.get("workout_count") or 0)
+            remaining = max(0, target_sessions - workout_count)
+            clues.append(
+                f"Goal progress in this window: {workout_count}/{target_sessions} workout sessions logged."
+            )
+            if remaining and "workout_decision" in intents:
+                next_actions.append(
+                    f"{remaining} goal session(s) remain, but recovery and check-ins should decide today's intensity."
+                )
+            elif not remaining:
+                positives.append("Recent workout count already covers the weekly session target.")
 
     if "workout_decision" in intents:
         next_actions.append("Use recommend_workout_today for the broad daily intensity call.")
@@ -1767,6 +1832,14 @@ def _rating_from_checkins(checkins: list[dict[str, Any]], key: str) -> int | Non
             return max(1, min(10, int(value)))
         except (TypeError, ValueError):
             continue
+    return None
+
+
+def _latest_checkin_note(checkins: list[dict[str, Any]]) -> str | None:
+    for item in checkins:
+        note = str(item.get("checkin", {}).get("notes") or "").strip()
+        if note:
+            return note[:180]
     return None
 
 

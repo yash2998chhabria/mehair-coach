@@ -256,6 +256,19 @@ def test_eval_under_recovered_user_gets_easy_day_with_specific_evidence(tmp_path
         "daily-resting-heart-rate",
         "active-zone-minutes",
     } <= metric_ids(clues)
+    assert clues["personal_context"]["recent_checkins"][0]["checkin"]["energy"] == 3
+    assert clues["personal_context"]["goal"]["goal"]["days_per_week"] == 4
+    assert clues["data_used"]["goal_present"] is True
+    assert clues["data_used"]["recent_checkins_count"] == 1
+    assert clues["data_used"]["recent_workout_count"] == 1
+    assert "Latest energy check-in is 3/10." in clues["clues"]
+    assert "Latest soreness check-in is 7/10." in clues["clues"]
+    assert "Latest check-in note: Legs heavy after squash." in clues["clues"]
+    assert "Current goal: Train four days per week." in clues["clues"]
+    assert "Goal progress in this window: 1/4 workout sessions logged." in clues["clues"]
+    assert any("Low self-reported energy" in item for item in clues["watchouts"])
+    assert any("High soreness" in item for item in clues["watchouts"])
+    assert any("3 goal session(s) remain" in item for item in clues["next_actions"])
     assert "get_recovery_signal_comparison" in clues["recommended_tool_sequence"]
     assert comparison["current_vs_baseline"]["hrv_percent_delta"] <= -20
     assert comparison["current_vs_baseline"]["resting_heart_rate_delta"] >= 6
@@ -332,6 +345,15 @@ def test_eval_green_day_keeps_training_available_but_grounded_in_data(tmp_path, 
     assert clues["readiness"]["label"] == "green"
     assert {"sleep", "daily-heart-rate-variability", "daily-resting-heart-rate"} <= metric_ids(clues)
     assert any("sleep" in item.lower() for item in clues["clues"] + clues["positives"])
+    assert "Latest energy check-in is 8/10." in clues["clues"]
+    assert "Latest soreness check-in is 2/10." in clues["clues"]
+    assert "Goal progress in this window: 2/3 workout sessions logged." in clues["clues"]
+    assert clues["data_used"]["goal_present"] is True
+    assert clues["data_used"]["recent_checkins_count"] == 1
+    assert clues["data_used"]["recent_workout_count"] == 2
+    assert "Self-reported energy is strong." in clues["positives"]
+    assert "Self-reported soreness is low." in clues["positives"]
+    assert any("1 goal session(s) remain" in item for item in clues["next_actions"])
     assert recommendation["intensity"] == "moderate-to-hard"
     assert recommendation["rpe_cap"] == 8
     assert recommendation["data_used"]["recent_workouts"] == 2

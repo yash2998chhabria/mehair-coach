@@ -1007,17 +1007,30 @@ WIDGET_PREVIEW_STATES: dict[str, dict] = {
         ],
         "clues": [
             "Readiness is red at 38/100.",
+            "Latest energy check-in is 3/10.",
+            "Latest soreness check-in is 7/10.",
             "Latest sleep is short at 5.1h.",
             "HRV is 36% below recent baseline.",
-            "Resting heart rate is 9.5 bpm above baseline.",
-            "Latest available load is 72 Active Zone Minutes.",
+            "Goal progress in this window: 1/4 workout sessions logged.",
         ],
         "watchouts": [
+            "Low self-reported energy supports a conservative training call.",
+            "High soreness should cap intensity and avoid loading sore areas.",
             "Sleep is short while HRV is suppressed or resting heart rate is elevated.",
             "High zone-minute load can suppress HRV or elevate resting heart rate.",
-            "Avoid stacking another hard conditioning session today.",
         ],
         "positives": ["The comparison has enough data to ground the recovery discussion."],
+        "personal_context": {
+            "goal": {"goal": {"target": "Train four days per week", "days_per_week": 4}},
+            "recent_checkins": [
+                {"checkin": {"energy": 3, "soreness": 7, "stress": 6, "notes": "Legs heavy after squash"}}
+            ],
+        },
+        "data_used": {
+            "goal_present": True,
+            "recent_checkins_count": 1,
+            "recent_workout_count": 1,
+        },
         "readiness": {
             "score": 38,
             "label": "red",

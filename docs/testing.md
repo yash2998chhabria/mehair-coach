@@ -18,9 +18,10 @@ uses the right signals for real questions:
 
 - under-recovered/tired day: short sleep, suppressed HRV, elevated resting HR,
   high recent zone minutes, low energy, and soreness should produce an easy day
-  with specific evidence.
+  with specific evidence, goal progress, and check-in context.
 - green training day: strong sleep, HRV above baseline, stable resting HR, low
-  soreness, and goal context should keep harder training available.
+  soreness, strong energy, and goal context should keep harder training
+  available.
 - stale data: time-sensitive workout questions should ask for sync before
   confident advice.
 - heart-safety question: high resting HR plus dizziness/concern language should

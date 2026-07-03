@@ -14,7 +14,7 @@ The project starts empty. It does not import any existing Fitbit export and it d
 - Lets ChatGPT query specific synced metrics over bounded date windows.
 - Summarizes readiness, sleep, activity load, heart trends, and workout history.
 - Produces an all-data health overview with positives, watchouts, and next actions.
-- Lets ChatGPT decide which Fitbit metrics matter for vague questions like “why am I tired?” or “how hard should I train today?”
+- Lets ChatGPT decide which Fitbit metrics, goals, check-ins, and workout-history clues matter for vague questions like “why am I tired?” or “how hard should I train today?”
 - Compares sleep, HRV, resting heart rate, overnight recovery context, and zone-minute load against recent baseline.
 - Flags whether synced data is fresh, aging, or stale before time-sensitive coaching.
 - Plans specific workouts using synced recovery/load data plus goals, check-ins, and constraints.
