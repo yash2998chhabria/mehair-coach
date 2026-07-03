@@ -34,8 +34,11 @@ class Settings(BaseSettings):
     sync_incremental_overlap_hours: int = 2
     sync_min_interval_minutes: int = 15
     sync_on_connect: bool = True
-    sync_metric_timeout_seconds: int = 8
-    sync_request_budget_seconds: int = 22
+    sync_metric_timeout_seconds: int = 4
+    sync_request_budget_seconds: int = 16
+    sync_metric_page_limit: int = 4
+    sync_metric_concurrency: int = 6
+    sync_metric_record_limit: int = 600
     sync_abandoned_after_minutes: int = 5
     host: str = "0.0.0.0"
     port: int = Field(default=8787, ge=1, le=65535)

@@ -35,6 +35,173 @@ def create_user(db: Database, user_id: str = "user_test") -> str:
     return user_id
 
 
+def test_sync_storage_prep_aggregates_high_volume_activity_metrics() -> None:
+    records = [
+        {
+            "name": f"steps-{index}",
+            "steps": {"count": 100 + index},
+            "interval": {"startTime": f"2026-07-03T0{index}:00:00Z"},
+        }
+        for index in range(3)
+    ]
+
+    prepared = health_store_module._prepare_records_for_sync("steps", records, 600)
+
+    assert len(prepared) == 1
+    assert prepared[0]["name"] == "summary/steps/2026-07-03"
+    assert prepared[0]["steps"]["count"] == 303
+    assert prepared[0]["summary"]["sourceRecords"] == 3
+
+
+def test_sync_storage_prep_preserves_heart_zone_totals() -> None:
+    records = [
+        {
+            "name": "zone-1",
+            "timeInHeartRateZone": {
+                "heartRateZoneType": "FAT_BURN",
+                "interval": {
+                    "startTime": "2026-07-03T10:00:00Z",
+                    "endTime": "2026-07-03T10:30:00Z",
+                },
+            },
+        },
+        {
+            "name": "zone-2",
+            "timeInHeartRateZone": {
+                "heartRateZoneType": "CARDIO",
+                "interval": {
+                    "startTime": "2026-07-03T10:30:00Z",
+                    "endTime": "2026-07-03T10:45:00Z",
+                },
+            },
+        },
+    ]
+
+    prepared = health_store_module._prepare_records_for_sync(
+        "time-in-heart-rate-zone",
+        records,
+        600,
+    )
+
+    assert len(prepared) == 1
+    zones = prepared[0]["timeInHeartRateZone"]["heartRateZonesMinutes"]
+    assert zones["CARDIO"] == 15
+    assert zones["FAT_BURN"] == 30
+
+
+def test_sync_storage_prep_compacts_raw_sample_metrics_to_daily_summary() -> None:
+    records = [
+        {
+            "name": f"hr-{index}",
+            "heartRate": {"beatsPerMinute": 60 + index},
+            "sampleTime": {"physicalTime": f"2026-07-03T10:{index:02d}:00Z"},
+        }
+        for index in range(10)
+    ]
+
+    prepared = health_store_module._prepare_records_for_sync("heart-rate", records, 4)
+
+    assert len(prepared) == 1
+    assert prepared[0]["name"] == "summary/heart-rate/2026-07-03"
+    assert prepared[0]["heartRate"]["summary"]["samples"] == 10
+    assert prepared[0]["heartRate"]["summary"]["averageBeatsPerMinute"] == 64.5
+    assert prepared[0]["heartRate"]["summary"]["minBeatsPerMinute"] == 60
+    assert prepared[0]["heartRate"]["summary"]["maxBeatsPerMinute"] == 69
+
+    summary = health_store_module.summarize_records(
+        [
+            {
+                "data_type": "heart-rate",
+                "observed_date": "2026-07-03",
+                "payload": prepared[0],
+            }
+        ]
+    )
+    assert summary["daily"]["2026-07-03"]["heart"] == {
+        "avg_bpm": 64.5,
+        "min_bpm": 60,
+        "max_bpm": 69,
+        "samples": 10,
+    }
+
+
+def test_compact_sync_summary_wins_over_legacy_raw_rows() -> None:
+    raw = {
+        "data_type": "steps",
+        "observed_date": "2026-07-03",
+        "payload": {
+            "name": "legacy-raw-steps",
+            "steps": {"count": 1000},
+            "interval": {"startTime": "2026-07-03T09:00:00Z"},
+        },
+    }
+    compact = {
+        "data_type": "steps",
+        "observed_date": "2026-07-03",
+        "payload": {
+            "name": "summary/steps/2026-07-03",
+            "date": {"year": 2026, "month": 7, "day": 3},
+            "steps": {"count": 2500},
+            "summary": {"sourceRecords": 15},
+        },
+    }
+
+    summary = health_store_module.summarize_records([raw, compact])
+
+    assert summary["daily"]["2026-07-03"]["steps"] == 2500
+
+
+def test_compact_sync_write_replaces_legacy_raw_rows_for_same_metric_day(tmp_path) -> None:
+    db, store = make_store(tmp_path)
+    user_id = create_user(db)
+    store.upsert_records(
+        user_id,
+        "steps",
+        [
+            {
+                "name": "legacy-steps-1",
+                "steps": {"count": 100},
+                "interval": {"startTime": "2026-07-03T09:00:00Z"},
+            },
+            {
+                "name": "legacy-steps-2",
+                "steps": {"count": 200},
+                "interval": {"startTime": "2026-07-03T10:00:00Z"},
+            },
+        ],
+    )
+    compact = health_store_module._prepare_records_for_sync(
+        "steps",
+        [
+            {
+                "name": "new-steps-1",
+                "steps": {"count": 500},
+                "interval": {"startTime": "2026-07-03T11:00:00Z"},
+            },
+            {
+                "name": "new-steps-2",
+                "steps": {"count": 700},
+                "interval": {"startTime": "2026-07-03T12:00:00Z"},
+            },
+        ],
+        600,
+    )
+
+    store.upsert_records(user_id, "steps", compact)
+
+    rows = db.all(
+        """
+        SELECT data_type, record_key, observed_date, payload_json
+        FROM raw_health_records
+        WHERE user_id = ? AND data_type = 'steps'
+        """,
+        (user_id,),
+    )
+    assert len(rows) == 1
+    assert rows[0]["record_key"] == "summary/steps/2026-07-03"
+    assert store.latest_context(user_id)["today"]["steps"] == 1200
+
+
 def test_empty_states_do_not_fabricate_data(tmp_path) -> None:
     _, store = make_store(tmp_path)
 

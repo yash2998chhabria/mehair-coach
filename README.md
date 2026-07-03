@@ -11,7 +11,7 @@ The app starts empty. It does not import demo data, seed personal exports, or pu
 - Hosts a ChatGPT-compatible MCP endpoint at `/mcp`.
 - Runs per-user Google OAuth for Google Health / Fitbit data.
 - Encrypts Google tokens before storing them.
-- Syncs read-only Google Health data into SQLite.
+- Syncs read-only Google Health data into a local SQLite or hosted Turso/libSQL store.
 - Starts a bounded bootstrap sync after Google OAuth so the first chat usually has fresh data ready.
 - Lets ChatGPT inspect freshness before syncing again.
 - Reports metric-level sync diagnostics instead of hiding Google/API timeouts behind generic connector errors.
@@ -76,7 +76,7 @@ Key pieces:
 - `app/google_health.py` talks to Google Health APIs.
 - `app/auth.py` handles app OAuth, Google OAuth, and token exchange.
 - `app/widget.py` contains the inline ChatGPT card UI.
-- `data/` holds local SQLite databases and is ignored by git. Google tokens are encrypted before they are stored.
+- `data/` holds local SQLite databases and is ignored by git. Hosted beta data can live in Turso/libSQL. Google tokens are encrypted before they are stored.
 
 ## MCP Tool Groups
 
@@ -134,8 +134,11 @@ GOOGLE_CLIENT_ID=...
 GOOGLE_CLIENT_SECRET=...
 GOOGLE_REDIRECT_URI=https://your-public-url.example/oauth/callback/google
 SYNC_ON_CONNECT=true
-SYNC_REQUEST_BUDGET_SECONDS=22
-SYNC_METRIC_TIMEOUT_SECONDS=8
+SYNC_REQUEST_BUDGET_SECONDS=16
+SYNC_METRIC_TIMEOUT_SECONDS=4
+SYNC_METRIC_PAGE_LIMIT=4
+SYNC_METRIC_CONCURRENCY=6
+SYNC_METRIC_RECORD_LIMIT=600
 ```
 
 Run the server:
@@ -207,7 +210,7 @@ npx @modelcontextprotocol/inspector@latest --server-url http://localhost:8787/mc
 
 The tests cover OAuth metadata, encrypted token storage, empty states, synthetic health calculations, coaching evals, widget registration, tool schemas, deployment config, and local private-beta flows.
 
-Live sync behavior is intentionally best-effort: slow or failing Google Health metrics are skipped with diagnostics, available records are saved, and later questions can retry missing metrics without blocking the whole chat.
+Live sync behavior is intentionally best-effort: the app pulls useful Fitbit metrics in parallel with per-metric timeouts, page caps, and an overall request budget. High-volume streams are written as daily summaries or aggregates during the chat request, so ChatGPT gets fresh usable context without waiting on thousands of remote database writes. Coverage diagnostics show which metrics were fresh, truncated, deferred, or errored.
 
 ## Safety Notes
 

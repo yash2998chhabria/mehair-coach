@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import logging
 import math
 import re
 from collections import Counter, defaultdict
@@ -142,13 +143,50 @@ SYNC_PRIORITY = (
     "sleep",
     "daily-resting-heart-rate",
     "daily-heart-rate-variability",
-    "heart-rate",
     "active-zone-minutes",
+    "time-in-heart-rate-zone",
+    "heart-rate",
+    "active-minutes",
+    "steps",
     "exercise",
+    "daily-respiratory-rate",
+    "daily-oxygen-saturation",
+    "daily-sleep-temperature-derivations",
+    "respiratory-rate-sleep-summary",
+    "oxygen-saturation",
+    "heart-rate-variability",
+    "calories-in-heart-rate-zone",
+    "total-calories",
+    "active-energy-burned",
+    "distance",
+    "activity-level",
+    "sedentary-period",
+    "floors",
+    "swim-lengths-data",
+    "daily-vo2-max",
+)
+
+CORE_SYNC_METRICS = {
+    "sleep",
+    "daily-resting-heart-rate",
+    "daily-heart-rate-variability",
+    "active-zone-minutes",
     "time-in-heart-rate-zone",
     "active-minutes",
     "steps",
-)
+    "exercise",
+    "daily-respiratory-rate",
+    "daily-oxygen-saturation",
+    "daily-sleep-temperature-derivations",
+    "respiratory-rate-sleep-summary",
+}
+SYNC_METRIC_TIMEOUT_CAP_SECONDS = 4
+SYNC_REQUEST_BUDGET_CAP_SECONDS = 16
+SYNC_METRIC_PAGE_LIMIT_CAP = 4
+SYNC_METRIC_CONCURRENCY_CAP = 8
+LIVE_SECONDARY_RECORD_LIMIT = 50
+
+logger = logging.getLogger(__name__)
 
 
 class HealthStore:
@@ -186,56 +224,243 @@ class HealthStore:
         end_date = (now.date() + timedelta(days=1)).isoformat()
         sync_window.update(
             {
+                "sync_mode": "parallel_bounded",
                 "start_time": start_time,
                 "end_time": end_time,
                 "start_date": start_date,
                 "end_date": end_date,
+                "metric_priority": list(SYNC_PRIORITY),
             }
         )
 
         metric_errors: list[dict[str, str]] = []
         metrics_synced: list[str] = []
+        metrics_fetched: list[str] = []
+        metrics_deferred: list[str] = []
+        metric_timings: list[dict[str, Any]] = []
+        specs = self._sync_specs()
+        metric_order = {spec.id: index for index, spec in enumerate(specs)}
+        metrics_considered = [spec.id for spec in specs]
         time_budget_exhausted = False
-        budget_seconds = max(1, int(self.settings.sync_request_budget_seconds or 1))
-        metric_timeout = max(1, int(self.settings.sync_metric_timeout_seconds or 1))
+        configured_budget = max(1, int(self.settings.sync_request_budget_seconds or 1))
+        configured_metric_timeout = max(1, int(self.settings.sync_metric_timeout_seconds or 1))
+        configured_page_limit = max(1, int(self.settings.sync_metric_page_limit or 1))
+        configured_concurrency = max(1, int(self.settings.sync_metric_concurrency or 1))
+        configured_record_limit = max(1, int(self.settings.sync_metric_record_limit or 1))
+        budget_seconds = min(SYNC_REQUEST_BUDGET_CAP_SECONDS, configured_budget)
+        metric_timeout = min(SYNC_METRIC_TIMEOUT_CAP_SECONDS, configured_metric_timeout)
+        page_limit = min(SYNC_METRIC_PAGE_LIMIT_CAP, configured_page_limit)
+        concurrency = min(SYNC_METRIC_CONCURRENCY_CAP, configured_concurrency)
+        record_limit = configured_record_limit
         started_monotonic = monotonic()
         deadline = monotonic() + budget_seconds
 
         try:
-            for spec in self._sync_specs():
+            logger.info(
+                "google_health_sync_start user=%s sync_id=%s mode=parallel_bounded budget=%ss metric_timeout=%ss page_limit=%s concurrency=%s metrics=%s",
+                user_id,
+                sync_id,
+                budget_seconds,
+                metric_timeout,
+                page_limit,
+                concurrency,
+                len(specs),
+            )
+            semaphore = asyncio.Semaphore(concurrency)
+
+            async def fetch_one(spec: Any) -> dict[str, Any]:
                 remaining = deadline - monotonic()
                 if remaining <= 1:
-                    time_budget_exhausted = True
-                    break
+                    return {
+                        "status": "deferred",
+                        "metric": spec.id,
+                        "reason": "time_budget_exhausted_before_start",
+                    }
                 timeout = max(1, min(metric_timeout, int(remaining)))
-                try:
-                    records = await asyncio.wait_for(
-                        self._fetch_metric_records(
-                            access_token,
-                            spec,
-                            start_time=start_time,
-                            end_time=end_time,
-                            start_date=start_date,
-                            end_date=end_date,
-                        ),
-                        timeout=timeout,
-                    )
-                except Exception as exc:
-                    metric_errors.append(
-                        {
+                async with semaphore:
+                    remaining = deadline - monotonic()
+                    if remaining <= 1:
+                        return {
+                            "status": "deferred",
+                            "metric": spec.id,
+                            "reason": "time_budget_exhausted_before_fetch",
+                        }
+                    timeout = max(1, min(metric_timeout, int(remaining)))
+                    metric_started = monotonic()
+                    try:
+                        records = await asyncio.wait_for(
+                            self._fetch_metric_records(
+                                access_token,
+                                spec,
+                                start_time=start_time,
+                                end_time=end_time,
+                                start_date=start_date,
+                                end_date=end_date,
+                                timeout_seconds=timeout,
+                                page_limit=page_limit,
+                            ),
+                            timeout=timeout + 1,
+                        )
+                    except Exception as exc:
+                        elapsed = round(monotonic() - metric_started, 3)
+                        logger.info(
+                            "google_health_sync_metric_error user=%s sync_id=%s metric=%s category=%s metric_elapsed=%ss total_elapsed=%ss",
+                            user_id,
+                            sync_id,
+                            spec.id,
+                            _sync_error_category(exc),
+                            elapsed,
+                            round(monotonic() - started_monotonic, 3),
+                        )
+                        return {
+                            "status": "error",
                             "metric": spec.id,
                             "category": _sync_error_category(exc),
                             "error": _sync_error_message(exc),
+                            "elapsed_seconds": elapsed,
+                        }
+                    elapsed = round(monotonic() - metric_started, 3)
+                    logger.info(
+                        "google_health_sync_metric_done user=%s sync_id=%s metric=%s records=%s metric_elapsed=%ss total_elapsed=%ss",
+                        user_id,
+                        sync_id,
+                        spec.id,
+                        len(records),
+                        elapsed,
+                        round(monotonic() - started_monotonic, 3),
+                    )
+                    return {
+                        "status": "ok",
+                        "metric": spec.id,
+                        "records": records,
+                        "elapsed_seconds": elapsed,
+                        "records_may_be_truncated": (
+                            spec.operation != "dailyRollUp" and len(records) >= page_limit * 1000
+                        ),
+                    }
+
+            pending_by_task = {asyncio.create_task(fetch_one(spec)): spec for spec in specs}
+            completed_results: list[dict[str, Any]] = []
+            pending = set(pending_by_task)
+            while pending:
+                remaining = deadline - monotonic()
+                if remaining <= 0:
+                    time_budget_exhausted = True
+                    break
+                done, pending = await asyncio.wait(
+                    pending,
+                    timeout=remaining,
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+                if not done:
+                    time_budget_exhausted = True
+                    break
+                for task in done:
+                    completed_results.append(task.result())
+
+            if pending:
+                time_budget_exhausted = True
+                metrics_deferred.extend(pending_by_task[task].id for task in pending)
+                for task in pending:
+                    task.cancel()
+                await asyncio.gather(*pending, return_exceptions=True)
+
+            successful_results: list[dict[str, Any]] = []
+            for result_item in completed_results:
+                metric = result_item["metric"]
+                if result_item["status"] == "ok":
+                    storage_records = _prepare_records_for_sync(
+                        metric,
+                        result_item.get("records") or [],
+                        record_limit,
+                    )
+                    result_item["storage_records"] = storage_records
+                    successful_results.append(result_item)
+                    metric_timings.append(
+                        {
+                            "metric": metric,
+                            "status": "ok",
+                            "seconds": result_item.get("elapsed_seconds"),
+                            "records": len(result_item.get("records") or []),
+                            "stored_records": len(storage_records),
+                            "storage_strategy": _storage_strategy(metric),
+                            "records_may_be_truncated": result_item.get(
+                                "records_may_be_truncated",
+                                False,
+                            ),
                         }
                     )
-                    if deadline - monotonic() <= 1:
-                        time_budget_exhausted = True
-                        break
-                    continue
-                upserted += self.upsert_records(user_id, spec.id, records)
-                metrics_synced.append(spec.id)
+                elif result_item["status"] == "deferred":
+                    metrics_deferred.append(metric)
+                    metric_timings.append(
+                        {
+                            "metric": metric,
+                            "status": "deferred",
+                            "reason": result_item.get("reason"),
+                        }
+                    )
+                else:
+                    metric_errors.append(
+                        {
+                            "metric": metric,
+                            "category": result_item["category"],
+                            "error": result_item["error"],
+                        }
+                    )
+                    metric_timings.append(
+                        {
+                            "metric": metric,
+                            "status": "error",
+                            "seconds": result_item.get("elapsed_seconds"),
+                            "category": result_item.get("category"),
+                        }
+                    )
 
-            partial = bool(metric_errors or time_budget_exhausted)
+            metrics_deferred = _ordered_unique(metrics_deferred, metric_order)
+            metric_errors.sort(key=lambda item: metric_order.get(item["metric"], len(metric_order)))
+            metric_timings.sort(key=lambda item: metric_order.get(item["metric"], len(metric_order)))
+            prepared_results = sorted(
+                successful_results,
+                key=lambda item: metric_order.get(item["metric"], len(metric_order)),
+            )
+            metrics_fetched = _ordered_unique(
+                [item["metric"] for item in prepared_results],
+                metric_order,
+            )
+            live_results = [
+                item
+                for item in prepared_results
+                if item["metric"] in CORE_SYNC_METRICS
+                or 0 < len(item["storage_records"]) <= LIVE_SECONDARY_RECORD_LIMIT
+            ]
+            no_record_results = [
+                item
+                for item in prepared_results
+                if item["metric"] not in CORE_SYNC_METRICS and not item["storage_records"]
+            ]
+            heavy_secondary_results = [
+                item
+                for item in prepared_results
+                if item["metric"] not in CORE_SYNC_METRICS
+                and len(item["storage_records"]) > LIVE_SECONDARY_RECORD_LIMIT
+            ]
+
+            write_started = monotonic()
+            live_written = self.upsert_metric_records(user_id, live_results)
+            upserted += live_written
+            metrics_synced.extend(item["metric"] for item in live_results if item["storage_records"])
+            live_write_seconds = round(monotonic() - write_started, 3)
+            _annotate_write_timings(metric_timings, live_results, live_write_seconds)
+
+            if heavy_secondary_results:
+                metrics_deferred.extend(item["metric"] for item in heavy_secondary_results)
+                _annotate_secondary_timings(metric_timings, heavy_secondary_results)
+            _annotate_no_record_timings(metric_timings, no_record_results)
+
+            metrics_synced = _ordered_unique(metrics_synced, metric_order)
+            metrics_deferred = _ordered_unique(metrics_deferred, metric_order)
+
+            partial = bool(metric_errors or time_budget_exhausted or metrics_deferred)
             elapsed_seconds = round(monotonic() - started_monotonic, 3)
             if upserted == 0 and metric_errors:
                 message = (
@@ -250,10 +475,27 @@ class HealthStore:
                     "detail": metric_errors[0]["error"],
                     "records_upserted": upserted,
                     "elapsed_seconds": elapsed_seconds,
+                    "metrics_synced": metrics_synced,
+                    "metrics_fetched": metrics_fetched,
+                    "metrics_considered": metrics_considered,
+                    "metrics_deferred": metrics_deferred,
                     "sync_diagnostics": {
                         "metric_timeout_seconds": metric_timeout,
+                        "configured_metric_timeout_seconds": configured_metric_timeout,
                         "request_budget_seconds": budget_seconds,
+                        "configured_request_budget_seconds": configured_budget,
                         "time_budget_exhausted": time_budget_exhausted,
+                        "metrics_synced": metrics_synced,
+                        "metrics_fetched": metrics_fetched,
+                        "metrics_considered": metrics_considered,
+                        "metrics_deferred": metrics_deferred,
+                        "metric_timings": metric_timings,
+                        "page_limit": page_limit,
+                        "configured_page_limit": configured_page_limit,
+                        "concurrency": concurrency,
+                        "configured_concurrency": configured_concurrency,
+                        "record_limit": record_limit,
+                        "configured_record_limit": configured_record_limit,
                     },
                     "metric_errors": metric_errors[:10],
                 }
@@ -261,14 +503,25 @@ class HealthStore:
             finish_status = "partial" if partial else "ok"
             finish_message = (
                 (
-                    "Partial Google Health sync saved available records. "
+                    "Google Health sync saved core answer-ready records; secondary persistence deferred. "
                     f"elapsed={elapsed_seconds}s metrics_synced={len(metrics_synced)} "
-                    f"errors={len(metric_errors)} time_budget_exhausted={time_budget_exhausted}"
+                    f"errors={len(metric_errors)} deferred={len(metrics_deferred)} "
+                    f"time_budget_exhausted={time_budget_exhausted}"
                 )
                 if partial
                 else f"Sync complete. elapsed={elapsed_seconds}s metrics_synced={len(metrics_synced)}"
             )
             self._finish_sync(sync_id, finish_status, upserted, finish_message)
+            logger.info(
+                "google_health_sync_finish user=%s sync_id=%s status=%s upserted=%s elapsed=%ss errors=%s deferred=%s",
+                user_id,
+                sync_id,
+                finish_status,
+                upserted,
+                elapsed_seconds,
+                len(metric_errors),
+                len(metrics_deferred),
+            )
         except Exception as exc:
             elapsed_seconds = round(monotonic() - started_monotonic, 3)
             detail = _sync_error_message(exc)
@@ -282,9 +535,21 @@ class HealthStore:
                 "sync_diagnostics": {
                     "error_category": _sync_error_category(exc),
                     "metric_timeout_seconds": metric_timeout,
+                    "configured_metric_timeout_seconds": configured_metric_timeout,
                     "request_budget_seconds": budget_seconds,
+                    "configured_request_budget_seconds": configured_budget,
                     "time_budget_exhausted": time_budget_exhausted,
                     "metrics_synced": metrics_synced,
+                    "metrics_fetched": metrics_fetched,
+                    "metrics_considered": metrics_considered,
+                    "metrics_deferred": metrics_deferred,
+                    "metric_timings": metric_timings,
+                    "page_limit": page_limit,
+                    "configured_page_limit": configured_page_limit,
+                    "concurrency": concurrency,
+                    "configured_concurrency": configured_concurrency,
+                    "record_limit": record_limit,
+                    "configured_record_limit": configured_record_limit,
                 },
             }
 
@@ -292,20 +557,36 @@ class HealthStore:
         result = {
             "status": "ok",
             "message": (
-                "Google Health sync saved available records; some metrics were skipped."
-                if metric_errors or time_budget_exhausted
+                "Google Health sync saved fresh core records; some secondary metric persistence was deferred."
+                if metric_errors or time_budget_exhausted or metrics_deferred
                 else "Google Health sync complete."
             ),
             "records_upserted": upserted,
-            "partial_sync": bool(metric_errors or time_budget_exhausted),
+            "partial_sync": bool(metric_errors or time_budget_exhausted or metrics_deferred),
             "time_budget_exhausted": time_budget_exhausted,
             "metrics_synced": metrics_synced,
+            "metrics_fetched": metrics_fetched,
+            "metrics_considered": metrics_considered,
+            "metrics_deferred": metrics_deferred,
             "elapsed_seconds": elapsed_seconds,
             "sync_diagnostics": {
                 "metric_timeout_seconds": metric_timeout,
+                "configured_metric_timeout_seconds": configured_metric_timeout,
                 "request_budget_seconds": budget_seconds,
+                "configured_request_budget_seconds": configured_budget,
                 "time_budget_exhausted": time_budget_exhausted,
                 "metric_error_count": len(metric_errors),
+                "metrics_fetched": metrics_fetched,
+                "metrics_considered": metrics_considered,
+                "metrics_deferred": metrics_deferred,
+                "metric_timings": metric_timings,
+                "page_limit": page_limit,
+                "configured_page_limit": configured_page_limit,
+                "concurrency": concurrency,
+                "configured_concurrency": configured_concurrency,
+                "record_limit": record_limit,
+                "configured_record_limit": configured_record_limit,
+                "coverage_summary": _sync_coverage_summary(metrics_synced, metrics_deferred, metric_errors),
             },
             "metric_errors": metric_errors[:10],
             "lookback_days": sync_window["lookback_days"],
@@ -335,10 +616,25 @@ class HealthStore:
         end_time: str,
         start_date: str,
         end_date: str,
+        timeout_seconds: int,
+        page_limit: int,
     ) -> list[dict[str, Any]]:
         if spec.operation == "dailyRollUp":
-            return await self.google.daily_rollup(access_token, spec, start_date, end_date)
-        return await self.google.list_data_points(access_token, spec, start_time, end_time)
+            return await self.google.daily_rollup(
+                access_token,
+                spec,
+                start_date,
+                end_date,
+                timeout_seconds=timeout_seconds,
+            )
+        return await self.google.list_data_points(
+            access_token,
+            spec,
+            start_time,
+            end_time,
+            timeout_seconds=timeout_seconds,
+            max_pages=page_limit,
+        )
 
     def _sync_specs(self) -> list[Any]:
         priority = {metric: index for index, metric in enumerate(SYNC_PRIORITY)}
@@ -563,25 +859,60 @@ class HealthStore:
     def upsert_records(self, user_id: str, data_type: str, records: list[dict[str, Any]]) -> int:
         if not records:
             return 0
-        with self.db.connect() as conn:
-            for record in records:
-                key = record.get("name") or _stable_hash(record)
-                conn.execute(
-                    """
-                    INSERT OR REPLACE INTO raw_health_records
-                      (user_id, data_type, record_key, observed_date, payload_json, synced_at)
-                    VALUES (?, ?, ?, ?, ?, ?)
-                    """,
+        return self.upsert_metric_records(
+            user_id,
+            [{"metric": data_type, "storage_records": records}],
+        )
+
+    def upsert_metric_records(self, user_id: str, metric_results: list[dict[str, Any]]) -> int:
+        if not metric_results:
+            return 0
+        synced_at = iso_now()
+        rows: list[tuple[str, str, str, str | None, str, str]] = []
+        replace_days_by_metric: dict[str, set[str]] = defaultdict(set)
+        for result_item in metric_results:
+            data_type = result_item["metric"]
+            for record in result_item.get("storage_records") or []:
+                day = observed_date(record)
+                if _uses_compact_sync_storage(data_type) and _is_compact_sync_summary(record) and day:
+                    replace_days_by_metric[data_type].add(day)
+                rows.append(
                     (
                         user_id,
                         data_type,
-                        key,
-                        observed_date(record),
+                        record.get("name") or _stable_hash(record),
+                        day,
                         dumps(record),
-                        iso_now(),
-                    ),
+                        synced_at,
+                    )
                 )
-        return len(records)
+        if not rows:
+            return 0
+        with self.db.connect() as conn:
+            for data_type, days in sorted(replace_days_by_metric.items()):
+                ordered_days = sorted(days)
+                placeholders = ",".join("?" for _ in ordered_days)
+                conn.execute(
+                    f"""
+                    DELETE FROM raw_health_records
+                    WHERE user_id = ?
+                      AND data_type = ?
+                      AND observed_date IN ({placeholders})
+                    """,
+                    (user_id, data_type, *ordered_days),
+                )
+            for batch in _chunks(rows, 100):
+                placeholders = ",".join("(?, ?, ?, ?, ?, ?)" for _ in batch)
+                params = tuple(value for row in batch for value in row)
+                conn.execute(
+                    f"""
+                    INSERT OR REPLACE INTO raw_health_records
+                      (user_id, data_type, record_key, observed_date, payload_json, synced_at)
+                    VALUES {placeholders}
+                    """,
+                    params,
+                )
+        return len(rows)
 
     def connection_status(self, user_id: str | None) -> dict[str, Any]:
         if not user_id:
@@ -2758,46 +3089,79 @@ def _dedupe(items: list[str]) -> list[str]:
 
 def summarize_records(records: list[dict[str, Any]]) -> dict[str, Any]:
     daily: dict[str, dict[str, Any]] = defaultdict(dict)
-    heart_samples: dict[str, list[int]] = defaultdict(list)
+    heart_samples: dict[str, list[float]] = defaultdict(list)
     hrv_samples: dict[str, list[float]] = defaultdict(list)
     spo2_samples: dict[str, list[float]] = defaultdict(list)
+    compact_summary_days = {
+        (item["data_type"], item["observed_date"] or observed_date(item["payload"]))
+        for item in records
+        if _uses_compact_sync_storage(item["data_type"])
+        and _is_compact_sync_summary(item["payload"])
+        and (item["observed_date"] or observed_date(item["payload"]))
+    }
 
     for item in records:
         payload = item["payload"]
         day = item["observed_date"] or observed_date(payload)
         if not day:
             continue
-        values = daily[day]
         data_type = item["data_type"]
-        if data_type == "steps":
+        if (
+            _uses_compact_sync_storage(data_type)
+            and not _is_compact_sync_summary(payload)
+            and (data_type, day) in compact_summary_days
+        ):
+            continue
+        values = daily[day]
+        if data_type in {"steps", "steps-daily-summary"}:
             values["steps"] = values.get("steps", 0) + _int(payload, ["steps", "count"])
-        elif data_type == "active-zone-minutes":
+        elif data_type in {"active-zone-minutes", "active-zone-minutes-daily-summary"}:
             values["active_zone_minutes"] = values.get("active_zone_minutes", 0) + _int(
                 payload, ["activeZoneMinutes", "activeZoneMinutes"]
             )
-        elif data_type == "active-minutes":
+        elif data_type in {"active-minutes", "active-minutes-daily-summary"}:
             values["active_minutes"] = values.get("active_minutes", 0) + sum(
                 _int(part, ["activeMinutes"])
                 for part in payload.get("activeMinutes", {}).get("activeMinutesByActivityLevel", [])
             )
-        elif data_type == "distance":
+        elif data_type in {"distance", "distance-daily-summary"}:
             values["distance_mm"] = values.get("distance_mm", 0) + _int(payload, ["distance", "millimeters"])
-        elif data_type == "active-energy-burned":
+        elif data_type in {"active-energy-burned", "active-energy-burned-daily-summary"}:
             values["active_kcal"] = values.get("active_kcal", 0.0) + _float(
                 payload, ["activeEnergyBurned", "kcal"]
             )
         elif data_type == "total-calories":
             values["total_kcal"] = _float(payload, ["totalCalories", "kcalSum"])
         elif data_type == "heart-rate":
-            bpm = _int(payload, ["heartRate", "beatsPerMinute"])
-            if bpm:
+            heart_rate = payload.get("heartRate", {})
+            sample_summary = heart_rate.get("summary", {})
+            if sample_summary:
+                avg_bpm = _float(sample_summary, ["averageBeatsPerMinute"]) or _float(
+                    heart_rate,
+                    ["beatsPerMinute"],
+                )
+                values["heart"] = {
+                    "avg_bpm": round(avg_bpm, 1) if avg_bpm else None,
+                    "min_bpm": _round_number(_float(sample_summary, ["minBeatsPerMinute"])),
+                    "max_bpm": _round_number(_float(sample_summary, ["maxBeatsPerMinute"])),
+                    "samples": _int(sample_summary, ["samples"]) or 1,
+                }
+            elif bpm := _float(payload, ["heartRate", "beatsPerMinute"]):
                 heart_samples[day].append(bpm)
         elif data_type == "heart-rate-variability":
-            hrv = _float(
+            hrv_payload = payload.get("heartRateVariability", {})
+            sample_summary = hrv_payload.get("summary", {})
+            if sample_summary:
+                values["hrv_sample_ms"] = {
+                    "avg": round(_float(sample_summary, ["averageMilliseconds"]), 1),
+                    "min": round(_float(sample_summary, ["minMilliseconds"]), 1),
+                    "max": round(_float(sample_summary, ["maxMilliseconds"]), 1),
+                    "samples": _int(sample_summary, ["samples"]) or 1,
+                }
+            elif hrv := _float(
                 payload,
                 ["heartRateVariability", "rootMeanSquareOfSuccessiveDifferencesMilliseconds"],
-            )
-            if hrv:
+            ):
                 hrv_samples[day].append(hrv)
         elif data_type == "daily-resting-heart-rate":
             values["resting_heart_rate"] = _int(payload, ["dailyRestingHeartRate", "beatsPerMinute"])
@@ -2809,8 +3173,16 @@ def summarize_records(records: list[dict[str, Any]]) -> dict[str, Any]:
         elif data_type == "daily-oxygen-saturation":
             values["spo2_avg"] = _float(payload, ["dailyOxygenSaturation", "averagePercentage"])
         elif data_type == "oxygen-saturation":
-            spo2 = _float(payload, ["oxygenSaturation", "percentage"])
-            if spo2:
+            spo2_payload = payload.get("oxygenSaturation", {})
+            sample_summary = spo2_payload.get("summary", {})
+            if sample_summary:
+                values["spo2_sample"] = {
+                    "avg": round(_float(sample_summary, ["averagePercentage"]), 1),
+                    "min": round(_float(sample_summary, ["minPercentage"]), 1),
+                    "max": round(_float(sample_summary, ["maxPercentage"]), 1),
+                    "samples": _int(sample_summary, ["samples"]) or 1,
+                }
+            elif spo2 := _float(payload, ["oxygenSaturation", "percentage"]):
                 spo2_samples[day].append(spo2)
         elif data_type == "daily-respiratory-rate":
             values["respiratory_rate"] = _float(payload, ["dailyRespiratoryRate", "breathsPerMinute"])
@@ -2823,6 +3195,13 @@ def summarize_records(records: list[dict[str, Any]]) -> dict[str, Any]:
             minutes = _interval_minutes(payload.get("activityLevel", {}))
             levels = values.setdefault("activity_levels_minutes", defaultdict(float))
             levels[level] += minutes
+        elif data_type == "activity-level-daily-summary":
+            levels = values.setdefault("activity_levels_minutes", defaultdict(float))
+            for level, minutes in payload.get("activityLevel", {}).get(
+                "activityLevelsMinutes",
+                {},
+            ).items():
+                levels[str(level).lower()] += _float({"value": minutes}, ["value"])
         elif data_type == "sedentary-period":
             values["sedentary_minutes"] = values.get("sedentary_minutes", 0.0) + _interval_minutes(
                 payload.get("sedentaryPeriod", {})
@@ -2832,6 +3211,13 @@ def summarize_records(records: list[dict[str, Any]]) -> dict[str, Any]:
             minutes = _interval_minutes(payload.get("timeInHeartRateZone", {}))
             zones = values.setdefault("time_in_hr_zones_minutes", defaultdict(float))
             zones[zone] += minutes
+        elif data_type == "time-in-heart-rate-zone-daily-summary":
+            zones = values.setdefault("time_in_hr_zones_minutes", defaultdict(float))
+            for zone, minutes in payload.get("timeInHeartRateZone", {}).get(
+                "heartRateZonesMinutes",
+                {},
+            ).items():
+                zones[str(zone).lower()] += _float({"value": minutes}, ["value"])
         elif data_type == "calories-in-heart-rate-zone":
             zones = values.setdefault("calories_in_hr_zones_kcal", defaultdict(float))
             for zone in payload.get("caloriesInHeartRateZone", {}).get("caloriesInHeartRateZones", []):
@@ -3057,6 +3443,291 @@ def observed_date(payload: dict[str, Any]) -> str | None:
     return sorted(dates)[0] if dates else None
 
 
+AGGREGATE_SYNC_METRICS = {
+    "steps",
+    "active-zone-minutes",
+    "active-minutes",
+    "distance",
+    "active-energy-burned",
+    "activity-level",
+    "time-in-heart-rate-zone",
+}
+
+DAILY_SAMPLE_SUMMARY_SYNC_METRICS = {
+    "heart-rate",
+    "heart-rate-variability",
+    "oxygen-saturation",
+}
+
+SAMPLE_SYNC_METRICS: set[str] = set()
+
+
+def _prepare_records_for_sync(
+    metric: str,
+    records: list[dict[str, Any]],
+    record_limit: int,
+) -> list[dict[str, Any]]:
+    if not records:
+        return []
+    if metric in DAILY_SAMPLE_SUMMARY_SYNC_METRICS:
+        return _aggregate_metric_records(metric, records)
+    if metric in AGGREGATE_SYNC_METRICS:
+        return _aggregate_metric_records(metric, records)
+    if metric in SAMPLE_SYNC_METRICS and len(records) > record_limit:
+        return _downsample_records(records, record_limit)
+    if len(records) > record_limit:
+        return _downsample_records(records, record_limit)
+    return records
+
+
+def _storage_strategy(metric: str) -> str:
+    if metric in DAILY_SAMPLE_SUMMARY_SYNC_METRICS:
+        return "daily_sample_summary"
+    if metric in AGGREGATE_SYNC_METRICS:
+        return "daily_aggregate"
+    if metric in SAMPLE_SYNC_METRICS:
+        return "bounded_samples"
+    return "raw_bounded"
+
+
+def _uses_compact_sync_storage(metric: str) -> bool:
+    return metric in AGGREGATE_SYNC_METRICS or metric in DAILY_SAMPLE_SUMMARY_SYNC_METRICS
+
+
+def _is_compact_sync_summary(record: dict[str, Any]) -> bool:
+    return str(record.get("name") or "").startswith("summary/") and isinstance(
+        record.get("summary"),
+        dict,
+    )
+
+
+def _aggregate_metric_records(metric: str, records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    by_day: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for record in records:
+        day = observed_date(record)
+        if day:
+            by_day[day].append(record)
+
+    output: list[dict[str, Any]] = []
+    for day, day_records in sorted(by_day.items()):
+        if metric == "steps":
+            count = sum(_int(record, ["steps", "count"]) for record in day_records)
+            output.append(
+                {
+                    "name": f"summary/{metric}/{day}",
+                    "date": _date_payload(day),
+                    "steps": {"count": count},
+                    "summary": {"sourceRecords": len(day_records)},
+                }
+            )
+        elif metric == "active-zone-minutes":
+            minutes = sum(
+                _int(record, ["activeZoneMinutes", "activeZoneMinutes"])
+                for record in day_records
+            )
+            output.append(
+                {
+                    "name": f"summary/{metric}/{day}",
+                    "date": _date_payload(day),
+                    "activeZoneMinutes": {"activeZoneMinutes": minutes},
+                    "summary": {"sourceRecords": len(day_records)},
+                }
+            )
+        elif metric == "active-minutes":
+            totals: dict[str, int] = defaultdict(int)
+            for record in day_records:
+                for part in record.get("activeMinutes", {}).get(
+                    "activeMinutesByActivityLevel",
+                    [],
+                ):
+                    level = str(part.get("activityLevel") or "UNKNOWN")
+                    totals[level] += _int(part, ["activeMinutes"])
+            output.append(
+                {
+                    "name": f"summary/{metric}/{day}",
+                    "date": _date_payload(day),
+                    "activeMinutes": {
+                        "activeMinutesByActivityLevel": [
+                            {"activityLevel": level, "activeMinutes": minutes}
+                            for level, minutes in sorted(totals.items())
+                        ]
+                    },
+                    "summary": {"sourceRecords": len(day_records)},
+                }
+            )
+        elif metric == "distance":
+            millimeters = sum(_int(record, ["distance", "millimeters"]) for record in day_records)
+            output.append(
+                {
+                    "name": f"summary/{metric}/{day}",
+                    "date": _date_payload(day),
+                    "distance": {"millimeters": millimeters},
+                    "summary": {"sourceRecords": len(day_records)},
+                }
+            )
+        elif metric == "active-energy-burned":
+            kcal = sum(_float(record, ["activeEnergyBurned", "kcal"]) for record in day_records)
+            output.append(
+                {
+                    "name": f"summary/{metric}/{day}",
+                    "date": _date_payload(day),
+                    "activeEnergyBurned": {"kcal": round(kcal, 2)},
+                    "summary": {"sourceRecords": len(day_records)},
+                }
+            )
+        elif metric == "activity-level":
+            totals_float: dict[str, float] = defaultdict(float)
+            for record in day_records:
+                level = record.get("activityLevel", {}).get("activityLevelType", "UNKNOWN")
+                totals_float[level] += _interval_minutes(record.get("activityLevel", {}))
+            output.append(
+                {
+                    "name": f"summary/{metric}/{day}",
+                    "date": _date_payload(day),
+                    "activityLevel": {
+                        "activityLevelsMinutes": {
+                            level: round(minutes, 2)
+                            for level, minutes in sorted(totals_float.items())
+                        }
+                    },
+                    "summary": {"sourceRecords": len(day_records)},
+                }
+            )
+        elif metric == "time-in-heart-rate-zone":
+            totals_float = defaultdict(float)
+            for record in day_records:
+                zone = record.get("timeInHeartRateZone", {}).get("heartRateZoneType", "UNKNOWN")
+                totals_float[zone] += _interval_minutes(record.get("timeInHeartRateZone", {}))
+            output.append(
+                {
+                    "name": f"summary/{metric}/{day}",
+                    "date": _date_payload(day),
+                    "timeInHeartRateZone": {
+                        "heartRateZonesMinutes": {
+                            zone: round(minutes, 2)
+                            for zone, minutes in sorted(totals_float.items())
+                        }
+                    },
+                    "summary": {"sourceRecords": len(day_records)},
+                }
+            )
+        elif metric == "heart-rate":
+            values = [
+                _float(record, ["heartRate", "beatsPerMinute"])
+                for record in day_records
+                if _float(record, ["heartRate", "beatsPerMinute"]) > 0
+            ]
+            if not values:
+                continue
+            stats = _numeric_summary(values)
+            output.append(
+                {
+                    "name": f"summary/{metric}/{day}",
+                    "date": _date_payload(day),
+                    "heartRate": {
+                        "beatsPerMinute": stats["average"],
+                        "summary": {
+                            "averageBeatsPerMinute": stats["average"],
+                            "minBeatsPerMinute": stats["min"],
+                            "maxBeatsPerMinute": stats["max"],
+                            "samples": stats["samples"],
+                        },
+                    },
+                    "summary": {"sourceRecords": len(day_records)},
+                }
+            )
+        elif metric == "heart-rate-variability":
+            values = [
+                _float(
+                    record,
+                    ["heartRateVariability", "rootMeanSquareOfSuccessiveDifferencesMilliseconds"],
+                )
+                for record in day_records
+                if _float(
+                    record,
+                    ["heartRateVariability", "rootMeanSquareOfSuccessiveDifferencesMilliseconds"],
+                )
+                > 0
+            ]
+            if not values:
+                continue
+            stats = _numeric_summary(values)
+            output.append(
+                {
+                    "name": f"summary/{metric}/{day}",
+                    "date": _date_payload(day),
+                    "heartRateVariability": {
+                        "rootMeanSquareOfSuccessiveDifferencesMilliseconds": stats["average"],
+                        "summary": {
+                            "averageMilliseconds": stats["average"],
+                            "minMilliseconds": stats["min"],
+                            "maxMilliseconds": stats["max"],
+                            "samples": stats["samples"],
+                        },
+                    },
+                    "summary": {"sourceRecords": len(day_records)},
+                }
+            )
+        elif metric == "oxygen-saturation":
+            values = [
+                _float(record, ["oxygenSaturation", "percentage"])
+                for record in day_records
+                if _float(record, ["oxygenSaturation", "percentage"]) > 0
+            ]
+            if not values:
+                continue
+            stats = _numeric_summary(values)
+            output.append(
+                {
+                    "name": f"summary/{metric}/{day}",
+                    "date": _date_payload(day),
+                    "oxygenSaturation": {
+                        "percentage": stats["average"],
+                        "summary": {
+                            "averagePercentage": stats["average"],
+                            "minPercentage": stats["min"],
+                            "maxPercentage": stats["max"],
+                            "samples": stats["samples"],
+                        },
+                    },
+                    "summary": {"sourceRecords": len(day_records)},
+                }
+            )
+    return output
+
+
+def _downsample_records(records: list[dict[str, Any]], limit: int) -> list[dict[str, Any]]:
+    if len(records) <= limit:
+        return records
+    sorted_records = sorted(records, key=lambda record: dumps(record))
+    if limit == 1:
+        return [sorted_records[-1]]
+    step = (len(sorted_records) - 1) / (limit - 1)
+    return [sorted_records[round(index * step)] for index in range(limit)]
+
+
+def _date_payload(day: str) -> dict[str, int]:
+    year, month, day_num = [int(part) for part in day.split("-")]
+    return {"year": year, "month": month, "day": day_num}
+
+
+def _numeric_summary(values: list[float]) -> dict[str, float | int]:
+    return {
+        "average": round(sum(values) / len(values), 1),
+        "min": _round_number(min(values)),
+        "max": _round_number(max(values)),
+        "samples": len(values),
+    }
+
+
+def _round_number(value: float) -> int | float | None:
+    if value <= 0:
+        return None
+    if float(value).is_integer():
+        return int(value)
+    return round(value, 1)
+
+
 def _normalize_metric_request(metrics: list[str] | None, stored_types: set[str]) -> list[str]:
     if not metrics:
         return sorted(stored_types or SYNC_DATA_TYPE_IDS)
@@ -3116,6 +3787,84 @@ def _baseline_average(
     if not values:
         return None
     return sum(values) / len(values)
+
+
+def _ordered_unique(values: list[str], order: dict[str, int]) -> list[str]:
+    return sorted(set(values), key=lambda value: order.get(value, len(order)))
+
+
+def _chunks(values: list[Any], size: int) -> list[list[Any]]:
+    safe_size = max(1, size)
+    return [values[index : index + safe_size] for index in range(0, len(values), safe_size)]
+
+
+def _sync_coverage_summary(
+    metrics_synced: list[str],
+    metrics_deferred: list[str],
+    metric_errors: list[dict[str, str]],
+) -> dict[str, Any]:
+    synced = set(metrics_synced)
+    recovery_core = [
+        "sleep",
+        "daily-resting-heart-rate",
+        "daily-heart-rate-variability",
+        "active-zone-minutes",
+        "steps",
+    ]
+    heart_detail = ["heart-rate", "time-in-heart-rate-zone", "heart-rate-variability"]
+    recovery_extended = [
+        "daily-respiratory-rate",
+        "daily-oxygen-saturation",
+        "daily-sleep-temperature-derivations",
+        "respiratory-rate-sleep-summary",
+        "oxygen-saturation",
+    ]
+    return {
+        "core_recovery_ready": all(metric in synced for metric in recovery_core),
+        "heart_detail_ready": any(metric in synced for metric in heart_detail),
+        "workout_sessions_ready": "exercise" in synced,
+        "extended_recovery_ready": any(metric in synced for metric in recovery_extended),
+        "synced_count": len(metrics_synced),
+        "deferred_count": len(metrics_deferred),
+        "error_count": len(metric_errors),
+        "usable_for_today_plan": any(metric in synced for metric in recovery_core),
+    }
+
+
+def _annotate_write_timings(
+    metric_timings: list[dict[str, Any]],
+    results: list[dict[str, Any]],
+    write_seconds: float,
+) -> None:
+    if not results:
+        return
+    result_metrics = {item["metric"] for item in results if item.get("storage_records")}
+    if not result_metrics:
+        return
+    for timing in metric_timings:
+        if timing.get("metric") in result_metrics:
+            timing["write_batch_seconds"] = write_seconds
+            timing["write_batch_metric_count"] = len(result_metrics)
+
+
+def _annotate_secondary_timings(
+    metric_timings: list[dict[str, Any]],
+    results: list[dict[str, Any]],
+) -> None:
+    result_metrics = {item["metric"] for item in results}
+    for timing in metric_timings:
+        if timing.get("metric") in result_metrics:
+            timing["persistence"] = "deferred_after_fetch"
+
+
+def _annotate_no_record_timings(
+    metric_timings: list[dict[str, Any]],
+    results: list[dict[str, Any]],
+) -> None:
+    result_metrics = {item["metric"] for item in results}
+    for timing in metric_timings:
+        if timing.get("metric") in result_metrics:
+            timing["persistence"] = "no_records_to_store"
 
 
 def _latest_load(daily: dict[str, dict[str, Any]], max_date: str | None) -> tuple[str | None, int]:

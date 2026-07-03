@@ -91,12 +91,15 @@ class GoogleHealthClient:
         start_time: str,
         end_time: str,
         page_size: int = 1000,
+        timeout_seconds: int = 8,
+        max_pages: int = 8,
     ) -> list[dict[str, Any]]:
         records: list[dict[str, Any]] = []
         page_token = ""
         pages = 0
-        async with httpx.AsyncClient(timeout=30) as client:
-            while pages < 50:
+        timeout = _http_timeout(timeout_seconds)
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            while pages < max(1, max_pages):
                 params: dict[str, str | int] = {"pageSize": page_size}
                 if page_token:
                     params["pageToken"] = page_token
@@ -122,6 +125,7 @@ class GoogleHealthClient:
         spec: DataTypeSpec,
         start_date: str,
         end_date: str,
+        timeout_seconds: int = 8,
     ) -> list[dict[str, Any]]:
         body = {
             "range": {
@@ -132,7 +136,7 @@ class GoogleHealthClient:
             "pageSize": 8,
             "dataSourceFamily": "users/me/dataSourceFamilies/google-wearables",
         }
-        async with httpx.AsyncClient(timeout=30) as client:
+        async with httpx.AsyncClient(timeout=_http_timeout(timeout_seconds)) as client:
             response = await client.post(
                 f"{self.base_url}/users/me/dataTypes/{spec.id}/dataPoints:dailyRollUp",
                 headers={
@@ -171,3 +175,9 @@ class GoogleHealthClient:
     def _civil_date(value: str) -> dict[str, Any]:
         year, month, day = [int(part) for part in value[:10].split("-")]
         return {"date": {"year": year, "month": month, "day": day}}
+
+
+def _http_timeout(timeout_seconds: int) -> httpx.Timeout:
+    total = max(1.0, float(timeout_seconds))
+    connect = min(2.0, total)
+    return httpx.Timeout(total, connect=connect, read=total, write=total, pool=connect)

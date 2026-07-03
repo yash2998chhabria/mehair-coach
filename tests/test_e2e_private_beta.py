@@ -80,9 +80,13 @@ class FakeGoogleHealth:
         spec: DataTypeSpec,
         start_time: str,
         end_time: str,
+        timeout_seconds: int = 8,
+        max_pages: int = 8,
     ) -> list[dict[str, Any]]:
         assert access_token == "fake-google-access"
         assert start_time < end_time
+        assert timeout_seconds >= 1
+        assert max_pages >= 1
         self.requested_specs.append(spec.id)
         self.requested_windows.append((spec.id, start_time, end_time))
         day = self.today
@@ -204,9 +208,11 @@ class FakeGoogleHealth:
         spec: DataTypeSpec,
         start_date: str,
         end_date: str,
+        timeout_seconds: int = 8,
     ) -> list[dict[str, Any]]:
         assert access_token == "fake-google-access"
         assert start_date < end_date
+        assert timeout_seconds >= 1
         self.requested_specs.append(spec.id)
         self.requested_rollups.append((spec.id, start_date, end_date))
         year, month, day_num = [int(part) for part in self.today.split("-")]
@@ -379,6 +385,10 @@ async def test_private_beta_oauth_mcp_sync_and_coaching_flow(tmp_path, monkeypat
             bootstrap_records = after_connect_context["data_freshness"]["records"]
             assert bootstrap_records >= 10
             assert "food" not in fake_health.requested_specs
+            assert "heart-rate" in fake_health.requested_specs
+            assert "exercise" in fake_health.requested_specs
+            assert "time-in-heart-rate-zone" in fake_health.requested_specs
+            assert "daily-oxygen-saturation" in fake_health.requested_specs
 
             sync = tool_content(
                 await mcp_request(
@@ -421,6 +431,9 @@ async def test_private_beta_oauth_mcp_sync_and_coaching_flow(tmp_path, monkeypat
                 )
             )
             assert incremental_sync["status"] == "ok"
+            assert incremental_sync["partial_sync"] is False
+            assert incremental_sync["metrics_deferred"] == []
+            assert incremental_sync["sync_diagnostics"]["coverage_summary"]["usable_for_today_plan"] is True
             assert incremental_sync["sync_window"]["mode"] == "incremental"
             assert incremental_sync["sync_window"]["lookback_days"] <= 2
             assert incremental_sync["sync_window"]["configured_overlap_hours"] == 2
@@ -886,6 +899,8 @@ async def test_google_access_token_refresh_is_used_for_sync(tmp_path, monkeypatc
 
     assert result["status"] == "ok"
     assert result["records_upserted"] >= 10
+    assert result["partial_sync"] is False
+    assert result["metrics_deferred"] == []
     assert bundle.auth_service.current_user_google_token(user_id) == "fake-google-access"
 
 
@@ -1018,6 +1033,8 @@ class PartiallyFailingGoogleHealth:
         spec: DataTypeSpec,
         start_time: str,
         end_time: str,
+        timeout_seconds: int = 8,
+        max_pages: int = 8,
     ) -> list[dict[str, Any]]:
         if spec.id == "sleep":
             today = datetime.now(UTC).date().isoformat()
