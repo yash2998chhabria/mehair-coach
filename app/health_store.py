@@ -118,11 +118,19 @@ class HealthStore:
         sync_id = self._start_sync(user_id, started_at)
         upserted = 0
         now = utc_now()
-        start = now - timedelta(days=self.settings.sync_lookback_days)
+        start, sync_window = self._sync_window(user_id, now)
         start_time = start.isoformat().replace("+00:00", "Z")
         end_time = (now + timedelta(days=1)).isoformat().replace("+00:00", "Z")
         start_date = start.date().isoformat()
         end_date = (now.date() + timedelta(days=1)).isoformat()
+        sync_window.update(
+            {
+                "start_time": start_time,
+                "end_time": end_time,
+                "start_date": start_date,
+                "end_date": end_date,
+            }
+        )
 
         try:
             for spec in SYNC_DATA_TYPES:
@@ -145,7 +153,8 @@ class HealthStore:
             "status": "ok",
             "message": "Google Health sync complete.",
             "records_upserted": upserted,
-            "lookback_days": self.settings.sync_lookback_days,
+            "lookback_days": sync_window["lookback_days"],
+            "sync_window": sync_window,
         }
         context = self.latest_context(user_id)
         if context.get("status") == "ok":
@@ -159,6 +168,52 @@ class HealthStore:
                 }
             )
         return result
+
+    def _sync_window(self, user_id: str, now: datetime) -> tuple[datetime, dict[str, Any]]:
+        full_days = max(1, int(self.settings.sync_lookback_days or 7))
+        incremental_days = max(
+            1,
+            min(int(self.settings.sync_incremental_lookback_days or 2), full_days),
+        )
+        overlap_hours = max(0, int(self.settings.sync_incremental_overlap_hours or 0))
+        full_start = now - timedelta(days=full_days)
+        row = self.db.one(
+            """
+            SELECT COUNT(*) AS records, MAX(observed_date) AS latest_observed
+            FROM raw_health_records
+            WHERE user_id = ?
+            """,
+            (user_id,),
+        )
+        if not row or not row["records"]:
+            return full_start, {
+                "mode": "initial",
+                "lookback_days": full_days,
+                "existing_records": 0,
+                "latest_observed_date": None,
+            }
+
+        incremental_start = now - timedelta(days=incremental_days)
+        latest_observed = row["latest_observed"]
+        start = incremental_start
+        if latest_observed:
+            try:
+                anchor = datetime.fromisoformat(latest_observed).replace(tzinfo=UTC) - timedelta(
+                    hours=overlap_hours
+                )
+                start = max(incremental_start, anchor)
+            except ValueError:
+                start = incremental_start
+        start = max(full_start, start)
+        effective_days = max(1, math.ceil((now - start).total_seconds() / 86400))
+        return start, {
+            "mode": "incremental",
+            "lookback_days": effective_days,
+            "configured_incremental_days": incremental_days,
+            "configured_overlap_hours": overlap_hours,
+            "existing_records": int(row["records"]),
+            "latest_observed_date": latest_observed,
+        }
 
     def upsert_records(self, user_id: str, data_type: str, records: list[dict[str, Any]]) -> int:
         if not records:

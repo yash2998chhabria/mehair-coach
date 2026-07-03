@@ -70,6 +70,8 @@ def tool_content(response: dict[str, Any]) -> dict[str, Any]:
 class FakeGoogleHealth:
     def __init__(self) -> None:
         self.requested_specs: list[str] = []
+        self.requested_windows: list[tuple[str, str, str]] = []
+        self.requested_rollups: list[tuple[str, str, str]] = []
         self.today = datetime.now(UTC).date().isoformat()
 
     async def list_data_points(
@@ -82,6 +84,7 @@ class FakeGoogleHealth:
         assert access_token == "fake-google-access"
         assert start_time < end_time
         self.requested_specs.append(spec.id)
+        self.requested_windows.append((spec.id, start_time, end_time))
         day = self.today
         if spec.id == "steps":
             return [
@@ -205,6 +208,7 @@ class FakeGoogleHealth:
         assert access_token == "fake-google-access"
         assert start_date < end_date
         self.requested_specs.append(spec.id)
+        self.requested_rollups.append((spec.id, start_date, end_date))
         year, month, day_num = [int(part) for part in self.today.split("-")]
         if spec.id == "total-calories":
             return [
@@ -350,9 +354,11 @@ async def test_private_beta_oauth_mcp_sync_and_coaching_flow(tmp_path, monkeypat
             tools = await mcp_request(client, access_token, "tools/list", request_id=2)
             tool_names = {item["name"] for item in tools["result"]["tools"]}
             assert "sync_latest_fitbit_data" in tool_names
+            assert "sync_and_get_health_overview" in tool_names
             assert "get_today_context" in tool_names
             assert "get_health_overview" in tool_names
             assert "plan_workout_with_health_context" in tool_names
+            assert "guide_active_workout" in tool_names
             assert "get_health_question_clues" in tool_names
             assert "get_recovery_signal_comparison" in tool_names
             assert "list_available_health_metrics" in tool_names
@@ -380,9 +386,42 @@ async def test_private_beta_oauth_mcp_sync_and_coaching_flow(tmp_path, monkeypat
             )
             assert sync["status"] == "ok"
             assert sync["records_upserted"] >= 10
+            assert sync["sync_window"]["mode"] == "initial"
             assert sync["context"]["today"]["steps"] == 9200
             assert sync["readiness"]["label"] == "green"
             assert "food" not in fake_health.requested_specs
+
+            incremental_sync = tool_content(
+                await mcp_request(
+                    client,
+                    access_token,
+                    "tools/call",
+                    {"name": "sync_latest_fitbit_data", "arguments": {}},
+                    40,
+                )
+            )
+            assert incremental_sync["status"] == "ok"
+            assert incremental_sync["sync_window"]["mode"] == "incremental"
+            assert incremental_sync["sync_window"]["lookback_days"] <= 2
+            assert incremental_sync["sync_window"]["configured_overlap_hours"] == 2
+            assert incremental_sync["sync_window"]["existing_records"] >= sync["records_upserted"]
+
+            fresh_overview = tool_content(
+                await mcp_request(
+                    client,
+                    access_token,
+                    "tools/call",
+                    {"name": "sync_and_get_health_overview", "arguments": {"days": 7}},
+                    401,
+                )
+            )
+            assert fresh_overview["status"] == "ok"
+            assert fresh_overview["overview_type"] == "health_overview"
+            assert fresh_overview["sections"]["activity"]["totals"]["steps"] == 9200
+            assert fresh_overview["fresh_sync"]["status"] == "ok"
+            assert fresh_overview["fresh_sync"]["sync_window"]["mode"] == "incremental"
+            assert fresh_overview["fresh_sync"]["sync_window"]["lookback_days"] <= 2
+            assert fresh_overview["fresh_sync"]["sync_window"]["configured_overlap_hours"] == 2
 
             catalog = tool_content(
                 await mcp_request(
@@ -445,6 +484,31 @@ async def test_private_beta_oauth_mcp_sync_and_coaching_flow(tmp_path, monkeypat
             assert any("No coaching goal" in item for item in recommendation["context_gaps"])
             assert any("Log a quick energy" in item for item in recommendation["next_actions"])
             assert "medical advice" in recommendation["safety_note"]
+
+            active_guidance = tool_content(
+                await mcp_request(
+                    client,
+                    access_token,
+                    "tools/call",
+                    {
+                        "name": "guide_active_workout",
+                        "arguments": {
+                            "planned_activity": "interval run",
+                            "current_heart_rate_bpm": 178,
+                            "current_rpe": 9,
+                            "pain_level": 2,
+                            "symptoms": "I feel dizzy during the interval",
+                            "elapsed_minutes": 18,
+                            "planned_duration_minutes": 35,
+                        },
+                    },
+                    601,
+                )
+            )
+            assert active_guidance["status"] == "ok"
+            assert active_guidance["decision"] == "stop_and_assess"
+            assert active_guidance["safety_flags"]
+            assert any("Stop the set or interval now" in item for item in active_guidance["immediate_actions"])
 
             sleep = tool_content(
                 await mcp_request(

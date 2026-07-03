@@ -67,6 +67,7 @@ flowchart LR
 - `list_available_health_metrics` lists every device-first metric this beta can sync and query, including local record counts.
 - `query_health_metrics` queries selected synced metrics over a bounded date range from the local store.
 - `sync_latest_fitbit_data` pulls the latest available Google Health/Fitbit records.
+- `sync_and_get_health_overview` pulls the latest records and returns a card-ready all-data health overview in one tool call.
 - `get_data_freshness` reports last observed date, last sync time, and whether data is fresh, aging, or stale.
 - `get_today_context` returns the latest daily activity, sleep, heart, readiness, and evidence.
 - `get_health_overview` returns an all-data overview across readiness, activity, sleep, heart, recovery, workouts, goals, check-ins, freshness, coverage, daily brief, positives, watchouts, and next actions.
@@ -75,6 +76,7 @@ flowchart LR
 - `get_recovery_signal_comparison` compares sleep, HRV, resting heart rate, overnight recovery signals, and activity load against recent baseline.
 - `recommend_workout_today` recommends the day’s training intensity using freshness, readiness, activity load, goals, recent workouts, and check-ins, then returns a concise evidence trail for “why?” answers.
 - `plan_workout_with_health_context` plans a specific workout, sport session, or muscle-group day from synced data and user constraints.
+- `guide_active_workout` gives in-session continue/downshift/stop guidance from live HR, RPE, pain, symptoms, and synced readiness/load context.
 - `get_sleep_analysis` summarizes recent sleep.
 - `get_activity_load` summarizes recent activity.
 - `get_heart_trends` summarizes heart rate, resting heart rate, and HRV.
@@ -152,15 +154,18 @@ Restart the server, then in ChatGPT:
 5. Ask prompts like:
 
 ```text
-Sync latest Fitbit data.
+Sync latest Fitbit data and give me a full health and fitness overview using all my data.
 Give me a full health and fitness overview using all my data.
 What should I do today?
 How hard should I work out today?
+I am 18 minutes into intervals, heart rate 178, RPE 9, and I feel dizzy. Should I keep going?
 I want to train chest tomorrow, but my lower back is sore from squash. Plan it using my data.
 Why?
 Compare my sleep and heart rate.
 I feel cooked today. Which metrics matter, and what clues do you see?
 ```
+
+Developer-mode app routing can occasionally miss a natural prompt. If ChatGPT says it cannot access the connector even though the connector is enabled, use a follow-up like `Use the Mehair Coach Live connector tools now. Call sync_and_get_health_overview.` and refresh/recreate the connector after descriptor changes.
 
 For friend testing, give your friend the same public `/mcp` URL and add their email to the Google OAuth test users list. They create the connector in their own ChatGPT developer-mode settings and authorize their own Google account. Their data is stored under their own app user id.
 

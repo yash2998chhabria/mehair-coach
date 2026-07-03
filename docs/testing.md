@@ -25,6 +25,8 @@ uses the right signals for real questions:
   route through the daily brief plus workout recommendation tools.
 - context gaps: if goals or subjective check-ins are missing, overview and
   workout tools should surface that before hard-training advice.
+- active workout guidance: live HR/RPE/pain/symptom prompts should return
+  continue, downshift, stop, or safety-check guidance without diagnosing.
 - green training day: strong sleep, HRV above baseline, stable resting HR, low
   soreness, strong energy, and goal context should keep harder training
   available.
@@ -58,7 +60,7 @@ open "http://localhost:8787/docs/widget-preview?state=health-clues"
 ```
 
 Available preview states are `health-overview`, `health-clues`, `today-workout`,
-`recovery-comparison`, and `heart-safety`. These render the same Apps SDK
+`active-workout`, `recovery-comparison`, and `heart-safety`. These render the same Apps SDK
 iframe HTML with synthetic structured tool results, which makes visual QA
 possible without recreating a ChatGPT connector for every UI change.
 
@@ -72,11 +74,14 @@ For ChatGPT end-to-end testing, expose the server with HTTPS, create a developer
 
 Golden prompts:
 
-- `Sync latest Fitbit data.`
+- `Sync latest Fitbit data and give me a full health and fitness overview using all my data.`
 - `What should I do today?`
 - `How hard should I work out today?`
+- `I am 18 minutes into intervals, heart rate 178, RPE 9, and I feel dizzy. Should I keep going?`
 - `Why?`
 - `Compare my sleep and heart rate.`
 - `Show my activity load this week.`
 - `I feel cooked today. Which metrics matter, and what clues do you see?`
 - `Should I worry about my high heart rate and dizziness?`
+
+If ChatGPT answers that it cannot access the connector while the connector is enabled, immediately retry with `Use the Mehair Coach Live connector tools now. Call sync_and_get_health_overview.` This catches developer-mode routing/cache misses during live testing.

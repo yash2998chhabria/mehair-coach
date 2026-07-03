@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from app.main import workout_plan_for_activity, workout_recommendation
+from app.main import active_workout_guidance, workout_plan_for_activity, workout_recommendation
 
 
 def test_planned_chest_day_downshifts_for_red_readiness_and_back_soreness() -> None:
@@ -83,6 +83,86 @@ def test_green_readiness_allows_normal_planned_session() -> None:
     assert plan["recommended_intensity"] == "moderate-to-hard"
     assert plan["rpe_cap"] == 8
     assert any("normal session" in item.lower() for item in plan["session_guidance"])
+
+
+def test_active_workout_stops_for_dizziness_even_when_readiness_is_green() -> None:
+    context = {
+        "status": "ok",
+        "latest_date": "2026-07-03",
+        "activity_date": "2026-07-03",
+        "recovery_date": "2026-07-03",
+        "readiness": {
+            "score": 82,
+            "label": "green",
+            "recommendation": "A normal training day is reasonable if you feel good.",
+            "evidence": ["Latest sleep is strong at 8.0h.", "Resting heart rate is steady."],
+        },
+        "today": {
+            "steps": 8500,
+            "active_minutes": 54,
+            "active_zone_minutes": 35,
+            "hrv_ms": 48.5,
+            "resting_heart_rate": 57,
+            "sleep": {"asleep_hours": 8.0, "sessions_count": 1},
+            "latest_training_load": {"date": "2026-07-03", "active_zone_minutes": 35},
+        },
+    }
+
+    guidance = active_workout_guidance(
+        context=context,
+        planned_activity="interval run",
+        current_heart_rate_bpm=178,
+        current_rpe=9,
+        pain_level=2,
+        symptoms="I feel dizzy and a little chest tight during the interval",
+        elapsed_minutes=18,
+        planned_duration_minutes=35,
+    )
+
+    assert guidance["decision"] == "stop_and_assess"
+    assert guidance["safety_flags"]
+    assert any("urgent care" in item for item in guidance["safety_flags"])
+    assert any("Stop the set or interval now" in item for item in guidance["immediate_actions"])
+    assert any("Live heart rate reported: 178 bpm." in item for item in guidance["evidence"])
+    assert guidance["live_inputs"]["current_rpe"] == 9
+
+
+def test_active_workout_downshifts_for_high_effort_without_urgent_symptoms() -> None:
+    context = {
+        "status": "ok",
+        "latest_date": "2026-07-03",
+        "activity_date": "2026-07-03",
+        "recovery_date": "2026-07-03",
+        "readiness": {
+            "score": 70,
+            "label": "yellow",
+            "recommendation": "Choose moderate cardio, technique, or strength without max efforts.",
+            "evidence": ["Latest sleep is moderate at 6.8h."],
+        },
+        "today": {
+            "steps": 5000,
+            "active_minutes": 30,
+            "active_zone_minutes": 20,
+            "sleep": {"asleep_hours": 6.8, "sessions_count": 1},
+            "latest_training_load": {"date": "2026-07-03", "active_zone_minutes": 20},
+        },
+    }
+
+    guidance = active_workout_guidance(
+        context=context,
+        planned_activity="strength circuit",
+        current_heart_rate_bpm=165,
+        current_rpe=9,
+        pain_level=1,
+        symptoms="no symptoms, just very hard",
+        elapsed_minutes=28,
+        planned_duration_minutes=45,
+    )
+
+    assert guidance["decision"] == "downshift_now"
+    assert guidance["safety_flags"] == []
+    assert any("Take 3-5 minutes easy" in item for item in guidance["immediate_actions"])
+    assert any("Cut the next block" in item for item in guidance["modifications"])
 
 
 def test_today_recommendation_uses_goal_checkins_and_history() -> None:

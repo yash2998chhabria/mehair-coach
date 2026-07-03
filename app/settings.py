@@ -24,6 +24,8 @@ class Settings(BaseSettings):
     access_token_ttl_seconds: int = 3600
     refresh_token_ttl_seconds: int = 60 * 60 * 24 * 30
     sync_lookback_days: int = 7
+    sync_incremental_lookback_days: int = 2
+    sync_incremental_overlap_hours: int = 2
     host: str = "0.0.0.0"
     port: int = Field(default=8787, ge=1, le=65535)
 

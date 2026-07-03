@@ -434,6 +434,7 @@ TODAY_WIDGET_HTML = """
         if (data?.overview_type === "health_overview" && data?.sections) return healthOverviewModel(data);
         if (data?.clue_type === "health_question_clues") return questionCluesModel(data);
         if (data?.comparison_type === "sleep_heart_recovery") return recoveryComparisonModel(data);
+        if (data?.guidance_type === "active_workout_guidance") return activeWorkoutModel(data);
         if (data?.planned_activity && Array.isArray(data.session_guidance)) return workoutPlanModel(data);
         if (data?.recommendation && Array.isArray(data.next_actions) && data?.goal_context) return todayWorkoutModel(data);
         if (data?.latest && Array.isArray(data.days) && (data.latest.stages_minutes || data.latest.sessions_count != null)) {
@@ -718,6 +719,43 @@ TODAY_WIDGET_HTML = """
           evidence: (data.limiting_factors || data.why || []).slice(0, 5),
           secondaryTitle: "Avoid",
           secondary: (data.avoid || []).slice(0, 4),
+        };
+      }
+
+      function activeWorkoutModel(data) {
+        const readiness = data.readiness || {};
+        const dataUsed = data.data_used || {};
+        const live = data.live_inputs || {};
+        const safety = data.safety_flags || [];
+        const evidence = safety.length ? safety : data.evidence || [];
+        return {
+          accent: safety.length ? "#a94f43" : readinessAccent(readiness.label || dataUsed.readiness_label),
+          title: "Active Workout",
+          eyebrow: data.planned_activity || "In-Session Check",
+          date: live.elapsed_minutes != null ? `${live.elapsed_minutes} min elapsed` : data.activity_date || "",
+          chips: [
+            titleCase(data.decision || "guidance"),
+            live.current_heart_rate_bpm != null ? `${live.current_heart_rate_bpm} bpm` : "",
+            live.current_rpe != null ? `RPE ${live.current_rpe}` : "",
+            live.pain_level != null ? `Pain ${live.pain_level}/10` : "",
+          ].filter(Boolean),
+          score: finiteNumber(readiness.score ?? dataUsed.readiness_score, 0),
+          primaryLabel: "Readiness",
+          headline: data.headline || "Use live symptoms and effort to adjust the session.",
+          focusTitle: "Do Now",
+          focus: data.immediate_actions || [],
+          metrics: [
+            ["Heart rate", live.current_heart_rate_bpm != null ? `${live.current_heart_rate_bpm} bpm` : null],
+            ["RPE", live.current_rpe != null ? `${live.current_rpe}/10` : null],
+            ["Pain", live.pain_level != null ? `${live.pain_level}/10` : null],
+            ["Elapsed", live.elapsed_minutes != null ? `${live.elapsed_minutes} min` : null],
+            ["Readiness", readiness.label || dataUsed.readiness_label || null],
+            ["Latest load", dataUsed.latest_training_load?.active_zone_minutes != null ? `${dataUsed.latest_training_load.active_zone_minutes} AZM` : null],
+          ],
+          evidenceTitle: safety.length ? "Safety Flags" : "Evidence",
+          evidence,
+          secondaryTitle: "Modify / Avoid",
+          secondary: [...(data.modifications || []), ...(data.avoid || [])].slice(0, 5),
         };
       }
 
@@ -1241,6 +1279,43 @@ WIDGET_PREVIEW_STATES: dict[str, dict] = {
         },
         "subjective_context": {"energy": 3, "soreness": 7, "stress": 6},
         "data_freshness": {"freshness_level": "fresh", "latest_observed_date": "2026-07-03"},
+    },
+    "active-workout": {
+        "status": "ok",
+        "guidance_type": "active_workout_guidance",
+        "planned_activity": "Intervals",
+        "decision": "stop_and_assess",
+        "headline": "Stop the hard work now and treat this as a safety check, not a training decision.",
+        "immediate_actions": [
+            "Stop the set or interval now and move to a safe seated or standing position.",
+            "Do not resume hard training while these symptoms are present.",
+            "Seek urgent medical care for chest pain, fainting, severe shortness of breath, or symptoms that are new, severe, or worsening.",
+        ],
+        "modifications": ["If symptoms fully resolve and are mild, switch only to an easy cooldown or end the session."],
+        "avoid": ["Continuing intervals or heavy sets", "Trying to push through symptoms"],
+        "safety_flags": [
+            "Reported symptoms may need medical caution; stop hard training and seek urgent care for chest pain, fainting, severe shortness of breath, or new/worsening symptoms."
+        ],
+        "evidence": [
+            "Live heart rate reported: 178 bpm.",
+            "Live effort reported: RPE 9/10.",
+            "Live pain reported: 2/10.",
+        ],
+        "readiness": {"score": 62, "label": "yellow"},
+        "live_inputs": {
+            "current_heart_rate_bpm": 178,
+            "current_rpe": 9,
+            "pain_level": 2,
+            "symptoms": "dizzy during the interval",
+            "elapsed_minutes": 18,
+            "planned_duration_minutes": 35,
+        },
+        "data_used": {
+            "readiness_score": 62,
+            "readiness_label": "yellow",
+            "latest_training_load": {"date": "2026-07-03", "active_zone_minutes": 35},
+        },
+        "safety_note": "This is in-session fitness guidance, not medical diagnosis or emergency care.",
     },
     "recovery-comparison": {
         "status": "ok",

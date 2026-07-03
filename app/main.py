@@ -25,6 +25,8 @@ SERVER_INSTRUCTIONS = (
     "Mehair Coach provides read-only Google Health/Fitbit context for a connected user. "
     "If connection or synced data is missing, call status/freshness tools and explain setup; "
     "never invent health data. Sync only when the user asks for fresh Fitbit data. "
+    "For requests to sync latest Fitbit data and then summarize, use all data, or give an overview, "
+    "call sync_and_get_health_overview so the answer is based on one fresh overview result. "
     "For broad health, fitness, recovery, or 'use all my data' overview questions, call "
     "get_health_overview before answering. "
     "For vague or diagnostic-sounding coaching questions like what the user should do today, "
@@ -34,7 +36,12 @@ SERVER_INSTRUCTIONS = (
     "For sleep/HRV/resting-heart-rate/load comparisons, call get_recovery_signal_comparison. "
     "For any specific workout, sport, muscle-group, soreness, or recovery decision, call "
     "plan_workout_with_health_context or recommend_workout_today before answering; do not infer "
-    "readiness, HRV, sleep, or load from conversation memory."
+    "readiness, HRV, sleep, or load from conversation memory. "
+    "During an active workout, call guide_active_workout when the user reports live RPE, heart rate, "
+    "pain, symptoms, or asks whether to keep going. Call guide_active_workout directly for these "
+    "in-session questions because it already reads the latest synced readiness/load context and "
+    "renders the active workout card. Prefer one card-rendering tool per answer unless the user "
+    "explicitly asks for multiple cards."
 )
 
 READ_ONLY = ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True)
@@ -149,13 +156,45 @@ def create_server(settings_override: Settings | None = None) -> ServerBundle:
         title="Sync latest Fitbit data",
         description="Pull the latest available cloud-synced Fitbit data from Google Health into the local user store.",
         annotations=SYNC,
-        meta=WIDGET_META,
     )
     async def sync_latest_fitbit_data() -> dict[str, Any]:
         user_id = current_user_id()
         if not user_id:
             return setup_required()
         return await health_store.sync_latest(user_id)
+
+    @mcp.tool(
+        title="Sync and get health overview",
+        description=(
+            "Use when the user asks to sync latest Fitbit/Google Health data and then summarize, "
+            "analyze all available health metrics, explain what changed, or recommend today's intensity. "
+            "Runs one sync, then returns a card-ready all-data overview with sync freshness."
+        ),
+        annotations=SYNC,
+        meta=WIDGET_META,
+    )
+    async def sync_and_get_health_overview(days: int = 14) -> dict[str, Any]:
+        user_id = current_user_id()
+        if not user_id:
+            return setup_required()
+
+        sync = await health_store.sync_latest(user_id)
+        if sync.get("status") != "ok":
+            return sync
+
+        overview = health_store.health_overview(user_id, max(1, min(days, 30)))
+        if overview.get("status") != "ok":
+            return overview
+
+        overview["fresh_sync"] = {
+            "status": sync.get("status"),
+            "records_upserted": sync.get("records_upserted"),
+            "total_records": sync.get("total_records"),
+            "lookback_days": sync.get("lookback_days"),
+            "sync_window": sync.get("sync_window"),
+            "freshness": sync.get("freshness"),
+        }
+        return overview
 
     @mcp.tool(
         title="Data freshness",
@@ -172,7 +211,6 @@ def create_server(settings_override: Settings | None = None) -> ServerBundle:
         title="Today context",
         description="Return latest daily fitness context: activity, sleep, heart metrics, readiness, and evidence.",
         annotations=READ_ONLY,
-        meta=WIDGET_META,
     )
     def get_today_context() -> dict[str, Any]:
         user_id = current_user_id()
@@ -199,7 +237,6 @@ def create_server(settings_override: Settings | None = None) -> ServerBundle:
         title="Recovery readiness",
         description="Return a readiness score with evidence from sleep, HRV, resting heart rate, and activity load.",
         annotations=READ_ONLY,
-        meta=WIDGET_META,
     )
     def get_recovery_readiness() -> dict[str, Any]:
         user_id = current_user_id()
@@ -226,7 +263,6 @@ def create_server(settings_override: Settings | None = None) -> ServerBundle:
             "from overview data, and recommended follow-up tools."
         ),
         annotations=READ_ONLY,
-        meta=WIDGET_META,
     )
     def get_health_question_clues(question: str, days: int = 14) -> dict[str, Any]:
         user_id = current_user_id()
@@ -241,7 +277,6 @@ def create_server(settings_override: Settings | None = None) -> ServerBundle:
             "against baseline to explain recovery patterns."
         ),
         annotations=READ_ONLY,
-        meta=WIDGET_META,
     )
     def get_recovery_signal_comparison(days: int = 14) -> dict[str, Any]:
         user_id = current_user_id()
@@ -295,6 +330,45 @@ def create_server(settings_override: Settings | None = None) -> ServerBundle:
             planned_date=planned_date,
             constraints=constraints,
             duration_minutes=duration_minutes,
+            goal=health_store.latest_goal(user_id),
+            checkins=health_store.recent_checkins(user_id),
+        )
+
+    @mcp.tool(
+        title="Guide active workout",
+        description=(
+            "Give in-session guidance using live user-reported heart rate, RPE, pain, symptoms, "
+            "elapsed time, and the latest synced Fitbit readiness/load context."
+        ),
+        annotations=READ_ONLY,
+        meta=WIDGET_META,
+    )
+    def guide_active_workout(
+        planned_activity: str,
+        current_heart_rate_bpm: int | None = None,
+        current_rpe: int | None = None,
+        pain_level: int | None = None,
+        symptoms: str | None = None,
+        elapsed_minutes: int | None = None,
+        planned_duration_minutes: int | None = None,
+        notes: str | None = None,
+    ) -> dict[str, Any]:
+        user_id = current_user_id()
+        if not user_id:
+            return setup_required()
+        context = health_store.latest_context(user_id)
+        if context.get("status") != "ok":
+            return context
+        return active_workout_guidance(
+            context=context,
+            planned_activity=planned_activity,
+            current_heart_rate_bpm=current_heart_rate_bpm,
+            current_rpe=current_rpe,
+            pain_level=pain_level,
+            symptoms=symptoms,
+            elapsed_minutes=elapsed_minutes,
+            planned_duration_minutes=planned_duration_minutes,
+            notes=notes,
             goal=health_store.latest_goal(user_id),
             checkins=health_store.recent_checkins(user_id),
         )
@@ -735,6 +809,158 @@ def workout_plan_for_activity(
     }
 
 
+def active_workout_guidance(
+    context: dict[str, Any],
+    planned_activity: str,
+    current_heart_rate_bpm: int | None = None,
+    current_rpe: int | None = None,
+    pain_level: int | None = None,
+    symptoms: str | None = None,
+    elapsed_minutes: int | None = None,
+    planned_duration_minutes: int | None = None,
+    notes: str | None = None,
+    goal: dict[str, Any] | None = None,
+    checkins: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    if context.get("status") != "ok":
+        return context
+
+    readiness = context["readiness"]
+    today = context.get("today", {})
+    latest_load = today.get("latest_training_load", {})
+    readiness_label = readiness.get("label", "pending")
+    readiness_score = int(readiness.get("score", 0))
+    rpe = _bounded_rating(current_rpe)
+    pain = _bounded_rating(pain_level)
+    symptoms_text = " ".join([symptoms or "", notes or ""]).lower()
+    safety_flags = _active_workout_safety_flags(symptoms_text, current_heart_rate_bpm, pain)
+    evidence = list(readiness.get("evidence", []))
+    if current_heart_rate_bpm is not None:
+        evidence.append(f"Live heart rate reported: {current_heart_rate_bpm} bpm.")
+    if rpe is not None:
+        evidence.append(f"Live effort reported: RPE {rpe}/10.")
+    if pain is not None:
+        evidence.append(f"Live pain reported: {pain}/10.")
+    if latest_load.get("active_zone_minutes") is not None:
+        evidence.append(
+            f"Latest synced load before/during this decision: {latest_load['active_zone_minutes']} Active Zone Minutes on {latest_load.get('date')}."
+        )
+
+    decision = "continue_controlled"
+    headline = "Keep going only if form, breathing, and symptoms stay normal."
+    immediate_actions = [
+        "Keep the next block controlled and reassess in 5-10 minutes.",
+        "Stay below the point where form, breathing, or coordination changes.",
+    ]
+    modifications = [
+        "Hold intensity steady instead of chasing a new peak.",
+        "Extend rest periods if heart rate or RPE is not settling.",
+    ]
+    avoid = ["Adding surprise max-effort work", "Ignoring new pain or unusual symptoms"]
+
+    if safety_flags:
+        decision = "stop_and_assess"
+        headline = "Stop the hard work now and treat this as a safety check, not a training decision."
+        immediate_actions = [
+            "Stop the set or interval now and move to a safe seated or standing position.",
+            "Do not resume hard training while these symptoms are present.",
+            "Seek urgent medical care for chest pain, fainting, severe shortness of breath, or symptoms that are new, severe, or worsening.",
+        ]
+        modifications = ["If symptoms fully resolve and are mild, switch only to an easy cooldown or end the session."]
+        avoid = ["Continuing intervals or heavy sets", "Trying to push through symptoms", "Driving yourself if you feel faint"]
+    elif pain is not None and pain >= 7:
+        decision = "stop_session"
+        headline = "End the working session because pain is high."
+        immediate_actions = [
+            "Stop loading the painful area now.",
+            "Switch to easy walking, gentle mobility, or end the workout.",
+            "Consider clinical advice if pain is sharp, worsening, or changes how you move.",
+        ]
+        modifications = ["Do not test heavy variations today."]
+        avoid = ["Loading through pain", "Ballistic movements", "More volume for the painful area"]
+    elif "fever" in symptoms_text or "vomit" in symptoms_text or "flu" in symptoms_text:
+        decision = "stop_session"
+        headline = "End the workout; illness signs make training riskier today."
+        immediate_actions = [
+            "Stop the workout and prioritize fluids, food as tolerated, and rest.",
+            "Resume training only after symptoms improve and normal daily movement feels okay.",
+        ]
+        modifications = ["Use rest or very easy mobility instead of conditioning."]
+        avoid = ["High intensity while sick", "Sweat-it-out workouts"]
+    elif (rpe is not None and rpe >= 9) or (current_heart_rate_bpm is not None and current_heart_rate_bpm >= 190):
+        decision = "downshift_now"
+        headline = "Downshift now; the session is running near the ceiling."
+        immediate_actions = [
+            "Take 3-5 minutes easy and wait for breathing and heart rate to settle.",
+            "Resume only at a lower intensity if coordination and symptoms feel normal.",
+        ]
+        modifications = ["Cut the next block by 25-50% or switch to zone 2."]
+        avoid = ["Another all-out interval", "Heavy work before heart rate settles"]
+    elif pain is not None and pain >= 4:
+        decision = "modify"
+        headline = "Modify the workout around pain before it escalates."
+        immediate_actions = [
+            "Reduce load, range of motion, speed, or impact now.",
+            "Keep pain at or below 3/10 or stop that movement.",
+        ]
+        modifications = ["Choose a pain-free variation or switch muscle groups."]
+        avoid = ["Repeated reps that increase pain", "Testing max range under load"]
+    elif readiness_label == "red" or latest_load.get("active_zone_minutes", 0) > 45:
+        decision = "downshift_now"
+        headline = "Keep this session recovery-biased because synced recovery/load context is constrained."
+        immediate_actions = [
+            "Keep the rest of the session easy to moderate.",
+            "Skip finishers and leave the session with energy in reserve.",
+        ]
+        modifications = ["Reduce volume or intensity by 25-50%."]
+        avoid = ["Hard finishers", "PR attempts", "Extra conditioning"]
+
+    if planned_duration_minutes and elapsed_minutes and elapsed_minutes >= planned_duration_minutes:
+        immediate_actions.append("You have reached the planned duration; cool down instead of extending the session.")
+        avoid.append("Extending the workout just because momentum feels good")
+
+    return {
+        "status": "ok",
+        "guidance_type": "active_workout_guidance",
+        "planned_activity": planned_activity,
+        "decision": decision,
+        "headline": headline,
+        "immediate_actions": _dedupe(immediate_actions),
+        "modifications": _dedupe(modifications),
+        "avoid": _dedupe(avoid),
+        "safety_flags": safety_flags,
+        "evidence": _dedupe(evidence),
+        "readiness": readiness,
+        "goal_context": (goal or {}).get("goal"),
+        "recent_checkins": checkins or [],
+        "live_inputs": {
+            "current_heart_rate_bpm": current_heart_rate_bpm,
+            "current_rpe": rpe,
+            "pain_level": pain,
+            "symptoms": symptoms,
+            "elapsed_minutes": elapsed_minutes,
+            "planned_duration_minutes": planned_duration_minutes,
+            "notes": notes,
+        },
+        "data_used": {
+            "activity_date": context.get("activity_date"),
+            "recovery_date": context.get("recovery_date"),
+            "readiness_score": readiness_score,
+            "readiness_label": readiness_label,
+            "latest_training_load": latest_load,
+            "resting_heart_rate": today.get("resting_heart_rate"),
+            "hrv_ms": today.get("hrv_ms"),
+        },
+        "questions_to_ask_if_uncertain": [
+            "Are symptoms new, severe, or getting worse?",
+            "Is pain sharp, localized, or changing your movement?",
+            "Does heart rate settle after 3-5 minutes easy?",
+        ],
+        "safety_note": "This is in-session fitness guidance, not medical diagnosis or emergency care.",
+        "context": context,
+    }
+
+
 def _base_intensity(label: str) -> str:
     if label == "green":
         return "moderate-to-hard"
@@ -860,6 +1086,40 @@ def _workout_context_gaps(checkins: list[dict[str, Any]], goal_status: dict[str,
     if not goal_status.get("target") and goal_status.get("days_per_week") is None:
         gaps.append("No coaching goal is set, so the recommendation cannot optimize toward a weekly target.")
     return _dedupe(gaps)
+
+
+def _active_workout_safety_flags(
+    symptoms_text: str,
+    current_heart_rate_bpm: int | None,
+    pain_level: int | None,
+) -> list[str]:
+    flags: list[str] = []
+    urgent_terms = (
+        "chest pain",
+        "chest tight",
+        "chest pressure",
+        "shortness of breath",
+        "trouble breathing",
+        "faint",
+        "fainting",
+        "dizzy",
+        "dizziness",
+        "palpitation",
+        "palpitations",
+        "irregular heartbeat",
+        "passing out",
+    )
+    if any(term in symptoms_text for term in urgent_terms):
+        flags.append(
+            "Reported symptoms may need medical caution; stop hard training and seek urgent care for chest pain, fainting, severe shortness of breath, or new/worsening symptoms."
+        )
+    if current_heart_rate_bpm is not None and current_heart_rate_bpm >= 190:
+        flags.append(
+            f"Live heart rate is very high at {current_heart_rate_bpm} bpm; downshift immediately and do not resume hard work unless it settles and symptoms are absent."
+        )
+    if pain_level is not None and pain_level >= 8:
+        flags.append(f"Pain is severe at {pain_level}/10; stop loading that area.")
+    return _dedupe(flags)
 
 
 def _activity_guidance(planned: str, rpe_cap: int, intensity: str) -> tuple[list[str], list[str], list[str], list[str]]:
