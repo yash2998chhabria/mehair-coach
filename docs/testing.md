@@ -22,6 +22,9 @@ uses the right signals for real questions:
 - green training day: strong sleep, HRV above baseline, stable resting HR, low
   soreness, strong energy, and goal context should keep harder training
   available.
+- workout recommendations: the returned `evidence`/`why` trail should name the
+  readiness signals, data freshness, latest load, check-ins, goal progress, and
+  recent workout history used for the decision.
 - stale data: time-sensitive workout questions should ask for sync before
   confident advice.
 - heart-safety question: high resting HR plus dizziness/concern language should

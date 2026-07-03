@@ -295,6 +295,10 @@ def test_eval_under_recovered_user_gets_easy_day_with_specific_evidence(tmp_path
     assert recommendation["subjective_context"]["soreness"] == 7
     assert any("recovery" in item.lower() for item in recommendation["next_actions"])
     assert any("HRV" in item or "Resting heart rate" in item for item in recommendation["evidence"])
+    assert "Latest energy check-in is 3/10." in recommendation["evidence"]
+    assert "Latest soreness check-in is 7/10." in recommendation["evidence"]
+    assert "Goal progress: 1/4 sessions logged; 3 remaining." in recommendation["evidence"]
+    assert "Hardest recent workout: Hard squash match (72 Active Zone Minutes, 2026-07-02)." in recommendation["evidence"]
 
 
 def test_eval_green_day_keeps_training_available_but_grounded_in_data(tmp_path, monkeypatch) -> None:
@@ -375,6 +379,10 @@ def test_eval_green_day_keeps_training_available_but_grounded_in_data(tmp_path, 
     assert recommendation["data_used"]["recent_workouts"] == 2
     assert recommendation["goal_context"]["remaining_sessions"] == 1
     assert any("normal" in item.lower() or "train" in item.lower() for item in recommendation["next_actions"])
+    assert "Latest energy check-in is 8/10." in recommendation["evidence"]
+    assert "Latest soreness check-in is 2/10." in recommendation["evidence"]
+    assert "Goal progress: 2/3 sessions logged; 1 remaining." in recommendation["evidence"]
+    assert "Hardest recent workout: Easy run (24 Active Zone Minutes, 2026-07-01)." in recommendation["evidence"]
 
 
 def test_eval_stale_data_for_time_sensitive_workout_pushes_sync_first(tmp_path, monkeypatch) -> None:
@@ -401,6 +409,7 @@ def test_eval_stale_data_for_time_sensitive_workout_pushes_sync_first(tmp_path, 
     assert "sync_latest_fitbit_data" in clues["recommended_tool_sequence"]
     assert recommendation["data_used"]["freshness_level"] == "stale"
     assert recommendation["next_actions"][0] == "Sync latest Fitbit data before making a time-sensitive hard training decision."
+    assert any("Data freshness is stale" in item for item in recommendation["evidence"])
 
 
 def test_eval_heart_safety_question_returns_caution_not_just_training_advice(tmp_path, monkeypatch) -> None:

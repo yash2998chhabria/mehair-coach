@@ -72,7 +72,7 @@ flowchart LR
 - `get_recovery_readiness` returns the readiness score and evidence.
 - `get_health_question_clues` maps a natural-language health or workout question to likely intents, useful synced metrics, visible clues, watchouts, and follow-up tools.
 - `get_recovery_signal_comparison` compares sleep, HRV, resting heart rate, overnight recovery signals, and activity load against recent baseline.
-- `recommend_workout_today` recommends the day’s training intensity using freshness, readiness, activity load, goals, recent workouts, and check-ins.
+- `recommend_workout_today` recommends the day’s training intensity using freshness, readiness, activity load, goals, recent workouts, and check-ins, then returns a concise evidence trail for “why?” answers.
 - `plan_workout_with_health_context` plans a specific workout, sport session, or muscle-group day from synced data and user constraints.
 - `get_sleep_analysis` summarizes recent sleep.
 - `get_activity_load` summarizes recent activity.

@@ -607,10 +607,34 @@ TODAY_WIDGET_HTML = """
             ["Goal", goal.remaining_sessions != null ? intText(goal.remaining_sessions) : "No goal", goalDetail],
           ],
           evidenceTitle: "Why",
-          evidence: data.evidence || data.why || [],
+          evidence: prioritizeWorkoutEvidence(data.evidence || data.why || []),
           secondaryTitle: "Avoid",
           secondary: data.avoid || [],
         };
+      }
+
+      function prioritizeWorkoutEvidence(items) {
+        const source = (items || []).filter(Boolean);
+        const prioritized = [];
+        const add = (item) => {
+          if (item && !prioritized.includes(item)) prioritized.push(item);
+        };
+        const findByTerms = (terms) => {
+          for (const term of terms) {
+            const found = source.find((item) => item.toLowerCase().includes(term));
+            if (found) return found;
+          }
+          return null;
+        };
+
+        add(findByTerms(["data freshness"]));
+        add(findByTerms(["latest sleep", "sleep is"]));
+        add(findByTerms(["hrv", "resting heart rate"]));
+        add(findByTerms(["latest training load", "active zone minutes"]));
+        add(findByTerms(["soreness check-in", "energy check-in", "stress check-in"]));
+        add(findByTerms(["goal progress", "current goal"]));
+        for (const item of source) add(item);
+        return prioritized;
       }
 
       function readinessModel(data) {
@@ -1064,6 +1088,7 @@ WIDGET_PREVIEW_STATES: dict[str, dict] = {
             "steps": 1600,
             "active_zone_minutes": 0,
             "sleep": {"asleep_hours": 5.1, "sessions_count": 1},
+            "latest_training_load": {"date": "2026-07-02", "active_zone_minutes": 72},
         },
         "data_used": {
             "latest_sleep_hours": 5.1,
@@ -1079,6 +1104,16 @@ WIDGET_PREVIEW_STATES: dict[str, dict] = {
                 "Resting heart rate is elevated: 67 bpm vs 58 bpm baseline.",
             ],
         },
+        "evidence": [
+            "Latest sleep is short at 5.1h.",
+            "HRV is below recent baseline: 36.0 ms vs 56.5 ms.",
+            "Resting heart rate is elevated: 67 bpm vs 58 bpm baseline.",
+            "Latest training load: 72 Active Zone Minutes on 2026-07-02.",
+            "Latest energy check-in is 3/10.",
+            "Latest soreness check-in is 7/10.",
+            "Goal progress: 2/4 sessions logged; 2 remaining.",
+            "Hardest recent workout: Squash match (72 Active Zone Minutes, 2026-07-02).",
+        ],
         "goal_context": {
             "target": "Train four days per week",
             "days_per_week": 4,

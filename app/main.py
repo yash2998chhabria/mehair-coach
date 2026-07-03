@@ -570,6 +570,16 @@ def workout_recommendation(
     else:
         primary_action = "Make today recovery-biased: walk, mobility, easy cardio, or rest."
     next_actions.insert(1 if freshness.get("needs_sync_before_time_sensitive_advice") else 0, primary_action)
+    evidence = _workout_evidence(
+        readiness=readiness,
+        today=today,
+        freshness=freshness,
+        soreness_rating=soreness_rating,
+        energy_rating=energy_rating,
+        stress_rating=stress_rating,
+        goal_status=goal_status,
+        workout_summary=workout_summary,
+    )
 
     return {
         "status": "ok",
@@ -582,8 +592,8 @@ def workout_recommendation(
         "activity_date": context.get("activity_date"),
         "recovery_date": context.get("recovery_date"),
         "today": today,
-        "why": readiness.get("evidence", []),
-        "evidence": readiness.get("evidence", []),
+        "why": evidence,
+        "evidence": evidence,
         "goal_context": goal_status,
         "subjective_context": {
             "energy": energy_rating,
@@ -747,6 +757,81 @@ def _goal_status(goal_payload: dict[str, Any], workout_count: int) -> dict[str, 
         "remaining_sessions": remaining,
         "notes": goal_payload.get("notes"),
     }
+
+
+def _workout_evidence(
+    *,
+    readiness: dict[str, Any],
+    today: dict[str, Any],
+    freshness: dict[str, Any],
+    soreness_rating: int | None,
+    energy_rating: int | None,
+    stress_rating: int | None,
+    goal_status: dict[str, Any],
+    workout_summary: dict[str, Any],
+) -> list[str]:
+    evidence = list(readiness.get("evidence", []))
+
+    freshness_level = freshness.get("freshness_level")
+    if freshness.get("needs_sync_before_time_sensitive_advice") or freshness_level in {"aging", "stale", "empty"}:
+        level = freshness_level or freshness.get("freshness_label") or "not fresh"
+        if freshness.get("freshness_label") and freshness.get("freshness_label") != level:
+            level = f"{level} ({freshness['freshness_label']})"
+        recommendation = freshness.get("recommendation") or "Sync latest Fitbit data before a time-sensitive decision."
+        evidence.append(f"Data freshness is {level}: {recommendation}")
+
+    latest_load = today.get("latest_training_load") or {}
+    latest_load_minutes = latest_load.get("active_zone_minutes")
+    if latest_load_minutes is not None:
+        when = f" on {latest_load['date']}" if latest_load.get("date") else ""
+        evidence.append(f"Latest training load: {latest_load_minutes} Active Zone Minutes{when}.")
+
+    active_zone_minutes = today.get("active_zone_minutes")
+    if active_zone_minutes is not None:
+        evidence.append(f"Today has {active_zone_minutes} Active Zone Minutes so far.")
+
+    sleep = today.get("sleep") or {}
+    sleep_hours = sleep.get("asleep_hours") or sleep.get("duration_hours")
+    if sleep_hours is not None:
+        evidence.append(f"Latest sleep used for recommendation: {float(sleep_hours):.1f}h.")
+
+    if today.get("hrv_ms") is not None:
+        evidence.append(f"Latest HRV used for recommendation: {float(today['hrv_ms']):.1f} ms.")
+    if today.get("resting_heart_rate") is not None:
+        evidence.append(f"Latest resting heart rate used for recommendation: {today['resting_heart_rate']} bpm.")
+
+    if energy_rating is not None:
+        evidence.append(f"Latest energy check-in is {energy_rating}/10.")
+    if soreness_rating is not None:
+        evidence.append(f"Latest soreness check-in is {soreness_rating}/10.")
+    if stress_rating is not None:
+        evidence.append(f"Latest stress check-in is {stress_rating}/10.")
+
+    if goal_status.get("target"):
+        evidence.append(f"Current goal: {goal_status['target']}.")
+    if goal_status.get("days_per_week") is not None and goal_status.get("remaining_sessions") is not None:
+        evidence.append(
+            "Goal progress: "
+            f"{goal_status.get('recent_workouts', 0)}/{goal_status['days_per_week']} sessions logged; "
+            f"{goal_status['remaining_sessions']} remaining."
+        )
+
+    if workout_summary.get("workout_count"):
+        evidence.append(f"Recent workout history: {workout_summary['workout_count']} workout(s) in the lookback window.")
+    hardest = workout_summary.get("hardest_workout") or {}
+    if hardest.get("display_name") or hardest.get("name") or hardest.get("active_zone_minutes") is not None:
+        name = hardest.get("display_name") or hardest.get("name") or "hardest recent workout"
+        minutes = hardest.get("active_zone_minutes")
+        date = hardest.get("date")
+        details = []
+        if minutes is not None:
+            details.append(f"{minutes} Active Zone Minutes")
+        if date:
+            details.append(str(date))
+        suffix = f" ({', '.join(details)})" if details else ""
+        evidence.append(f"Hardest recent workout: {name}{suffix}.")
+
+    return _dedupe(evidence)
 
 
 def _activity_guidance(planned: str, rpe_cap: int, intensity: str) -> tuple[list[str], list[str], list[str], list[str]]:

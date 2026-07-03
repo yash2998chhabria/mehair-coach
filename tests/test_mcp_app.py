@@ -66,6 +66,7 @@ async def test_widget_preview_route_renders_real_card_state() -> None:
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
         response = await client.get("/docs/widget-preview?state=health-clues")
         safety = await client.get("/docs/widget-preview?state=heart-safety")
+        today_workout = await client.get("/docs/widget-preview?state=today-workout")
 
     assert response.status_code == 200
     assert "text/html" in response.headers["content-type"]
@@ -79,6 +80,10 @@ async def test_widget_preview_route_renders_real_card_state() -> None:
     assert "Should I worry about my high heart rate and dizziness?" in safety.text
     assert "Health Check" in safety.text
     assert "Safety Context" in safety.text
+    assert today_workout.status_code == 200
+    assert "Today's Workout" in today_workout.text
+    assert "Goal progress: 2/4 sessions logged; 2 remaining." in today_workout.text
+    assert "Latest energy check-in is 3/10." in today_workout.text
 
 
 @pytest.mark.asyncio
