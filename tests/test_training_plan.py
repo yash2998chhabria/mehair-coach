@@ -163,6 +163,54 @@ def test_workout_plan_uses_overview_section_recovery_values() -> None:
     assert plan["data_used"]["resting_heart_rate"] == 65
 
 
+def test_specific_lift_plan_uses_stated_energy_pain_and_tomorrow_sport() -> None:
+    context = {
+        "status": "ok",
+        "latest_date": "2026-07-03",
+        "activity_date": "2026-07-03",
+        "recovery_date": "2026-07-02",
+        "readiness": {
+            "score": 44,
+            "label": "red",
+            "recommendation": "Prioritize recovery, mobility, walking, and sleep.",
+            "evidence": [
+                "Latest sleep is moderate at 6.1h.",
+                "HRV is below recent baseline: 31.3 ms vs 60.9 ms.",
+                "Resting heart rate is slightly elevated: 65 bpm.",
+                "Recent training load is high: 63 zone minutes on 2026-07-02.",
+            ],
+        },
+        "today": {
+            "steps": 136,
+            "active_minutes": 17,
+            "active_zone_minutes": 0,
+            "hrv_ms": 31.3,
+            "resting_heart_rate": 65,
+            "sleep": {"asleep_hours": 6.07, "sessions_count": 2},
+            "latest_training_load": {"date": "2026-07-02", "active_zone_minutes": 63},
+        },
+    }
+
+    plan = workout_plan_for_activity(
+        context=context,
+        planned_activity="45-minute upper-body lift",
+        target_areas=["chest", "back", "shoulders"],
+        constraints="left lower back feels tight at 2/10, energy is 4/10, and I want to play squash tomorrow",
+        duration_minutes=45,
+    )
+
+    assert plan["recommended_intensity"] == "easy"
+    assert plan["rpe_cap"] <= 6
+    assert plan["data_used"]["stated_energy"] == 4
+    assert plan["data_used"]["stated_pain"] == 2
+    assert plan["data_used"]["preserving_next_session"] is True
+    assert any("energy is low at 4/10" in item for item in plan["limiting_factors"])
+    assert any("pain or tightness is 2/10" in item for item in plan["limiting_factors"])
+    assert any("preserve readiness" in item for item in plan["limiting_factors"])
+    assert any("tomorrow's sport session" in item for item in plan["session_guidance"])
+    assert any("tomorrow's squash" in item for item in plan["avoid"])
+
+
 def test_active_workout_stops_for_dizziness_even_when_readiness_is_green() -> None:
     context = {
         "status": "ok",

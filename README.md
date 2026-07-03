@@ -216,6 +216,8 @@ The current automated tests cover OAuth metadata, encrypted token storage, setup
 
 During private-beta iteration, ChatGPT can cache a connector's tool descriptors and iframe resource URI. If you change `WIDGET_URI`, tool metadata, or resource templates and ChatGPT still renders an older `ui://...` card, remove and recreate the developer-mode connector or reconnect it so ChatGPT fetches the latest descriptors.
 
+The server also registers legacy widget URIs for earlier private-beta templates so existing ChatGPT connector caches can still fetch and render the latest card HTML while a fresh connector picks up the current URI.
+
 ## Security Notes
 
 - `.env`, SQLite databases, ngrok config, virtualenvs, caches, and generated package metadata are ignored by git.

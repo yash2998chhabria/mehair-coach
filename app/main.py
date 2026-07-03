@@ -19,7 +19,14 @@ from .auth import AppTokenVerifier, AuthError, AuthService
 from .db import Database
 from .health_store import HealthStore, setup_required
 from .settings import Settings, get_settings
-from .widget import TODAY_WIDGET_HTML, WIDGET_MIME_TYPE, WIDGET_PREVIEW_STATES, WIDGET_URI, widget_preview_html
+from .widget import (
+    TODAY_WIDGET_HTML,
+    WIDGET_MIME_TYPE,
+    WIDGET_PREVIEW_STATES,
+    WIDGET_RESOURCE_URIS,
+    WIDGET_URI,
+    widget_preview_html,
+)
 
 
 SERVER_INSTRUCTIONS = (
@@ -95,21 +102,27 @@ def create_server(settings_override: Settings | None = None) -> ServerBundle:
         json_response=True,
     )
 
-    @mcp.resource(
-        WIDGET_URI,
-        name="mehair-today-card",
-        title="Mehair Coach Today Card",
-        description="Inline readiness, sleep, activity, and evidence card for synced Fitbit context.",
-        mime_type=WIDGET_MIME_TYPE,
-        meta={
-            "ui": {
-                "prefersBorder": True,
-                "csp": {"connectDomains": [], "resourceDomains": []},
-            }
-        },
-    )
-    def today_card() -> str:
-        return TODAY_WIDGET_HTML
+    def register_today_card(widget_uri: str) -> None:
+        widget_version = widget_uri.rsplit("/", 1)[-1].replace(".html", "")
+
+        @mcp.resource(
+            widget_uri,
+            name=f"mehair-today-card-{widget_version}",
+            title="Mehair Coach Today Card",
+            description="Inline readiness, sleep, activity, and evidence card for synced Fitbit context.",
+            mime_type=WIDGET_MIME_TYPE,
+            meta={
+                "ui": {
+                    "prefersBorder": True,
+                    "csp": {"connectDomains": [], "resourceDomains": []},
+                }
+            },
+        )
+        def today_card() -> str:
+            return TODAY_WIDGET_HTML
+
+    for widget_uri in WIDGET_RESOURCE_URIS:
+        register_today_card(widget_uri)
 
     def current_user_id() -> str | None:
         token = get_access_token()
@@ -752,8 +765,11 @@ def workout_plan_for_activity(
     all_context_text = " ".join([planned, constraint_text])
     readiness_label = readiness.get("label", "pending")
     readiness_score = int(readiness.get("score", 0))
-    soreness_rating = _latest_rating(checkins or [], "soreness")
-    energy_rating = _latest_rating(checkins or [], "energy")
+    stated_energy = _rating_from_text(constraint_text, ("energy", "energy level"))
+    stated_soreness = _rating_from_text(constraint_text, ("soreness", "sore", "tightness", "tight"))
+    stated_pain = _rating_from_text(constraint_text, ("pain", "ache", "tightness", "tight"))
+    soreness_rating = _first_present(_latest_rating(checkins or [], "soreness"), stated_soreness, stated_pain)
+    energy_rating = _first_present(_latest_rating(checkins or [], "energy"), stated_energy)
     has_soreness_constraint = _mentions(
         constraint_text,
         ("sore", "soreness", "pain", "ache", "tight", "tweak", "injury", "complains"),
@@ -773,6 +789,7 @@ def workout_plan_for_activity(
             "hip ache",
         ),
     )
+    preserving_next_session = _mentions_upcoming_session(constraint_text)
 
     intensity = _base_intensity(readiness_label)
     rpe_cap = {"easy": 6, "moderate": 7, "moderate-to-hard": 8}.get(intensity, 6)
@@ -788,9 +805,24 @@ def workout_plan_for_activity(
     if has_soreness_constraint:
         rpe_cap = min(rpe_cap, 7)
         limiting_factors.append("User-stated soreness or pain should cap loading and volume.")
+    if stated_pain is not None:
+        limiting_factors.append(f"User-stated pain or tightness is {stated_pain}/10.")
     if spinal_constraint:
         rpe_cap = min(rpe_cap, 7)
         limiting_factors.append("User-stated lower-back or hip constraint should cap spinal loading.")
+    if energy_rating is not None:
+        if energy_rating <= 4:
+            if intensity == "moderate-to-hard":
+                intensity = "moderate"
+            elif intensity == "moderate":
+                intensity = "easy"
+            rpe_cap = min(rpe_cap, 6)
+            limiting_factors.append(f"User-stated energy is low at {energy_rating}/10.")
+        elif energy_rating >= 7:
+            limiting_factors.append(f"User-stated energy is strong at {energy_rating}/10.")
+    if preserving_next_session:
+        rpe_cap = min(rpe_cap, 6)
+        limiting_factors.append("User wants to preserve readiness for another sport or workout soon.")
     if latest_load.get("active_zone_minutes", 0) > 45:
         rpe_cap = min(rpe_cap, 7)
 
@@ -803,6 +835,9 @@ def workout_plan_for_activity(
     )
     if duration_minutes:
         session.append(f"Keep the session near {max(15, min(duration_minutes, 120))} minutes including warm-up.")
+    if preserving_next_session:
+        session.append("Leave the session feeling fresher than you started so tomorrow's sport session stays available.")
+        avoid.append("Extra finishers that steal from tomorrow's squash or sport session")
     if readiness_label == "red":
         session.insert(0, "Do not chase PRs; keep every compound lift 3-4 reps in reserve.")
     elif readiness_label == "yellow":
@@ -855,6 +890,10 @@ def workout_plan_for_activity(
             "latest_training_load": latest_load,
             "energy_checkin": energy_rating,
             "soreness_checkin": soreness_rating,
+            "stated_energy": stated_energy,
+            "stated_soreness": stated_soreness,
+            "stated_pain": stated_pain,
+            "preserving_next_session": preserving_next_session,
             "goal": goal,
         },
         "questions_to_ask_if_uncertain": [
@@ -1394,8 +1433,72 @@ def _latest_rating(checkins: list[dict[str, Any]], key: str) -> int | None:
     return None
 
 
+def _rating_from_text(text: str, labels: tuple[str, ...]) -> int | None:
+    if not text:
+        return None
+    label_pattern = "|".join(re.escape(label) for label in labels)
+    patterns = (
+        rf"(?:{label_pattern})\D{{0,20}}(\d{{1,2}})\s*/\s*10",
+        rf"(\d{{1,2}})\s*/\s*10\D{{0,20}}(?:{label_pattern})",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, text)
+        if match:
+            return _bounded_rating(int(match.group(1)), minimum=0)
+    return None
+
+
 def _mentions(text: str, words: tuple[str, ...]) -> bool:
     return any(word in text for word in words)
+
+
+def _mentions_upcoming_session(text: str) -> bool:
+    if not text:
+        return False
+    future_terms = (
+        "tomorrow",
+        "next day",
+        "later today",
+        "tonight",
+        "this evening",
+        "upcoming",
+        "next session",
+    )
+    sport_terms = (
+        "squash",
+        "tennis",
+        "pickleball",
+        "basketball",
+        "soccer",
+        "run",
+        "race",
+        "match",
+        "game",
+        "tournament",
+        "practice",
+        "sport",
+        "workout",
+    )
+    intent_terms = (
+        "want to play",
+        "need to play",
+        "planning to play",
+        "plan to play",
+        "have to play",
+        "have a match",
+        "have a game",
+        "have practice",
+        "compete",
+    )
+    return (
+        any(term in text for term in future_terms)
+        and any(term in text for term in sport_terms)
+        and (
+            any(term in text for term in intent_terms)
+            or "tomorrow" in text
+            or "upcoming" in text
+        )
+    )
 
 
 def _dedupe(items: list[str]) -> list[str]:

@@ -5,7 +5,7 @@ import pytest
 
 from app.main import SERVER_INSTRUCTIONS, app, mcp, settings as app_settings
 from app.settings import Settings
-from app.widget import WIDGET_PREVIEW_STATES, WIDGET_URI
+from app.widget import LEGACY_WIDGET_URIS, WIDGET_PREVIEW_STATES, WIDGET_URI
 
 
 @pytest.mark.asyncio
@@ -68,6 +68,13 @@ async def test_widget_resource_is_registered() -> None:
     assert "function hasCardData(data)" in html
     assert "dataUsed.sleep_asleep_hours != null" in html
     assert "dataUsed.hrv_ms != null" in html
+
+    registered_uris = {str(item.uri) for item in resources}
+    assert registered_uris.issuperset({WIDGET_URI, *LEGACY_WIDGET_URIS})
+    for legacy_uri in LEGACY_WIDGET_URIS:
+        legacy_resource = await mcp.read_resource(legacy_uri)
+        assert legacy_resource[0].mime_type == "text/html;profile=mcp-app"
+        assert "Preparing card" in legacy_resource[0].content
 
 
 @pytest.mark.asyncio
