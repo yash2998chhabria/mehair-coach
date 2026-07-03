@@ -51,7 +51,10 @@ SERVER_INSTRUCTIONS = (
     "For sleep/HRV/resting-heart-rate/load comparisons, call get_recovery_signal_comparison. "
     "For any specific workout, sport, muscle-group, soreness, or recovery decision, call "
     "plan_workout_with_health_context or recommend_workout_today before answering; do not infer "
-    "readiness, HRV, sleep, or load from conversation memory. "
+    "readiness, HRV, sleep, or load from conversation memory. Pass user-stated current feelings, "
+    "symptoms, soreness, time limits, or pain into the tool arguments instead of leaving them in "
+    "free text. Label prior conversation facts as user-stated context, not synced Fitbit evidence, "
+    "and do not treat earlier symptoms as current unless the user says they are still present. "
     "During an active workout, call guide_active_workout when the user reports live RPE, heart rate, "
     "pain, symptoms, elapsed time, or asks whether to keep going, push, hold steady, back off, slow "
     "down, or stop. Call guide_active_workout directly for these in-session questions because it "
@@ -360,7 +363,7 @@ def create_server(settings_override: Settings | None = None) -> ServerBundle:
         annotations=READ_ONLY,
         meta=WIDGET_META,
     )
-    def recommend_workout_today() -> dict[str, Any]:
+    def recommend_workout_today(current_feeling: str | None = None) -> dict[str, Any]:
         user_id = current_user_id()
         if not user_id:
             return setup_required()
@@ -369,6 +372,7 @@ def create_server(settings_override: Settings | None = None) -> ServerBundle:
             goal=health_store.latest_goal(user_id),
             checkins=health_store.recent_checkins(user_id),
             workout_history=health_store.workout_history(user_id, 7),
+            current_feeling=current_feeling,
         )
 
     @mcp.tool(
@@ -656,6 +660,7 @@ def workout_recommendation(
     goal: dict[str, Any] | None = None,
     checkins: list[dict[str, Any]] | None = None,
     workout_history: dict[str, Any] | None = None,
+    current_feeling: str | None = None,
 ) -> dict[str, Any]:
     if context.get("status") != "ok":
         return context
@@ -667,15 +672,21 @@ def workout_recommendation(
     resting_heart_rate = _resting_heart_rate_from_context(context)
     activity_date, recovery_date = _context_dates(context)
     freshness = context.get("data_freshness", {})
-    soreness_rating = _latest_rating(checkins or [], "soreness")
-    energy_rating = _latest_rating(checkins or [], "energy")
+    current_feeling_text = (current_feeling or "").strip()
+    current_feeling_lower = current_feeling_text.lower()
+    stated_energy = _rating_from_text(current_feeling_lower, ("energy", "energy level"))
+    stated_soreness = _rating_from_text(current_feeling_lower, ("soreness", "sore", "tightness", "tight"))
+    stated_pain = _rating_from_text(current_feeling_lower, ("pain", "ache", "tightness", "tight"))
+    subjective_limiter = _subjective_limiter_from_text(current_feeling_lower)
+    soreness_rating = _first_present(stated_soreness, stated_pain, _latest_rating(checkins or [], "soreness"))
+    energy_rating = _first_present(stated_energy, _latest_rating(checkins or [], "energy"))
     stress_rating = _latest_rating(checkins or [], "stress")
-    illness_flags = _illness_flags_from_checkins(checkins or [])
+    illness_flags = _dedupe(_illness_flags_from_text(current_feeling_lower) + _illness_flags_from_checkins(checkins or []))
     workout_summary = (workout_history or {}).get("summary", {}) if (workout_history or {}).get("status") == "ok" else {}
     workout_count = int(workout_summary.get("workout_count") or 0)
     goal_payload = (goal or {}).get("goal") or {}
     goal_status = _goal_status(goal_payload, workout_count)
-    context_gaps = _workout_context_gaps(checkins or [], goal_status)
+    context_gaps = _workout_context_gaps(checkins or [], goal_status, has_current_feeling=bool(current_feeling_text))
 
     if label == "green":
         plan = "Train normally: strength, intervals, or a full session are reasonable if your body agrees."
@@ -695,6 +706,13 @@ def workout_recommendation(
     if freshness.get("needs_sync_before_time_sensitive_advice"):
         next_actions.append("Sync latest Fitbit data before making a time-sensitive hard training decision.")
         plan = f"{freshness.get('recommendation', 'Sync latest Fitbit data first')} Based on stored data only: {plan}"
+    if subjective_limiter:
+        plan += " Since you do not feel fully right, make this a minimum useful dose and let the warm-up decide whether to continue."
+        if intensity == "moderate-to-hard":
+            intensity = "moderate"
+        rpe_cap = min(rpe_cap, 7)
+        next_actions.append("Use the first 10-15 minutes as a pass/fail readiness screen before doing any hard work.")
+        avoid.append("Turning a not-100% day into a max-effort or high-volume session")
     if today.get("active_zone_minutes", 0) > 45:
         plan += " You already have a high zone-minute load today, so avoid stacking another hard effort."
         avoid.append("Another hard conditioning block today")
@@ -755,8 +773,15 @@ def workout_recommendation(
         energy_rating=energy_rating,
         stress_rating=stress_rating,
         illness_flags=illness_flags,
+        current_feeling=current_feeling_text,
+        subjective_limiter=subjective_limiter,
         goal_status=goal_status,
         workout_summary=workout_summary,
+    )
+    stop_conditions = _workout_stop_conditions(
+        rpe_cap,
+        subjective_limiter=subjective_limiter,
+        illness_flags=illness_flags,
     )
 
     return {
@@ -765,6 +790,7 @@ def workout_recommendation(
         "rpe_cap": rpe_cap,
         "recommendation": plan,
         "next_actions": _dedupe(next_actions),
+        "stop_conditions": stop_conditions,
         "avoid": _dedupe(avoid),
         "latest_date": context.get("latest_date"),
         "activity_date": activity_date,
@@ -779,6 +805,8 @@ def workout_recommendation(
             "soreness": soreness_rating,
             "stress": stress_rating,
             "illness_flags": illness_flags,
+            "current_feeling": current_feeling_text or None,
+            "subjective_limiter": subjective_limiter,
             "latest_checkins": checkins or [],
         },
         "workout_history_summary": workout_summary or None,
@@ -795,6 +823,11 @@ def workout_recommendation(
             "energy_checkin": energy_rating,
             "soreness_checkin": soreness_rating,
             "stress_checkin": stress_rating,
+            "current_feeling": current_feeling_text or None,
+            "subjective_limiter": subjective_limiter,
+            "stated_energy": stated_energy,
+            "stated_soreness": stated_soreness,
+            "stated_pain": stated_pain,
             "illness_flags": illness_flags,
             "goal": goal,
             "recent_workouts": workout_count,
@@ -835,8 +868,9 @@ def workout_plan_for_activity(
     stated_energy = _rating_from_text(constraint_text, ("energy", "energy level"))
     stated_soreness = _rating_from_text(constraint_text, ("soreness", "sore", "tightness", "tight"))
     stated_pain = _rating_from_text(constraint_text, ("pain", "ache", "tightness", "tight"))
-    soreness_rating = _first_present(_latest_rating(checkins or [], "soreness"), stated_soreness, stated_pain)
-    energy_rating = _first_present(_latest_rating(checkins or [], "energy"), stated_energy)
+    subjective_limiter = _subjective_limiter_from_text(constraint_text)
+    soreness_rating = _first_present(stated_soreness, stated_pain, _latest_rating(checkins or [], "soreness"))
+    energy_rating = _first_present(stated_energy, _latest_rating(checkins or [], "energy"))
     illness_flags = _dedupe(_illness_flags_from_text(all_context_text) + _illness_flags_from_checkins(checkins or []))
     has_soreness_constraint = _has_training_pain_constraint(constraint_text)
     spinal_constraint = _mentions(
@@ -885,6 +919,11 @@ def workout_plan_for_activity(
             limiting_factors.append(f"User-stated energy is low at {energy_rating}/10.")
         elif energy_rating >= 7:
             limiting_factors.append(f"User-stated energy is strong at {energy_rating}/10.")
+    if subjective_limiter:
+        if intensity == "moderate-to-hard":
+            intensity = "moderate"
+        rpe_cap = min(rpe_cap, 7)
+        limiting_factors.append("User-stated they do not feel 100%, so the session should be useful but conservative.")
     if preserving_next_session:
         rpe_cap = min(rpe_cap, 6)
         limiting_factors.append("User wants to preserve readiness for another sport or workout soon.")
@@ -904,6 +943,10 @@ def workout_plan_for_activity(
     )
     if duration_minutes:
         session.append(f"Keep the session near {max(15, min(duration_minutes, 120))} minutes including warm-up.")
+    if subjective_limiter:
+        focus.insert(0, "Make this a minimum useful session, not a proving-ground session.")
+        session.insert(0, "Use the first 10-15 minutes as a pass/fail readiness screen before adding intensity.")
+        avoid.append("Chasing PRs, extra finishers, or high-volume work on a not-100% day")
     if preserving_next_session:
         session.append("Leave the session feeling fresher than you started so tomorrow's sport session stays available.")
         avoid.append("Extra finishers that steal from tomorrow's squash or sport session")
@@ -952,6 +995,11 @@ def workout_plan_for_activity(
             "If HRV and resting heart rate rebound and sleep improves, progress load or volume next session.",
             "If recovery stays red for two straight days, bias toward zone 2, mobility, or a full rest day.",
         ],
+        "stop_conditions": _workout_stop_conditions(
+            rpe_cap,
+            subjective_limiter=subjective_limiter,
+            illness_flags=illness_flags,
+        ),
         "limiting_factors": _dedupe(limiting_factors),
         "data_used": {
             "activity_date": activity_date,
@@ -971,6 +1019,7 @@ def workout_plan_for_activity(
             "stated_energy": stated_energy,
             "stated_soreness": stated_soreness,
             "stated_pain": stated_pain,
+            "subjective_limiter": subjective_limiter,
             "illness_flags": illness_flags,
             "preserving_next_session": preserving_next_session,
             "goal": goal,
@@ -1178,6 +1227,8 @@ def _workout_evidence(
     energy_rating: int | None,
     stress_rating: int | None,
     illness_flags: list[str],
+    current_feeling: str | None,
+    subjective_limiter: bool,
     goal_status: dict[str, Any],
     workout_summary: dict[str, Any],
 ) -> list[str]:
@@ -1217,6 +1268,10 @@ def _workout_evidence(
         evidence.append(f"Latest soreness check-in is {soreness_rating}/10.")
     if stress_rating is not None:
         evidence.append(f"Latest stress check-in is {stress_rating}/10.")
+    if current_feeling:
+        evidence.append(f"Current user-stated feeling: {current_feeling}.")
+    if subjective_limiter:
+        evidence.append("User-stated they do not feel fully right, so subjective readiness caps the session.")
     for flag in illness_flags:
         evidence.append(flag)
 
@@ -1247,12 +1302,22 @@ def _workout_evidence(
     return _dedupe(evidence)
 
 
-def _workout_context_gaps(checkins: list[dict[str, Any]], goal_status: dict[str, Any]) -> list[str]:
+def _workout_context_gaps(
+    checkins: list[dict[str, Any]],
+    goal_status: dict[str, Any],
+    *,
+    has_current_feeling: bool = False,
+) -> list[str]:
     gaps: list[str] = []
     if not checkins:
-        gaps.append(
-            "No recent subjective check-in is logged; energy, soreness, stress, pain, or illness could change the training call."
-        )
+        if has_current_feeling:
+            gaps.append(
+                "No structured check-in is logged; the current free-text feeling was used, but energy, soreness, stress, pain, or illness ratings would sharpen the plan."
+            )
+        else:
+            gaps.append(
+                "No recent subjective check-in is logged; energy, soreness, stress, pain, or illness could change the training call."
+            )
     else:
         missing = [
             label
@@ -1268,6 +1333,50 @@ def _workout_context_gaps(checkins: list[dict[str, Any]], goal_status: dict[str,
     if not goal_status.get("target") and goal_status.get("days_per_week") is None:
         gaps.append("No coaching goal is set, so the recommendation cannot optimize toward a weekly target.")
     return _dedupe(gaps)
+
+
+def _subjective_limiter_from_text(text: str) -> bool:
+    if not text:
+        return False
+    lower = text.lower()
+    not_right_patterns = (
+        r"\b(?:do not|don't|dont|not)\s+feel(?:ing)?\s+(?:my\s+)?(?:100|one hundred|great|right|normal|fresh)\b",
+        r"\b(?:feel|feeling)\s+(?:off|not fresh|run down|rundown|under[- ]?recovered|cooked|drained|fatigued|heavy)\b",
+        r"\b(?:low energy|heavy legs|not recovered|not fully recovered)\b",
+    )
+    if any(re.search(pattern, lower) for pattern in not_right_patterns):
+        return True
+    return any(
+        _has_unnegated_phrase(lower, term)
+        for term in (
+            "tired",
+            "fatigue",
+            "fatigued",
+            "drained",
+            "cooked",
+            "run down",
+            "low energy",
+            "heavy legs",
+        )
+    )
+
+
+def _workout_stop_conditions(
+    rpe_cap: int,
+    *,
+    subjective_limiter: bool = False,
+    illness_flags: list[str] | None = None,
+) -> list[str]:
+    conditions = [
+        "Stop or downshift for dizziness, chest pain/tightness, faintness, severe shortness of breath, or symptoms that are new or worsening.",
+        "Stop the movement if pain rises above 3/10, becomes sharp, or changes your form.",
+        f"Cap effort if RPE drifts above {rpe_cap}/10 or breathing/heart rate does not settle after easy minutes.",
+    ]
+    if subjective_limiter:
+        conditions.append("End early if the warm-up does not make you feel better within 10-15 minutes.")
+    if illness_flags:
+        conditions.append("Skip hard training while fever, flu-like symptoms, vomiting, or worsening illness signs are present.")
+    return _dedupe(conditions)
 
 
 def _active_workout_safety_flags(

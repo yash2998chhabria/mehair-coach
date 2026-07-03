@@ -423,6 +423,49 @@ def test_today_recommendation_uses_goal_checkins_and_history() -> None:
     assert any("Latest training load: 35 Active Zone Minutes" in item for item in recommendation["evidence"])
 
 
+def test_today_recommendation_downshifts_for_current_not_one_hundred_feeling() -> None:
+    context = {
+        "status": "ok",
+        "latest_date": "2026-07-03",
+        "activity_date": "2026-07-03",
+        "recovery_date": "2026-07-03",
+        "data_freshness": {
+            "freshness_level": "fresh",
+            "needs_sync_before_time_sensitive_advice": False,
+        },
+        "readiness": {
+            "score": 84,
+            "label": "green",
+            "recommendation": "A normal training day is reasonable if you feel good.",
+            "evidence": ["Latest sleep is strong at 8.3h.", "HRV is above recent baseline."],
+        },
+        "today": {
+            "steps": 4200,
+            "active_minutes": 28,
+            "active_zone_minutes": 8,
+            "hrv_ms": 62.0,
+            "resting_heart_rate": 56,
+            "sleep": {"asleep_hours": 8.3, "sessions_count": 1},
+            "latest_training_load": {"date": "2026-07-03", "active_zone_minutes": 8},
+        },
+    }
+
+    recommendation = workout_recommendation(
+        context=context,
+        current_feeling="I do not feel 100 percent but still want to work out today.",
+    )
+
+    assert recommendation["intensity"] == "moderate"
+    assert recommendation["rpe_cap"] == 7
+    assert recommendation["subjective_context"]["subjective_limiter"] is True
+    assert recommendation["data_used"]["current_feeling"].startswith("I do not feel 100 percent")
+    assert any("minimum useful dose" in item for item in recommendation["recommendation"].split(". "))
+    assert any("10-15 minutes" in item for item in recommendation["next_actions"])
+    assert any("warm-up" in item.lower() for item in recommendation["stop_conditions"])
+    assert any("subjective readiness caps" in item for item in recommendation["evidence"])
+    assert any("free-text feeling was used" in item for item in recommendation["context_gaps"])
+
+
 def test_today_recommendation_keeps_sync_first_when_data_is_stale() -> None:
     context = {
         "status": "ok",
@@ -555,6 +598,46 @@ def test_workout_plan_downshifts_for_illness_even_with_green_readiness() -> None
     assert any("illness" in item.lower() for item in plan["limiting_factors"])
     assert any("Do not train hard" in item for item in plan["session_guidance"])
     assert any("Sweat-it-out" in item for item in plan["avoid"])
+
+
+def test_workout_plan_makes_not_one_hundred_day_a_minimum_useful_session() -> None:
+    context = {
+        "status": "ok",
+        "latest_date": "2026-07-03",
+        "activity_date": "2026-07-03",
+        "recovery_date": "2026-07-03",
+        "readiness": {
+            "score": 86,
+            "label": "green",
+            "recommendation": "A normal training day is reasonable if you feel good.",
+            "evidence": ["Latest sleep is strong at 8.2h.", "Resting heart rate is steady."],
+        },
+        "today": {
+            "steps": 5300,
+            "active_minutes": 35,
+            "active_zone_minutes": 12,
+            "hrv_ms": 64.0,
+            "resting_heart_rate": 55,
+            "sleep": {"asleep_hours": 8.2, "sessions_count": 1},
+            "latest_training_load": {"date": "2026-07-03", "active_zone_minutes": 12},
+        },
+    }
+
+    plan = workout_plan_for_activity(
+        context=context,
+        planned_activity="general strength and cardio",
+        target_areas=[],
+        constraints="I do not feel 100 percent but still want a useful session.",
+        duration_minutes=30,
+    )
+
+    assert plan["recommended_intensity"] == "moderate"
+    assert plan["rpe_cap"] == 7
+    assert plan["data_used"]["subjective_limiter"] is True
+    assert any("minimum useful session" in item for item in plan["focus"])
+    assert any("pass/fail readiness screen" in item for item in plan["session_guidance"])
+    assert any("warm-up" in item.lower() for item in plan["stop_conditions"])
+    assert any("not feel 100%" in item for item in plan["limiting_factors"])
 
 
 def test_workout_plan_does_not_flag_negated_illness_terms() -> None:

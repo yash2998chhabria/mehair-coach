@@ -3,12 +3,13 @@ from __future__ import annotations
 import json
 
 
-WIDGET_URI = "ui://mehair/today-v5.html"
+WIDGET_URI = "ui://mehair/today-v6.html"
 LEGACY_WIDGET_URIS = (
     "ui://mehair/today-v1.html",
     "ui://mehair/today-v2.html",
     "ui://mehair/today-v3.html",
     "ui://mehair/today-v4.html",
+    "ui://mehair/today-v5.html",
 )
 WIDGET_RESOURCE_URIS = (WIDGET_URI, *LEGACY_WIDGET_URIS)
 WIDGET_MIME_TYPE = "text/html;profile=mcp-app"
@@ -542,9 +543,29 @@ TODAY_WIDGET_HTML = """
         const freshness = data.data_freshness || {};
         const dateRange = data.date_range || {};
         const range = dateRange.start && dateRange.end ? `${dateRange.start} to ${dateRange.end}` : "";
+        const today = data.today || {};
+        const latestActivity = activity.latest || {};
+        const latestLoad = today.latest_training_load || activity.highest_load_day || {};
         const sleepHours = sleep.latest_asleep_hours ?? data.today?.sleep?.asleep_hours ?? data.today?.sleep?.duration_hours;
         const hrv = heart.latest_hrv_ms ?? data.today?.hrv_ms;
         const rhr = heart.latest_resting_heart_rate ?? data.today?.resting_heart_rate;
+        const todaySteps = today.steps ?? latestActivity.steps;
+        const windowSteps = activity.totals?.steps;
+        const latestLoadAzm = latestLoad.active_zone_minutes ?? today.active_zone_minutes ?? latestActivity.active_zone_minutes;
+        const latestLoadDetail = latestLoad.date ? `latest ${latestLoad.date}` : (range ? `window ${range}` : "latest");
+        const sleepDelta = sleep.latest_vs_average_hours;
+        const hrvDelta = hrv != null && heart.average_hrv_ms ? ((Number(hrv) - Number(heart.average_hrv_ms)) / Number(heart.average_hrv_ms)) * 100 : null;
+        const rhrDelta = rhr != null && heart.average_resting_heart_rate ? Number(rhr) - Number(heart.average_resting_heart_rate) : null;
+        const vitalsValue = recovery.latest_spo2 != null
+          ? `${num(recovery.latest_spo2, 1)}%`
+          : recovery.latest_respiratory_rate != null
+            ? `${num(recovery.latest_respiratory_rate, 1)}`
+            : null;
+        const vitalsDetail = recovery.latest_spo2 != null
+          ? `SpO2 ${recovery.latest_spo2_date || ""}`.trim()
+          : recovery.latest_respiratory_rate != null
+            ? `resp ${recovery.latest_respiratory_rate_date || ""}`.trim()
+            : "";
         const primaryActions = (brief.today_plan || data.next_actions || []).slice(0, 4);
         const contextGaps = brief.context_gaps || [];
         const watchoutsAndGaps = [
@@ -573,12 +594,16 @@ TODAY_WIDGET_HTML = """
           focusTitle: "Today Plan",
           focus: primaryActions,
           metrics: [
-            ["Steps", intText(activity.totals?.steps ?? data.today?.steps ?? 0), "window"],
-            ["Zone min", intText(activity.totals?.active_zone_minutes ?? data.today?.active_zone_minutes ?? 0), "window"],
-            ["Sleep", sleepHours != null ? `${num(sleepHours, 1)}h` : null, sleep.days_with_sleep ? `${sleep.days_with_sleep} nights` : ""],
-            ["HRV", hrv != null ? `${num(hrv, 1)} ms` : null, heart.average_hrv_ms ? `avg ${num(heart.average_hrv_ms, 1)}` : ""],
-            ["Resting HR", rhr != null ? `${num(rhr, 1)} bpm` : null, heart.average_resting_heart_rate ? `avg ${num(heart.average_resting_heart_rate, 1)}` : ""],
-            ["Workouts", intText(workouts.workout_count ?? 0), recovery.latest_spo2 ? `SpO2 ${num(recovery.latest_spo2, 1)}%` : ""],
+            ["Move Today", todaySteps != null ? intText(todaySteps) : null, windowSteps != null && range ? `${intText(windowSteps)} in window` : latestActivity.date || ""],
+            ["Training Load", latestLoadAzm != null ? `${intText(latestLoadAzm)} AZM` : null, latestLoadDetail],
+            ["Sleep vs Avg", sleepDelta != null ? `${signed(sleepDelta)}h` : (sleepHours != null ? `${num(sleepHours, 1)}h` : null), sleepHours != null ? `latest ${num(sleepHours, 1)}h` : ""],
+            ["HRV vs Avg", hrvDelta != null ? `${signed(hrvDelta)}%` : (hrv != null ? `${num(hrv, 1)} ms` : null), hrv != null && heart.average_hrv_ms ? `${num(hrv, 1)} vs ${num(heart.average_hrv_ms, 1)} ms` : ""],
+            ["RHR vs Avg", rhrDelta != null ? `${signed(rhrDelta)} bpm` : (rhr != null ? `${num(rhr, 1)} bpm` : null), rhr != null && heart.average_resting_heart_rate ? `${num(rhr, 0)} vs ${num(heart.average_resting_heart_rate, 0)} bpm` : ""],
+            workouts.workout_count > 0
+              ? ["Workouts", intText(workouts.workout_count), range || "window"]
+              : vitalsValue
+                ? ["Vitals", vitalsValue, vitalsDetail]
+                : ["Freshness", titleCase(freshness.freshness_level || "unknown"), freshness.latest_observed_date ? `latest ${freshness.latest_observed_date}` : ""],
           ],
           evidenceTitle: prioritySignals.length ? "Priority Signals" : "Positives",
           evidence: prioritySignals.length ? prioritySignals : data.positives || [],
@@ -1222,6 +1247,7 @@ WIDGET_PREVIEW_STATES: dict[str, dict] = {
         "today": {
             "steps": 1600,
             "active_zone_minutes": 0,
+            "latest_training_load": {"date": "2026-07-02", "active_zone_minutes": 72},
             "sleep": {"asleep_hours": 5.1},
             "hrv_ms": 36,
             "resting_heart_rate": 67,
@@ -1230,6 +1256,7 @@ WIDGET_PREVIEW_STATES: dict[str, dict] = {
             "activity": {
                 "status": "ok",
                 "totals": {"steps": 41200, "active_zone_minutes": 72},
+                "highest_load_day": {"date": "2026-07-02", "active_zone_minutes": 72},
             },
             "sleep": {
                 "status": "ok",

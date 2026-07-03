@@ -117,6 +117,11 @@ async def test_widget_preview_route_renders_real_card_state() -> None:
     assert "Goal progress in this window: 1/4 workout sessions logged." in response.text
     assert overview.status_code == 200
     assert "Health Overview" in overview.text
+    assert "Move Today" in overview.text
+    assert "Training Load" in overview.text
+    assert "HRV vs Avg" in overview.text
+    assert "RHR vs Avg" in overview.text
+    assert "Vitals" in overview.text
     assert "recovery-first" in overview.text
     assert "Priority Signals" in overview.text
     assert "1/4 workout sessions logged; 3 remaining." in overview.text
