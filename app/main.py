@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Any
 
@@ -24,11 +25,14 @@ from .widget import TODAY_WIDGET_HTML, WIDGET_MIME_TYPE, WIDGET_PREVIEW_STATES, 
 SERVER_INSTRUCTIONS = (
     "Mehair Coach provides read-only Google Health/Fitbit context for a connected user. "
     "If connection or synced data is missing, call status/freshness tools and explain setup; "
-    "never invent health data. Sync only when the user asks for fresh Fitbit data. "
-    "For requests to sync latest Fitbit data and then summarize, use all data, or give an overview, "
-    "call sync_and_get_health_overview so the answer is based on one fresh overview result. "
-    "For broad health, fitness, recovery, or 'use all my data' overview questions, call "
-    "get_health_overview before answering. "
+    "never invent health data. Use already-synced local data for normal current/latest/today questions, "
+    "because every overview includes freshness metadata. Sync only when the user explicitly says sync, "
+    "refresh, pull, or update Fitbit/Google Health data now, or when a freshness result says the data "
+    "is stale for time-sensitive advice. For explicit requests to sync or refresh and then summarize, "
+    "use all data, or give an overview, call sync_and_get_health_overview so the answer is based on "
+    "one fresh overview result. For broad health, fitness, recovery, current/latest/today, or 'use all "
+    "my data' overview questions that do not explicitly request sync/refresh, call get_health_overview "
+    "before answering. "
     "For vague or diagnostic-sounding coaching questions like what the user should do today, "
     "why the user feels tired, how hard to train, whether heart signals look off, or which metrics matter, "
     "call get_health_question_clues "
@@ -154,31 +158,38 @@ def create_server(settings_override: Settings | None = None) -> ServerBundle:
 
     @mcp.tool(
         title="Sync latest Fitbit data",
-        description="Pull the latest available cloud-synced Fitbit data from Google Health into the local user store.",
+        description=(
+            "Pull the latest available cloud-synced Fitbit data from Google Health into the local user store. "
+            "By default, skips redundant network syncs when data was already synced very recently; set force "
+            "true only when the user explicitly asks to force a refresh now."
+        ),
         annotations=SYNC,
     )
-    async def sync_latest_fitbit_data() -> dict[str, Any]:
+    async def sync_latest_fitbit_data(force: bool = False) -> dict[str, Any]:
         user_id = current_user_id()
         if not user_id:
             return setup_required()
-        return await health_store.sync_latest(user_id)
+        return await health_store.sync_latest(user_id, force=force)
 
     @mcp.tool(
         title="Sync and get health overview",
         description=(
-            "Use when the user asks to sync latest Fitbit/Google Health data and then summarize, "
-            "analyze all available health metrics, explain what changed, or recommend today's intensity. "
-            "Runs one sync, then returns a card-ready all-data overview with sync freshness."
+            "Use only when the user explicitly asks to sync, refresh, pull, or update Fitbit/Google "
+            "Health data now and then summarize, analyze all available health metrics, explain what "
+            "changed, or recommend today's intensity. Runs one sync, then returns a card-ready "
+            "all-data overview with sync freshness. For normal current/latest/today questions, use "
+            "get_health_overview instead because it is faster and includes freshness metadata. Leave force "
+            "false unless the user explicitly asks to force a refresh."
         ),
         annotations=SYNC,
         meta=WIDGET_META,
     )
-    async def sync_and_get_health_overview(days: int = 14) -> dict[str, Any]:
+    async def sync_and_get_health_overview(days: int = 14, force: bool = False) -> dict[str, Any]:
         user_id = current_user_id()
         if not user_id:
             return setup_required()
 
-        sync = await health_store.sync_latest(user_id)
+        sync = await health_store.sync_latest(user_id, force=force)
         if sync.get("status") != "ok":
             return sync
 
@@ -188,6 +199,9 @@ def create_server(settings_override: Settings | None = None) -> ServerBundle:
 
         overview["fresh_sync"] = {
             "status": sync.get("status"),
+            "message": sync.get("message"),
+            "sync_skipped": sync.get("sync_skipped", False),
+            "skip_reason": sync.get("skip_reason"),
             "records_upserted": sync.get("records_upserted"),
             "total_records": sync.get("total_records"),
             "lookback_days": sync.get("lookback_days"),
@@ -221,8 +235,10 @@ def create_server(settings_override: Settings | None = None) -> ServerBundle:
     @mcp.tool(
         title="Health overview",
         description=(
-            "Return an all-data coaching overview across readiness, activity, sleep, heart, "
-            "recovery, workouts, goals, check-ins, data coverage, and concrete next actions."
+            "Fast path for current/latest/today health and fitness questions using already-synced "
+            "local Google Health/Fitbit data. Returns an all-data coaching overview across readiness, "
+            "activity, sleep, heart, recovery, workouts, goals, check-ins, data coverage, freshness, "
+            "and concrete next actions without starting a sync."
         ),
         annotations=READ_ONLY,
         meta=WIDGET_META,
@@ -721,11 +737,32 @@ def workout_plan_for_activity(
     today = context.get("today", {})
     sleep = today.get("sleep", {})
     latest_load = today.get("latest_training_load", {})
-    planned = " ".join([planned_activity or "", " ".join(target_areas or []), constraints or ""]).lower()
+    planned = " ".join([planned_activity or "", " ".join(target_areas or [])]).lower()
+    constraint_text = (constraints or "").lower()
+    all_context_text = " ".join([planned, constraint_text])
     readiness_label = readiness.get("label", "pending")
     readiness_score = int(readiness.get("score", 0))
     soreness_rating = _latest_rating(checkins or [], "soreness")
     energy_rating = _latest_rating(checkins or [], "energy")
+    has_soreness_constraint = _mentions(
+        constraint_text,
+        ("sore", "soreness", "pain", "ache", "tight", "tweak", "injury", "complains"),
+    )
+    spinal_constraint = _mentions(
+        constraint_text,
+        (
+            "low back",
+            "lower back",
+            "back pain",
+            "back sore",
+            "back soreness",
+            "back ache",
+            "back tight",
+            "hip pain",
+            "hip sore",
+            "hip ache",
+        ),
+    )
 
     intensity = _base_intensity(readiness_label)
     rpe_cap = {"easy": 6, "moderate": 7, "moderate-to-hard": 8}.get(intensity, 6)
@@ -738,13 +775,22 @@ def workout_plan_for_activity(
         intensity = "moderate" if intensity == "moderate-to-hard" else intensity
         rpe_cap = min(rpe_cap, 7)
         limiting_factors.append(f"Latest soreness check-in is moderate at {soreness_rating}/10.")
-    if _mentions(planned, ("back", "low back", "lower back", "hip", "sore", "pain", "ache")):
+    if has_soreness_constraint:
         rpe_cap = min(rpe_cap, 7)
-        limiting_factors.append("User-stated back/hip soreness or constraint should cap spinal loading.")
+        limiting_factors.append("User-stated soreness or pain should cap loading and volume.")
+    if spinal_constraint:
+        rpe_cap = min(rpe_cap, 7)
+        limiting_factors.append("User-stated lower-back or hip constraint should cap spinal loading.")
     if latest_load.get("active_zone_minutes", 0) > 45:
         rpe_cap = min(rpe_cap, 7)
 
-    focus, avoid, warmup, session = _activity_guidance(planned, rpe_cap, intensity)
+    focus, avoid, warmup, session = _activity_guidance(all_context_text, rpe_cap, intensity)
+    exercise_blocks, substitutions = _exercise_prescription(
+        all_context_text,
+        rpe_cap,
+        readiness_label,
+        spinal_constraint,
+    )
     if duration_minutes:
         session.append(f"Keep the session near {max(15, min(duration_minutes, 120))} minutes including warm-up.")
     if readiness_label == "red":
@@ -774,8 +820,10 @@ def workout_plan_for_activity(
         "readiness": readiness,
         "focus": focus,
         "warmup": warmup,
+        "exercise_blocks": exercise_blocks,
         "session_guidance": session,
         "avoid": avoid,
+        "substitutions": substitutions,
         "progression_rules": [
             "If warm-up raises pain, heaviness, dizziness, or unusual breathlessness, downshift or stop.",
             "If HRV and resting heart rate rebound and sleep improves, progress load or volume next session.",
@@ -1097,6 +1145,7 @@ def _active_workout_safety_flags(
     urgent_terms = (
         "chest pain",
         "chest tight",
+        "chest tightness",
         "chest pressure",
         "shortness of breath",
         "trouble breathing",
@@ -1109,7 +1158,7 @@ def _active_workout_safety_flags(
         "irregular heartbeat",
         "passing out",
     )
-    if any(term in symptoms_text for term in urgent_terms):
+    if any(_has_unnegated_phrase(symptoms_text, term) for term in urgent_terms):
         flags.append(
             "Reported symptoms may need medical caution; stop hard training and seek urgent care for chest pain, fainting, severe shortness of breath, or new/worsening symptoms."
         )
@@ -1120,6 +1169,15 @@ def _active_workout_safety_flags(
     if pain_level is not None and pain_level >= 8:
         flags.append(f"Pain is severe at {pain_level}/10; stop loading that area.")
     return _dedupe(flags)
+
+
+def _has_unnegated_phrase(text: str, phrase: str) -> bool:
+    for match in re.finditer(rf"\b{re.escape(phrase)}\b", text):
+        prefix = text[max(0, match.start() - 28) : match.start()]
+        if re.search(r"\b(no|not|without|denies|deny|none)\b[\s,;:.-]{0,12}$", prefix):
+            continue
+        return True
+    return False
 
 
 def _activity_guidance(planned: str, rpe_cap: int, intensity: str) -> tuple[list[str], list[str], list[str], list[str]]:
@@ -1158,6 +1216,161 @@ def _activity_guidance(planned: str, rpe_cap: int, intensity: str) -> tuple[list
         focus.append("A productive session today means leaving the gym feeling better, not crushed.")
 
     return _dedupe(focus), _dedupe(avoid), _dedupe(warmup), _dedupe(session)
+
+
+def _exercise_prescription(
+    planned: str,
+    rpe_cap: int,
+    readiness_label: str,
+    spinal_constraint: bool,
+) -> tuple[list[dict[str, str]], list[str]]:
+    blocks: list[dict[str, str]] = []
+    substitutions: list[str] = []
+    easy_volume = readiness_label == "red"
+
+    def add(name: str, sets: str, reps: str, note: str, alternative: str | None = None) -> None:
+        blocks.append(
+            {
+                "exercise": name,
+                "sets": sets,
+                "reps": reps,
+                "intensity": f"RPE <= {rpe_cap}",
+                "note": note,
+                "alternative": alternative or "",
+            }
+        )
+
+    if _mentions(planned, ("chest", "bench", "press", "push")):
+        add(
+            "Machine chest press",
+            "2-3" if easy_volume else "3-4",
+            "8-10",
+            "Stable torso; leave 3-4 reps in reserve if recovery is red.",
+            "Flat dumbbell press with a neutral, pain-free arch.",
+        )
+        add(
+            "Incline dumbbell press",
+            "2" if easy_volume else "3",
+            "10-12",
+            "Moderate load, controlled lowering, no grinding.",
+            "Incline machine press.",
+        )
+        add(
+            "Cable fly",
+            "2",
+            "12-15",
+            "Pump work only; stop before shoulder or back compensation.",
+            "Pec deck.",
+        )
+        substitutions.append("Barbell bench with a big arch -> machine or dumbbell press.")
+
+    if _mentions(planned, ("back", "row", "pull", "deadlift", "hinge")):
+        add(
+            "Chest-supported row",
+            "2-3" if easy_volume else "3-4",
+            "10-12",
+            "Keep the lower back quiet; squeeze without yanking.",
+            "Seated cable row with chest support.",
+        )
+        add(
+            "Neutral-grip lat pulldown",
+            "3",
+            "10-12",
+            "Stay tall and avoid leaning far back.",
+            "Assisted pull-up if smooth and controlled.",
+        )
+        add(
+            "Face pull",
+            "2-3",
+            "15-20",
+            "Shoulder-blade control and upper-back blood flow.",
+            "Rear-delt cable fly.",
+        )
+        substitutions.extend(
+            [
+                "Bent-over row -> chest-supported row.",
+                "Heavy deadlift or hinge -> pulldown, supported row, or skip the hinge pattern today.",
+            ]
+        )
+
+    if _mentions(planned, ("squash", "tennis", "court", "run", "interval", "hiit")):
+        add(
+            "Easy aerobic warm-up",
+            "1",
+            "8-12 min",
+            "Nasal/easy breathing; use this as the readiness check.",
+            "Brisk walk or bike.",
+        )
+        add(
+            "Technique block",
+            "4-6",
+            "2 min",
+            "Skill or footwork quality at conversational intensity.",
+            "Zone 2 cardio if cutting feels off.",
+        )
+        add(
+            "Short controlled pickup",
+            "3-5",
+            "20-30 sec",
+            "Only if symptoms are absent and movement feels snappy.",
+            "Skip pickups and cool down.",
+        )
+
+    if _mentions(planned, ("leg", "squat", "lower", "quad", "hamstring")):
+        add(
+            "Leg press or goblet squat",
+            "2-3" if easy_volume else "3-4",
+            "8-12",
+            "Controlled range and no bracing strain.",
+            "Split squat to a comfortable depth.",
+        )
+        add(
+            "Hamstring curl",
+            "2-3",
+            "10-15",
+            "Machine-based posterior-chain work without heavy hinging.",
+            "Glute bridge if pain-free.",
+        )
+        add(
+            "Calf raise",
+            "2-3",
+            "12-15",
+            "Smooth tempo, no bouncing.",
+            "Seated calf raise.",
+        )
+
+    if not blocks:
+        add(
+            "Easy warm-up",
+            "1",
+            "8-10 min",
+            "Use breathing, coordination, and pain as the readiness screen.",
+            "Walk, bike, or mobility flow.",
+        )
+        add(
+            "Main movement",
+            "2-3",
+            "8-12",
+            "Pick a familiar exercise and keep it below the intensity cap.",
+            "Machine or supported variation.",
+        )
+        add(
+            "Accessory circuit",
+            "2",
+            "10-15",
+            "Quality reps only; end before fatigue changes form.",
+            "Mobility or zone 2 if recovery feels poor.",
+        )
+
+    if spinal_constraint:
+        substitutions.extend(
+            [
+                "Standing cable row -> seated cable row with chest support.",
+                "Loaded spinal flexion or twisting -> supported machine work or mobility only.",
+            ]
+        )
+
+    return blocks[:6], _dedupe(substitutions)
 
 
 def _latest_rating(checkins: list[dict[str, Any]], key: str) -> int | None:

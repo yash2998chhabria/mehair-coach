@@ -107,9 +107,15 @@ class HealthStore:
         self.settings = settings
         self.google = GoogleHealthClient(settings.google_health_api_base)
 
-    async def sync_latest(self, user_id: str) -> dict[str, Any]:
+    async def sync_latest(self, user_id: str, force: bool = False) -> dict[str, Any]:
         if not self.auth.refresh_token_available(user_id):
             return setup_required()
+
+        if not force:
+            recent = self._recent_sync_result(user_id)
+            if recent:
+                return recent
+
         access_token = await self.auth.ensure_google_access_token(user_id)
         if not access_token:
             return setup_required("Google access token is unavailable. Reconnect Google Health.")
@@ -165,9 +171,54 @@ class HealthStore:
                     "readiness": context.get("readiness"),
                     "today": context.get("today"),
                     "evidence": context.get("evidence"),
+                    "freshness": context.get("data_freshness"),
+                    "total_records": context.get("data_freshness", {}).get("records"),
                 }
             )
         return result
+
+    def _recent_sync_result(self, user_id: str) -> dict[str, Any] | None:
+        min_interval = max(0, int(self.settings.sync_min_interval_minutes or 0))
+        if min_interval <= 0:
+            return None
+
+        freshness = self.freshness(user_id)
+        if freshness.get("status") != "ok":
+            return None
+        sync_age = freshness.get("sync_age_minutes")
+        if (
+            freshness.get("freshness_level") != "fresh"
+            or sync_age is None
+            or sync_age >= min_interval
+        ):
+            return None
+
+        context = self.latest_context(user_id)
+        if context.get("status") != "ok":
+            return None
+
+        return {
+            "status": "ok",
+            "message": "Google Health data was already synced recently; skipped a redundant sync.",
+            "sync_skipped": True,
+            "skip_reason": "recent_fresh_sync",
+            "records_upserted": 0,
+            "total_records": freshness.get("records"),
+            "lookback_days": 0,
+            "sync_window": {
+                "mode": "recent_skip",
+                "min_interval_minutes": min_interval,
+                "sync_age_minutes": sync_age,
+                "latest_observed_date": freshness.get("latest_observed_date"),
+                "last_sync": freshness.get("last_sync"),
+            },
+            "freshness": freshness,
+            "context": context,
+            "latest_date": context.get("latest_date"),
+            "readiness": context.get("readiness"),
+            "today": context.get("today"),
+            "evidence": context.get("evidence"),
+        }
 
     def _sync_window(self, user_id: str, now: datetime) -> tuple[datetime, dict[str, Any]]:
         full_days = max(1, int(self.settings.sync_lookback_days or 7))

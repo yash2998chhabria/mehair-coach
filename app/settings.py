@@ -26,6 +26,7 @@ class Settings(BaseSettings):
     sync_lookback_days: int = 7
     sync_incremental_lookback_days: int = 2
     sync_incremental_overlap_hours: int = 2
+    sync_min_interval_minutes: int = 15
     host: str = "0.0.0.0"
     port: int = Field(default=8787, ge=1, le=65535)
 

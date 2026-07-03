@@ -47,6 +47,10 @@ def test_planned_chest_day_downshifts_for_red_readiness_and_back_soreness() -> N
     assert any("Do not chase PRs" in item for item in plan["session_guidance"])
     assert any("Aggressive bench arch" in item for item in plan["avoid"])
     assert any("HRV is below recent baseline" in item for item in plan["limiting_factors"])
+    assert any(block["exercise"] == "Machine chest press" for block in plan["exercise_blocks"])
+    assert any(block["exercise"] == "Chest-supported row" for block in plan["exercise_blocks"])
+    assert any("Bent-over row -> chest-supported row" in item for item in plan["substitutions"])
+    assert any("lower-back" in item for item in plan["limiting_factors"])
     assert plan["data_used"]["sleep_asleep_hours"] == 6.07
     assert plan["data_used"]["latest_training_load"]["active_zone_minutes"] == 63
 
@@ -83,6 +87,43 @@ def test_green_readiness_allows_normal_planned_session() -> None:
     assert plan["recommended_intensity"] == "moderate-to-hard"
     assert plan["rpe_cap"] == 8
     assert any("normal session" in item.lower() for item in plan["session_guidance"])
+    assert not any("lower-back" in item for item in plan["limiting_factors"])
+    assert any(block["exercise"] == "Machine chest press" for block in plan["exercise_blocks"])
+
+
+def test_back_workout_without_soreness_is_not_treated_as_lower_back_constraint() -> None:
+    context = {
+        "status": "ok",
+        "latest_date": "2026-07-03",
+        "activity_date": "2026-07-03",
+        "recovery_date": "2026-07-03",
+        "readiness": {
+            "score": 82,
+            "label": "green",
+            "recommendation": "A normal training day is reasonable if you feel good.",
+            "evidence": ["Latest sleep is strong at 8.0h.", "Resting heart rate is steady."],
+        },
+        "today": {
+            "steps": 8500,
+            "active_minutes": 54,
+            "active_zone_minutes": 35,
+            "hrv_ms": 48.5,
+            "resting_heart_rate": 57,
+            "sleep": {"asleep_hours": 8.0, "sessions_count": 1},
+            "latest_training_load": {"date": "2026-07-03", "active_zone_minutes": 35},
+        },
+    }
+
+    plan = workout_plan_for_activity(
+        context=context,
+        planned_activity="back day",
+        target_areas=["back"],
+        constraints="keep it efficient",
+    )
+
+    assert plan["rpe_cap"] == 8
+    assert not any("lower-back" in item for item in plan["limiting_factors"])
+    assert any(block["exercise"] == "Chest-supported row" for block in plan["exercise_blocks"])
 
 
 def test_active_workout_stops_for_dizziness_even_when_readiness_is_green() -> None:
@@ -163,6 +204,43 @@ def test_active_workout_downshifts_for_high_effort_without_urgent_symptoms() -> 
     assert guidance["safety_flags"] == []
     assert any("Take 3-5 minutes easy" in item for item in guidance["immediate_actions"])
     assert any("Cut the next block" in item for item in guidance["modifications"])
+
+
+def test_active_workout_does_not_treat_negated_red_flags_as_symptoms() -> None:
+    context = {
+        "status": "ok",
+        "latest_date": "2026-07-03",
+        "activity_date": "2026-07-03",
+        "recovery_date": "2026-07-03",
+        "readiness": {
+            "score": 70,
+            "label": "yellow",
+            "recommendation": "Choose moderate cardio, technique, or strength without max efforts.",
+            "evidence": ["Latest sleep is moderate at 6.8h."],
+        },
+        "today": {
+            "steps": 5000,
+            "active_minutes": 30,
+            "active_zone_minutes": 20,
+            "sleep": {"asleep_hours": 6.8, "sessions_count": 1},
+            "latest_training_load": {"date": "2026-07-03", "active_zone_minutes": 20},
+        },
+    }
+
+    guidance = active_workout_guidance(
+        context=context,
+        planned_activity="strength circuit",
+        current_heart_rate_bpm=165,
+        current_rpe=9,
+        pain_level=1,
+        symptoms="no dizziness, no chest pain, no chest tightness, breathing feels normal",
+        elapsed_minutes=24,
+        planned_duration_minutes=45,
+    )
+
+    assert guidance["decision"] == "downshift_now"
+    assert guidance["safety_flags"] == []
+    assert any("Take 3-5 minutes easy" in item for item in guidance["immediate_actions"])
 
 
 def test_today_recommendation_uses_goal_checkins_and_history() -> None:

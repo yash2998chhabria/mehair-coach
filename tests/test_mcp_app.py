@@ -3,7 +3,7 @@ from __future__ import annotations
 import httpx
 import pytest
 
-from app.main import app, mcp, settings as app_settings
+from app.main import SERVER_INSTRUCTIONS, app, mcp, settings as app_settings
 from app.settings import Settings
 from app.widget import WIDGET_PREVIEW_STATES, WIDGET_URI
 
@@ -48,12 +48,22 @@ async def test_mcp_tool_list_matches_private_beta_plan() -> None:
     assert by_name["get_recovery_signal_comparison"].meta is None
 
 
+def test_server_instructions_keep_normal_latest_questions_fast() -> None:
+    assert "Use already-synced local data for normal current/latest/today questions" in SERVER_INSTRUCTIONS
+    assert "Sync only when the user explicitly says sync" in SERVER_INSTRUCTIONS
+    assert "call get_health_overview" in SERVER_INSTRUCTIONS
+
+
 @pytest.mark.asyncio
 async def test_widget_resource_is_registered() -> None:
     resources = await mcp.list_resources()
+    resource = await mcp.read_resource(WIDGET_URI)
+    html = resource[0].content
 
     assert str(resources[0].uri) == WIDGET_URI
     assert resources[0].mimeType == "text/html;profile=mcp-app"
+    assert "Waiting for data" in html
+    assert 'renderEmpty("Waiting for synced health context.", "waiting")' in html
 
 
 @pytest.mark.asyncio
@@ -80,6 +90,7 @@ async def test_widget_preview_route_renders_real_card_state() -> None:
         overview = await client.get("/docs/widget-preview?state=health-overview")
         safety = await client.get("/docs/widget-preview?state=heart-safety")
         today_workout = await client.get("/docs/widget-preview?state=today-workout")
+        workout_plan = await client.get("/docs/widget-preview?state=workout-plan")
         active_workout = await client.get("/docs/widget-preview?state=active-workout")
 
     assert response.status_code == 200
@@ -107,6 +118,10 @@ async def test_widget_preview_route_renders_real_card_state() -> None:
     assert today_workout.status_code == 200
     assert "Today's Workout" in today_workout.text
     assert "Goal progress: 2/4 sessions logged; 2 remaining." in today_workout.text
+    assert workout_plan.status_code == 200
+    assert "Machine chest press" in workout_plan.text
+    assert "Chest-supported row" in workout_plan.text
+    assert "Bent-over row -> chest-supported row." in workout_plan.text
     assert "Latest energy check-in is 3/10." in today_workout.text
 
 

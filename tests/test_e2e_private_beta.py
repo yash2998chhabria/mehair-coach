@@ -391,13 +391,28 @@ async def test_private_beta_oauth_mcp_sync_and_coaching_flow(tmp_path, monkeypat
             assert sync["readiness"]["label"] == "green"
             assert "food" not in fake_health.requested_specs
 
-            incremental_sync = tool_content(
+            skipped_sync = tool_content(
                 await mcp_request(
                     client,
                     access_token,
                     "tools/call",
                     {"name": "sync_latest_fitbit_data", "arguments": {}},
                     40,
+                )
+            )
+            assert skipped_sync["status"] == "ok"
+            assert skipped_sync["sync_skipped"] is True
+            assert skipped_sync["sync_window"]["mode"] == "recent_skip"
+            assert skipped_sync["records_upserted"] == 0
+            assert skipped_sync["context"]["today"]["steps"] == 9200
+
+            incremental_sync = tool_content(
+                await mcp_request(
+                    client,
+                    access_token,
+                    "tools/call",
+                    {"name": "sync_latest_fitbit_data", "arguments": {"force": True}},
+                    41,
                 )
             )
             assert incremental_sync["status"] == "ok"
@@ -419,9 +434,9 @@ async def test_private_beta_oauth_mcp_sync_and_coaching_flow(tmp_path, monkeypat
             assert fresh_overview["overview_type"] == "health_overview"
             assert fresh_overview["sections"]["activity"]["totals"]["steps"] == 9200
             assert fresh_overview["fresh_sync"]["status"] == "ok"
-            assert fresh_overview["fresh_sync"]["sync_window"]["mode"] == "incremental"
-            assert fresh_overview["fresh_sync"]["sync_window"]["lookback_days"] <= 2
-            assert fresh_overview["fresh_sync"]["sync_window"]["configured_overlap_hours"] == 2
+            assert fresh_overview["fresh_sync"]["sync_skipped"] is True
+            assert fresh_overview["fresh_sync"]["sync_window"]["mode"] == "recent_skip"
+            assert fresh_overview["fresh_sync"]["records_upserted"] == 0
 
             catalog = tool_content(
                 await mcp_request(

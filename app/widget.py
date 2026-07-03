@@ -236,6 +236,47 @@ TODAY_WIDGET_HTML = """
         line-height: 1.34;
       }
 
+      .workout-blocks {
+        display: grid;
+        gap: 8px;
+        border-top: 1px solid #edf0ea;
+        padding: 0 14px 14px;
+      }
+
+      .workout-block {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        gap: 5px 10px;
+        align-items: start;
+        border: 1px solid #e4e9e4;
+        border-radius: 8px;
+        background: #fbfcfb;
+        padding: 10px;
+      }
+
+      .workout-block b {
+        min-width: 0;
+        color: #20272e;
+        font-size: 13px;
+        font-weight: 820;
+        line-height: 1.2;
+      }
+
+      .workout-block span {
+        color: var(--accent);
+        font-size: 12px;
+        font-weight: 780;
+        line-height: 1.2;
+        white-space: nowrap;
+      }
+
+      .workout-block small {
+        grid-column: 1 / -1;
+        color: #59636b;
+        font-size: 12px;
+        line-height: 1.34;
+      }
+
       .metrics {
         display: grid;
         grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -330,6 +371,8 @@ TODAY_WIDGET_HTML = """
         .stamp { min-width: 0; text-align: left; }
         .hero { grid-template-columns: 1fr; }
         .gauge { justify-self: center; min-height: 136px; }
+        .workout-block { grid-template-columns: 1fr; }
+        .workout-block span { white-space: normal; }
         .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
         .details { grid-template-columns: 1fr; }
       }
@@ -410,7 +453,11 @@ TODAY_WIDGET_HTML = """
       }
 
       function render() {
-        const data = state.data || {};
+        if (!state.data) {
+          renderEmpty("Waiting for synced health context.", "waiting");
+          return;
+        }
+        const data = state.data;
         const status = data.status;
         if (status && status !== "ok" && status !== "connected") {
           renderEmpty(data.message || "No synced Fitbit data yet.", data.status || "setup");
@@ -422,9 +469,14 @@ TODAY_WIDGET_HTML = """
       function renderEmpty(message, status) {
         root.style.setProperty("--accent", "#667078");
         root.style.setProperty("--accent-soft", "#f1f3f4");
+        const title = status === "empty"
+          ? "No synced data yet"
+          : status === "waiting"
+            ? "Waiting for data"
+            : "Setup needed";
         root.innerHTML = `
           <div class="empty">
-            <strong>${escapeHtml(status === "empty" ? "No synced data yet" : "Setup needed")}</strong>
+            <strong>${escapeHtml(title)}</strong>
             <span>${escapeHtml(message)}</span>
           </div>
         `;
@@ -692,13 +744,14 @@ TODAY_WIDGET_HTML = """
         const readiness = data.readiness || {};
         const label = readiness.label || data.data_used?.readiness_label || "pending";
         const dataUsed = data.data_used || {};
+        const substitutions = data.substitutions || [];
         const planFocus = [
           ...(data.session_guidance || []).slice(0, 3),
           ...(data.focus || []).slice(0, 2),
         ];
         return {
           accent: readinessAccent(label),
-          title: data.planned_activity || "Workout Plan",
+          title: titleCase(data.planned_activity || "Workout Plan"),
           eyebrow: "Workout Plan",
           date: data.planned_date ? `Planned for ${data.planned_date}` : "Next planned session",
           chips: [data.recommended_intensity, `RPE ${data.rpe_cap || "?"}`, label].filter(Boolean),
@@ -707,6 +760,7 @@ TODAY_WIDGET_HTML = """
           headline: data.summary || "Workout adjusted to your synced health context.",
           focusTitle: "Session",
           focus: planFocus,
+          blocks: data.exercise_blocks || [],
           metrics: [
             ["RPE cap", data.rpe_cap != null ? `${data.rpe_cap}/10` : null],
             ["Intensity", titleCase(data.recommended_intensity || "")],
@@ -715,10 +769,10 @@ TODAY_WIDGET_HTML = """
             ["Resting HR", dataUsed.resting_heart_rate ? `${dataUsed.resting_heart_rate} bpm` : null],
             ["Latest load", dataUsed.latest_training_load?.active_zone_minutes != null ? `${dataUsed.latest_training_load.active_zone_minutes} AZM` : null, dataUsed.latest_training_load?.date || ""],
           ],
-          evidenceTitle: "Limits",
+          evidenceTitle: "Fitbit Evidence",
           evidence: (data.limiting_factors || data.why || []).slice(0, 5),
-          secondaryTitle: "Avoid",
-          secondary: (data.avoid || []).slice(0, 4),
+          secondaryTitle: substitutions.length ? "Substitutions" : "Avoid",
+          secondary: (substitutions.length ? substitutions : data.avoid || []).slice(0, 5),
         };
       }
 
@@ -894,6 +948,7 @@ TODAY_WIDGET_HTML = """
         const primaryFocus = listItems(model.focus, "Health context synced.");
         const secondaryTitle = model.secondaryTitle || "Evidence";
         const secondary = model.secondary || model.evidence || [];
+        const blocks = renderBlocks(model.blocks);
         root.innerHTML = `
           <div class="mast">
             <div class="identity">
@@ -918,6 +973,7 @@ TODAY_WIDGET_HTML = """
               <ul class="focus-list">${primaryFocus}</ul>
             </div>
           </div>
+          ${blocks}
           <div class="metrics">
             ${(model.metrics || []).slice(0, 6).map((item) => metric(item[0], item[1], item[2])).join("")}
           </div>
@@ -937,6 +993,32 @@ TODAY_WIDGET_HTML = """
       function metric(label, value, detail) {
         const detailHtml = detail ? `<small>${escapeHtml(detail)}</small>` : "";
         return `<div class="metric"><b>${escapeHtml(value ?? "No data")}</b><span>${escapeHtml(label)}</span>${detailHtml}</div>`;
+      }
+
+      function renderBlocks(blocks) {
+        const usable = (blocks || []).filter(Boolean).slice(0, 6);
+        if (!usable.length) return "";
+        return `<div class="workout-blocks">${usable.map(workoutBlock).join("")}</div>`;
+      }
+
+      function workoutBlock(block) {
+        if (typeof block === "string") {
+          return `<div class="workout-block"><b>${escapeHtml(block)}</b></div>`;
+        }
+        const name = block.exercise || block.name || "Exercise";
+        const prescription = [block.sets ? `${block.sets} sets` : "", block.reps || "", block.intensity || ""]
+          .filter(Boolean)
+          .join(" | ");
+        const note = [block.note || "", block.alternative ? `Alt: ${block.alternative}` : ""]
+          .filter(Boolean)
+          .join(" ");
+        return `
+          <div class="workout-block">
+            <b>${escapeHtml(name)}</b>
+            <span>${escapeHtml(prescription)}</span>
+            ${note ? `<small>${escapeHtml(note)}</small>` : ""}
+          </div>
+        `;
       }
 
       function freshnessChip(freshness) {
@@ -1279,6 +1361,84 @@ WIDGET_PREVIEW_STATES: dict[str, dict] = {
         },
         "subjective_context": {"energy": 3, "soreness": 7, "stress": 6},
         "data_freshness": {"freshness_level": "fresh", "latest_observed_date": "2026-07-03"},
+    },
+    "workout-plan": {
+        "status": "ok",
+        "planned_activity": "chest and back gym session",
+        "planned_date": "today",
+        "target_areas": ["chest", "back"],
+        "constraints": "lower back soreness after squash",
+        "summary": "For today, keep chest and back at easy intensity with an RPE cap around 6/10. Treat this as a quality/recovery-biased session because recovery signals are red.",
+        "recommended_intensity": "easy",
+        "rpe_cap": 6,
+        "readiness": {
+            "score": 44,
+            "label": "red",
+            "evidence": [
+                "HRV is below recent baseline: 31.3 ms vs 60.9 ms.",
+                "Resting heart rate is slightly elevated: 65 bpm.",
+                "Recent training load is high: 63 zone minutes on 2026-07-02.",
+            ],
+        },
+        "focus": [
+            "Prefer chest-supported rows, pulldowns, and cable work.",
+            "A productive session today means leaving the gym feeling better, not crushed.",
+        ],
+        "warmup": [
+            "5-8 minutes easy cardio to check readiness.",
+            "Dynamic hips, thoracic rotations, and shoulder/scapular activation.",
+        ],
+        "exercise_blocks": [
+            {
+                "exercise": "Machine chest press",
+                "sets": "2-3",
+                "reps": "8-10",
+                "intensity": "RPE <= 6",
+                "note": "Stable torso; leave 3-4 reps in reserve if recovery is red.",
+                "alternative": "Flat dumbbell press with a neutral, pain-free arch.",
+            },
+            {
+                "exercise": "Chest-supported row",
+                "sets": "2-3",
+                "reps": "10-12",
+                "intensity": "RPE <= 6",
+                "note": "Keep the lower back quiet; squeeze without yanking.",
+                "alternative": "Seated cable row with chest support.",
+            },
+            {
+                "exercise": "Neutral-grip lat pulldown",
+                "sets": "3",
+                "reps": "10-12",
+                "intensity": "RPE <= 6",
+                "note": "Stay tall and avoid leaning far back.",
+                "alternative": "Assisted pull-up if smooth and controlled.",
+            },
+        ],
+        "session_guidance": [
+            "Do not chase PRs; keep every compound lift 3-4 reps in reserve.",
+            "Keep working sets at or below RPE 6/10.",
+            "Keep the session near 60 minutes including warm-up.",
+        ],
+        "avoid": ["Heavy deadlifts", "Heavy bent-over rows", "Aggressive bench arch if low back feels sensitive"],
+        "substitutions": [
+            "Bent-over row -> chest-supported row.",
+            "Standing cable row -> seated cable row with chest support.",
+            "Barbell bench with a big arch -> machine or dumbbell press.",
+        ],
+        "limiting_factors": [
+            "HRV is below recent baseline: 31.3 ms vs 60.9 ms.",
+            "Resting heart rate is slightly elevated: 65 bpm.",
+            "User-stated lower-back or hip constraint should cap spinal loading.",
+        ],
+        "data_used": {
+            "readiness_score": 44,
+            "readiness_label": "red",
+            "sleep_asleep_hours": 6.1,
+            "sleep_sessions": 2,
+            "hrv_ms": 31.3,
+            "resting_heart_rate": 65,
+            "latest_training_load": {"date": "2026-07-02", "active_zone_minutes": 63},
+        },
     },
     "active-workout": {
         "status": "ok",
