@@ -1,95 +1,121 @@
 # Mehair Coach
 
-Mehair Coach is a private-beta ChatGPT App that turns cloud-synced Fitbit data in Google Health into a personal fitness coaching context. ChatGPT provides the chat and model experience. This repo provides the Python MCP server, Google OAuth flow, encrypted token storage, SQLite health store, coaching tools, and optional inline health cards rendered inside ChatGPT.
+Mehair Coach is a private-beta ChatGPT App for personal health and fitness coaching from Google Health / Fitbit data.
 
-The project starts empty. It does not import any existing Fitbit export and it does not pull data on startup. Each tester connects their own Google account through OAuth, then ChatGPT can call the tools for that user.
+ChatGPT provides the conversation. This repo provides the Python MCP server that connects a user to Google Health, syncs their Fitbit-backed data, stores it securely, and exposes coaching tools plus inline health cards.
 
-## What It Does
+The app starts empty. It does not import demo data, seed personal exports, or pull anything until a user connects their own Google account.
 
-- Exposes a `/mcp` endpoint for ChatGPT developer-mode connectors.
-- Authenticates each ChatGPT connector user with Google OAuth.
-- Stores Google refresh/access tokens encrypted at rest.
-- Syncs the latest Google Health data that came from Fitbit or other connected sources.
-- Lists all device-first health metrics the app can sync, with per-user availability.
-- Lets ChatGPT query specific synced metrics over bounded date windows.
-- Summarizes readiness, sleep, activity load, heart trends, and workout history.
-- Produces an all-data health overview with a daily coaching brief, positives, watchouts, and next actions.
-- Lets ChatGPT decide which Fitbit metrics, goals, check-ins, and workout-history clues matter for vague questions like “why am I tired?” or “how hard should I train today?”
-- Compares sleep, HRV, resting heart rate, overnight recovery context, and zone-minute load against recent baseline.
-- Flags whether synced data is fresh, aging, or stale before time-sensitive coaching.
-- Calls out context gaps such as missing check-ins or goals before confident hard-training advice.
-- Plans specific workouts using synced recovery/load data plus goals, check-ins, and constraints.
-- Stores local goals and subjective check-ins for better coaching prompts.
-- Returns clear setup and empty-state responses when a user has not connected or synced yet.
-- Shows an inline Apps SDK health card for overview, readiness, sleep, activity, workout plans, and evidence.
-- Provides a local widget preview route for visual QA of realistic coaching card states.
+## What the MCP Does
 
-## What It Does Not Do
+- Hosts a ChatGPT-compatible MCP endpoint at `/mcp`.
+- Runs per-user Google OAuth for Google Health / Fitbit data.
+- Encrypts Google tokens before storing them.
+- Syncs read-only Google Health data into SQLite.
+- Lets ChatGPT inspect freshness before syncing again.
+- Exposes tools for readiness, sleep, HRV, resting heart rate, activity load, workouts, goals, check-ins, and live workout guidance.
+- Returns clear setup and empty states when a user is not connected or has no synced data.
+- Renders compact Apps SDK cards inside ChatGPT for health overviews, recovery comparisons, workout plans, and active-workout decisions.
 
-- It does not talk directly to the Fitbit device over Bluetooth.
-- It does not use an OpenAI API key for chat. ChatGPT is the app host.
-- It does not seed demo health data.
-- It does not import `exports/fitbit-device-only-export.json`.
-- It does not request nutrition/food scopes or pull food records.
-- It is not medical advice or a medical device.
+## Product Design
 
-## Data Categories
+The app is meant to feel like a personal health and fitness assistant, not a raw metrics dashboard.
 
-The sync tool queries read-only Google Health data categories that are useful for Fitbit-based coaching:
+The core UX is:
 
-- Activity: steps, active minutes, active zone minutes, activity level, distance, floors, active energy, total calories, sedentary periods.
-- Heart: heart rate samples, resting heart rate, heart rate variability, time in heart-rate zone, calories in heart-rate zone.
-- Sleep and recovery: sleep sessions, oxygen saturation, respiratory rate, respiratory-rate sleep summary, sleep temperature derivations.
-- Fitness sessions: exercise/workout history and swim lengths.
-- Capacity: daily VO2 max.
-- Profile/settings: only where needed to support the user-authorized Google Health connection.
+1. Ask a normal question in ChatGPT.
+2. ChatGPT calls the MCP tools for the connected user.
+3. The MCP returns structured health context and, when useful, a card.
+4. ChatGPT explains the decision in plain language with the exact evidence it used.
 
-Food and nutrition are intentionally excluded because the first version is device-first coaching, and the user may not log food data.
+Example questions:
 
-The app exposes this in four layers: a high-level overview tool for normal “what does my data say?” prompts, a question-clue tool that chooses useful signals for vague questions, coaching tools for workout decisions, and a metric catalog/query layer so ChatGPT can inspect specific signals when a question needs more detail.
+```text
+How hard should I work out today?
+Why do I feel unusually tired?
+Compare my sleep, HRV, resting heart rate, and activity load.
+I want to lift tonight but my lower back is tight. What should I do?
+I am 18 minutes into intervals, HR 150, RPE 7, legs feel heavy. Keep going?
+```
 
-## Architecture
+The assistant should combine wearable signals with user context. For example, it can use short sleep, low HRV, elevated resting heart rate, high zone minutes, soreness, goals, and planned workouts together instead of treating any single metric as the whole answer.
+
+## Health Data Used
+
+The first version is device-first and read-only. It focuses on data that Fitbit can sync through Google Health:
+
+- Activity: steps, distance, active minutes, active zone minutes, calories, floors, sedentary periods.
+- Heart: heart rate, resting heart rate, HRV, heart-rate zones.
+- Sleep and recovery: sleep sessions, sleep stages, SpO2, respiratory rate, sleep temperature signals.
+- Workouts: exercise sessions and recent training history.
+- Capacity/profile: VO2 max and profile/settings data only where needed for the authorized connection.
+
+Food and nutrition scopes are intentionally excluded.
+
+## How It Works
 
 ```mermaid
 flowchart LR
-  ChatGPT["ChatGPT app host"] --> MCP["Mehair Coach /mcp"]
-  MCP --> OAuth["Mehair OAuth endpoints"]
+  User["User in ChatGPT"] --> ChatGPT["ChatGPT App"]
+  ChatGPT --> MCP["Mehair Coach MCP /mcp"]
+  MCP --> OAuth["App OAuth"]
   OAuth --> Google["Google OAuth"]
-  MCP --> Store["SQLite health store"]
   MCP --> Health["Google Health API"]
   Health --> Fitbit["Cloud-synced Fitbit data"]
-  MCP --> Card["Apps SDK inline card"]
+  MCP --> Store["SQLite health store"]
+  MCP --> Cards["Apps SDK health cards"]
+  Cards --> ChatGPT
 ```
 
-## MCP Tools
+Key pieces:
 
-- `connect_google_health_status` checks whether the current ChatGPT user is connected.
-- `list_available_health_metrics` lists every device-first metric this beta can sync and query, including local record counts.
-- `query_health_metrics` queries selected synced metrics over a bounded date range from the local store.
-- `sync_latest_fitbit_data` pulls the latest available Google Health/Fitbit records.
-- `sync_and_get_health_overview` pulls the latest records and returns a card-ready all-data health overview in one tool call.
-- `get_data_freshness` reports last observed date, last sync time, and whether data is fresh, aging, or stale.
-- `get_today_context` returns the latest daily activity, sleep, heart, readiness, and evidence.
-- `get_health_overview` returns an all-data overview across readiness, activity, sleep, heart, recovery, workouts, goals, check-ins, freshness, coverage, daily brief, positives, watchouts, and next actions.
-- `get_recovery_readiness` returns the readiness score and evidence.
-- `get_health_question_clues` maps a natural-language health or workout question to likely intents, useful synced metrics, visible clues, watchouts, and follow-up tools.
-- `get_recovery_signal_comparison` compares sleep, HRV, resting heart rate, overnight recovery signals, and activity load against recent baseline.
-- `recommend_workout_today` recommends the day’s training intensity using freshness, readiness, activity load, goals, recent workouts, and check-ins, then returns a concise evidence trail for “why?” answers.
-- `plan_workout_with_health_context` plans a specific workout, sport session, or muscle-group day from synced data and user constraints.
-- `guide_active_workout` gives in-session continue/downshift/stop guidance from live HR, RPE, pain, symptoms, and synced readiness/load context.
-- `get_sleep_analysis` summarizes recent sleep.
-- `get_activity_load` summarizes recent activity.
-- `get_heart_trends` summarizes heart rate, resting heart rate, and HRV.
-- `get_workout_history` lists recent exercise sessions.
-- `set_goal` stores a local coaching goal.
-- `log_checkin` stores subjective energy, soreness, stress, and notes.
+- `app/main.py` defines the MCP server, tool registration, OAuth routes, and widget resource.
+- `app/health_store.py` syncs and summarizes Google Health data.
+- `app/google_health.py` talks to Google Health APIs.
+- `app/auth.py` handles app OAuth, Google OAuth, and token exchange.
+- `app/widget.py` contains the inline ChatGPT card UI.
+- `data/` holds local SQLite databases and is ignored by git. Google tokens are encrypted before they are stored.
 
-## Local Setup
+## MCP Tool Groups
 
-Install dependencies and generate a local encryption key:
+Connection and sync:
+
+- `connect_google_health_status`
+- `sync_latest_fitbit_data`
+- `sync_and_get_health_overview`
+- `get_data_freshness`
+
+Metric discovery and querying:
+
+- `list_available_health_metrics`
+- `query_health_metrics`
+- `get_today_context`
+
+Coaching and analysis:
+
+- `get_health_overview`
+- `get_recovery_readiness`
+- `get_health_question_clues`
+- `get_recovery_signal_comparison`
+- `recommend_workout_today`
+- `plan_workout_with_health_context`
+- `guide_active_workout`
+
+Specific summaries:
+
+- `get_sleep_analysis`
+- `get_activity_load`
+- `get_heart_trends`
+- `get_workout_history`
+
+Local coaching memory:
+
+- `set_goal`
+- `log_checkin`
+
+## Local Development
 
 ```bash
-cd coach
 uv sync
 uv run python -m app.crypto
 cp .env.example .env
@@ -100,132 +126,77 @@ Fill in `.env`:
 ```bash
 PUBLIC_BASE_URL=https://your-public-url.example
 DATABASE_URL=sqlite:///./data/mehair-coach.sqlite3
-TOKEN_ENCRYPTION_KEY=
-GOOGLE_CLIENT_ID=
-GOOGLE_CLIENT_SECRET=
+TOKEN_ENCRYPTION_KEY=...
+GOOGLE_CLIENT_ID=...
+GOOGLE_CLIENT_SECRET=...
 GOOGLE_REDIRECT_URI=https://your-public-url.example/oauth/callback/google
 ```
 
-Start the server:
+Run the server:
 
 ```bash
 uv run python -m app.main
 ```
 
-The server listens on `http://localhost:8787` by default and exposes MCP at `/mcp`.
-
-## Google OAuth Setup
-
-1. Create or select a Google Cloud project.
-2. Enable the Google Health API.
-3. Create a Web OAuth client.
-4. Add the redirect URI from `.env`, for example `https://abc123.ngrok.app/oauth/callback/google`.
-5. Keep the OAuth app in Testing mode for private beta.
-6. Add your email, and any friend tester emails, as Google OAuth test users.
-7. Use read-only Google Health scopes only.
-
-Official references:
-
-- [Google Health setup](https://developers.google.com/health/setup)
-- [Google Health scopes](https://developers.google.com/health/scopes)
-- [Google Health data types](https://developers.google.com/health/data-types)
-
-## ChatGPT Private Beta
-
-ChatGPT needs an HTTPS URL for the MCP server. For local development:
-
-```bash
-ngrok http 8787
-```
-
-Then update `.env` with the ngrok origin:
-
-```bash
-PUBLIC_BASE_URL=https://abc123.ngrok.app
-GOOGLE_REDIRECT_URI=https://abc123.ngrok.app/oauth/callback/google
-```
-
-Restart the server, then in ChatGPT:
-
-1. Enable developer mode under Settings -> Apps & Connectors -> Advanced settings.
-2. Create a connector.
-3. Set the connector URL to `https://abc123.ngrok.app/mcp`.
-4. Complete the Google OAuth flow when ChatGPT asks you to connect.
-5. Ask prompts like:
-
-```text
-Sync latest Fitbit data and give me a full health and fitness overview using all my data.
-Give me a full health and fitness overview using all my data.
-What should I do today?
-How hard should I work out today?
-I am 18 minutes into intervals, heart rate 178, RPE 9, and I feel dizzy. Should I keep going?
-I want to train chest tomorrow, but my lower back is sore from squash. Plan it using my data.
-Why?
-Compare my sleep and heart rate.
-I feel cooked today. Which metrics matter, and what clues do you see?
-```
-
-Developer-mode app routing can occasionally miss a natural prompt. If ChatGPT says it cannot access the connector even though the connector is enabled, use a follow-up like `Use the Mehair Coach Live connector tools now. Call sync_and_get_health_overview.` and refresh/recreate the connector after descriptor changes.
-
-For friend testing, give your friend the same public `/mcp` URL and add their email to the Google OAuth test users list. They create the connector in their own ChatGPT developer-mode settings and authorize their own Google account. Their data is stored under their own app user id.
-
-## Remote Hosting On Render
-
-The repo includes `render.yaml` for a GitHub-backed Render web service:
-
-- Python runtime with `uv`.
-- `/health` health check.
-- Persistent SQLite storage on `/var/data`.
-- Secret dashboard prompts for `TOKEN_ENCRYPTION_KEY`, `GOOGLE_CLIENT_ID`, and `GOOGLE_CLIENT_SECRET`.
-- Automatic public URL detection from Render's `RENDER_EXTERNAL_URL`.
-
-Create a Render Blueprint from this repository, fill the three secret values, and wait for the first deploy. The service URL will look like `https://<service>.onrender.com`; add `https://<service>.onrender.com/oauth/callback/google` to the Google Web OAuth client's authorized redirect URIs. Then create or refresh the ChatGPT developer-mode connector with `https://<service>.onrender.com/mcp`.
-
-Render persistent disks are required for this SQLite/token-store setup, which means the service should use a paid disk-capable plan.
-
-Official Apps SDK references:
-
-- [Apps SDK quickstart](https://developers.openai.com/apps-sdk/quickstart)
-- [Connect from ChatGPT](https://developers.openai.com/apps-sdk/deploy/connect-chatgpt)
-- [Apps SDK authentication](https://developers.openai.com/apps-sdk/build/auth)
-- [Apps SDK testing](https://developers.openai.com/apps-sdk/deploy/testing)
-
-## Testing
-
-Run the local test suite:
-
-```bash
-uv run pytest
-```
-
-Run a quick health check:
+Health check:
 
 ```bash
 curl http://localhost:8787/health
 ```
 
-Use MCP Inspector:
+ChatGPT connects to:
+
+```text
+https://your-public-url.example/mcp
+```
+
+For local ChatGPT testing, expose the server with an HTTPS tunnel and use that tunnel URL as `PUBLIC_BASE_URL`.
+
+## Remote Hosting
+
+The repo includes `render.yaml` for a Render web service:
+
+- Python runtime pinned to 3.12.12.
+- `uv sync --frozen --no-dev` build.
+- `uv run --no-sync python -m app.main` start.
+- `/health` health check.
+- Persistent SQLite storage at `/var/data/mehair-coach.sqlite3`.
+- Secret env vars for `TOKEN_ENCRYPTION_KEY`, `GOOGLE_CLIENT_ID`, and `GOOGLE_CLIENT_SECRET`.
+
+After Render gives the service URL, add this redirect URI to the Google OAuth client:
+
+```text
+https://<service>.onrender.com/oauth/callback/google
+```
+
+Then create or refresh the ChatGPT developer-mode connector with:
+
+```text
+https://<service>.onrender.com/mcp
+```
+
+## Testing
+
+Run the suite:
 
 ```bash
+uv run pytest
+```
+
+Useful live checks:
+
+```bash
+curl http://localhost:8787/health
 npx @modelcontextprotocol/inspector@latest --server-url http://localhost:8787/mcp --transport http
 ```
 
-The current automated tests cover OAuth metadata, encrypted token storage, setup/empty states, synthetic health calculations, all-data overview summaries, metric clue selection, recovery signal comparison, realistic coaching evals, large-dataset performance/compactness checks, workout planning, MCP tool registration, widget registration, HTTP metadata routes, and a local private-beta E2E flow that simulates ChatGPT plus Google Health without creating live credentials.
+The tests cover OAuth metadata, encrypted token storage, empty states, synthetic health calculations, coaching evals, widget registration, tool schemas, deployment config, and local private-beta flows.
 
-### ChatGPT Connector Cache
+## Safety Notes
 
-During private-beta iteration, ChatGPT can cache a connector's tool descriptors and iframe resource URI. If you change `WIDGET_URI`, tool metadata, or resource templates and ChatGPT still renders an older `ui://...` card, remove and recreate the developer-mode connector or reconnect it so ChatGPT fetches the latest descriptors.
-
-The server also registers legacy widget URIs for earlier private-beta templates so existing ChatGPT connector caches can still fetch and render the latest card HTML while a fresh connector picks up the current URI.
-
-## Security Notes
-
-- `.env`, SQLite databases, ngrok config, virtualenvs, caches, and generated package metadata are ignored by git.
-- Google tokens are encrypted with Fernet using `TOKEN_ENCRYPTION_KEY`.
-- The Google Health integration requests read-only scopes.
-- The public repository should never include personal exports, real tokens, Google client secrets, or production databases.
-- Sync writes only to this app’s local SQLite store.
-
-## Development Status
-
-This is a private developer-mode beta. Public ChatGPT app submission, native iOS/Android packaging, direct device access, webhook live sync, and friend data validation are intentionally out of scope for the first release.
+- This is fitness coaching context, not medical diagnosis.
+- Google Health scopes are read-only.
+- Nutrition/food scopes are not requested.
+- Tokens are encrypted at rest.
+- `.env`, SQLite databases, local exports, caches, and virtualenvs are ignored by git.
+- The public repo should never contain personal health exports, OAuth secrets, or production databases.
