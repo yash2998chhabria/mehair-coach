@@ -12,7 +12,9 @@ The app starts empty. It does not import demo data, seed personal exports, or pu
 - Runs per-user Google OAuth for Google Health / Fitbit data.
 - Encrypts Google tokens before storing them.
 - Syncs read-only Google Health data into SQLite.
+- Starts a bounded bootstrap sync after Google OAuth so the first chat usually has fresh data ready.
 - Lets ChatGPT inspect freshness before syncing again.
+- Reports metric-level sync diagnostics instead of hiding Google/API timeouts behind generic connector errors.
 - Exposes tools for readiness, sleep, HRV, resting heart rate, activity load, workouts, goals, check-ins, and live workout guidance.
 - Returns clear setup and empty states when a user is not connected or has no synced data.
 - Renders compact Apps SDK cards inside ChatGPT for health overviews, recovery comparisons, workout plans, and active-workout decisions.
@@ -131,6 +133,9 @@ TOKEN_ENCRYPTION_KEY=...
 GOOGLE_CLIENT_ID=...
 GOOGLE_CLIENT_SECRET=...
 GOOGLE_REDIRECT_URI=https://your-public-url.example/oauth/callback/google
+SYNC_ON_CONNECT=true
+SYNC_REQUEST_BUDGET_SECONDS=22
+SYNC_METRIC_TIMEOUT_SECONDS=8
 ```
 
 Run the server:
@@ -201,6 +206,8 @@ npx @modelcontextprotocol/inspector@latest --server-url http://localhost:8787/mc
 ```
 
 The tests cover OAuth metadata, encrypted token storage, empty states, synthetic health calculations, coaching evals, widget registration, tool schemas, deployment config, and local private-beta flows.
+
+Live sync behavior is intentionally best-effort: slow or failing Google Health metrics are skipped with diagnostics, available records are saved, and later questions can retry missing metrics without blocking the whole chat.
 
 ## Safety Notes
 

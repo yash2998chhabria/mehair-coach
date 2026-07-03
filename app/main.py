@@ -11,6 +11,7 @@ from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
 from mcp.types import ToolAnnotations
 from starlette.applications import Starlette
+from starlette.background import BackgroundTask
 from starlette.middleware.cors import CORSMiddleware
 from starlette.requests import Request
 from starlette.responses import HTMLResponse, JSONResponse, PlainTextResponse, Response
@@ -246,6 +247,12 @@ def create_server(settings_override: Settings | None = None) -> ServerBundle:
             "skip_reason": sync.get("skip_reason"),
             "records_upserted": sync.get("records_upserted"),
             "total_records": sync.get("total_records"),
+            "partial_sync": sync.get("partial_sync", False),
+            "time_budget_exhausted": sync.get("time_budget_exhausted", False),
+            "metrics_synced": sync.get("metrics_synced", []),
+            "metric_errors": sync.get("metric_errors", []),
+            "elapsed_seconds": sync.get("elapsed_seconds"),
+            "sync_diagnostics": sync.get("sync_diagnostics", {}),
             "lookback_days": sync.get("lookback_days"),
             "sync_window": sync.get("sync_window"),
             "freshness": sync.get("freshness"),
@@ -573,7 +580,23 @@ def create_server(settings_override: Settings | None = None) -> ServerBundle:
             )
 
     async def google_callback(request: Request) -> Response:
-        return await auth_service.google_callback(request)
+        connected_user_id: str | None = None
+
+        def capture_connected_user(user_id: str) -> None:
+            nonlocal connected_user_id
+            connected_user_id = user_id
+
+        response = await auth_service.google_callback(
+            request,
+            on_connected=capture_connected_user,
+        )
+        if connected_user_id and settings.sync_on_connect and 300 <= response.status_code < 400:
+            response.background = BackgroundTask(
+                health_store.sync_latest,
+                connected_user_id,
+                force=False,
+            )
+        return response
 
     async def setup_doc(_: Request) -> HTMLResponse:
         return HTMLResponse(

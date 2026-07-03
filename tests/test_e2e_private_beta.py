@@ -364,7 +364,7 @@ async def test_private_beta_oauth_mcp_sync_and_coaching_flow(tmp_path, monkeypat
             assert "list_available_health_metrics" in tool_names
             assert "query_health_metrics" in tool_names
 
-            before_sync = tool_content(
+            after_connect_context = tool_content(
                 await mcp_request(
                     client,
                     access_token,
@@ -373,7 +373,12 @@ async def test_private_beta_oauth_mcp_sync_and_coaching_flow(tmp_path, monkeypat
                     3,
                 )
             )
-            assert before_sync["status"] == "empty"
+            assert after_connect_context["status"] == "ok"
+            assert after_connect_context["today"]["steps"] == 9200
+            assert after_connect_context["readiness"]["label"] == "green"
+            bootstrap_records = after_connect_context["data_freshness"]["records"]
+            assert bootstrap_records >= 10
+            assert "food" not in fake_health.requested_specs
 
             sync = tool_content(
                 await mcp_request(
@@ -385,11 +390,11 @@ async def test_private_beta_oauth_mcp_sync_and_coaching_flow(tmp_path, monkeypat
                 )
             )
             assert sync["status"] == "ok"
-            assert sync["records_upserted"] >= 10
-            assert sync["sync_window"]["mode"] == "initial"
+            assert sync["sync_skipped"] is True
+            assert sync["records_upserted"] == 0
+            assert sync["sync_window"]["mode"] == "recent_skip"
             assert sync["context"]["today"]["steps"] == 9200
             assert sync["readiness"]["label"] == "green"
-            assert "food" not in fake_health.requested_specs
 
             skipped_sync = tool_content(
                 await mcp_request(
@@ -419,7 +424,7 @@ async def test_private_beta_oauth_mcp_sync_and_coaching_flow(tmp_path, monkeypat
             assert incremental_sync["sync_window"]["mode"] == "incremental"
             assert incremental_sync["sync_window"]["lookback_days"] <= 2
             assert incremental_sync["sync_window"]["configured_overlap_hours"] == 2
-            assert incremental_sync["sync_window"]["existing_records"] >= sync["records_upserted"]
+            assert incremental_sync["sync_window"]["existing_records"] >= bootstrap_records
 
             fresh_overview = tool_content(
                 await mcp_request(
@@ -1006,6 +1011,64 @@ class FailingGoogleHealth:
         return []
 
 
+class PartiallyFailingGoogleHealth:
+    async def list_data_points(
+        self,
+        access_token: str,
+        spec: DataTypeSpec,
+        start_time: str,
+        end_time: str,
+    ) -> list[dict[str, Any]]:
+        if spec.id == "sleep":
+            today = datetime.now(UTC).date().isoformat()
+            return [
+                {
+                    "name": "partial-sleep",
+                    "sleep": {
+                        "interval": {
+                            "startTime": f"{today}T00:00:00Z",
+                            "endTime": f"{today}T07:00:00Z",
+                        }
+                    },
+                }
+            ]
+        raise TimeoutError("simulated slow Google Health metric")
+
+    async def daily_rollup(self, *args: Any, **kwargs: Any) -> list[dict[str, Any]]:
+        raise TimeoutError("simulated slow Google Health rollup")
+
+
+@pytest.mark.asyncio
+async def test_partial_sync_preserves_records_and_reports_metric_diagnostics(tmp_path) -> None:
+    bundle = make_bundle(tmp_path)
+    bundle.health_store.google = PartiallyFailingGoogleHealth()
+    user_id = bundle.auth_service._create_user_from_google(
+        {
+            "access_token": "fake-google-access",
+            "refresh_token": "fake-google-refresh",
+            "expires_in": 3600,
+            "scope": " ".join(bundle.settings.google_scopes),
+        },
+        {"email": "tester@example.com", "sub": "google-subject"},
+    )
+
+    result = await bundle.health_store.sync_latest(user_id)
+
+    assert result["status"] == "ok"
+    assert result["partial_sync"] is True
+    assert result["records_upserted"] == 1
+    assert result["metrics_synced"] == ["sleep"]
+    assert result["metric_errors"][0]["category"] == "timeout"
+    assert "timed out" in result["metric_errors"][0]["error"]
+    assert result["sync_diagnostics"]["metric_error_count"] >= 1
+
+    sync_run = bundle.db.one("SELECT status, records_upserted, message FROM sync_runs WHERE user_id = ?", (user_id,))
+    assert sync_run is not None
+    assert sync_run["status"] == "partial"
+    assert sync_run["records_upserted"] == 1
+    assert "errors=" in sync_run["message"]
+
+
 @pytest.mark.asyncio
 async def test_sync_failure_is_reported_without_fabricated_context(tmp_path) -> None:
     bundle = make_bundle(tmp_path)
@@ -1057,10 +1120,16 @@ async def test_sync_failure_is_reported_without_fabricated_context(tmp_path) -> 
 
     assert sync["status"] == "error"
     assert sync["message"] == "Google Health sync failed."
+    assert sync["metric_errors"][0]["category"] == "google_http_503"
+    assert "Google Health HTTP 503" in sync["detail"]
     assert sync["records_upserted"] == 0
     assert today["status"] == "empty"
 
-    sync_run = bundle.db.one("SELECT status, records_upserted FROM sync_runs WHERE user_id = ?", (user_id,))
+    sync_run = bundle.db.one(
+        "SELECT status, records_upserted, message FROM sync_runs WHERE user_id = ?",
+        (user_id,),
+    )
     assert sync_run is not None
     assert sync_run["status"] == "error"
     assert sync_run["records_upserted"] == 0
+    assert "google_http_503" in sync_run["message"]

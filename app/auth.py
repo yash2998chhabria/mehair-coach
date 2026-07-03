@@ -4,6 +4,7 @@ import base64
 import hashlib
 import json
 import secrets
+from collections.abc import Callable
 from typing import Any
 from urllib.parse import urlencode
 
@@ -166,7 +167,11 @@ class AuthService:
             + urlencode(google_params)
         )
 
-    async def google_callback(self, request: Request) -> Response:
+    async def google_callback(
+        self,
+        request: Request,
+        on_connected: Callable[[str], None] | None = None,
+    ) -> Response:
         error = request.query_params.get("error")
         if error:
             return HTMLResponse(f"<h1>Google OAuth failed</h1><p>{error}</p>", status_code=400)
@@ -188,6 +193,8 @@ class AuthService:
         google_tokens = await self._exchange_google_code(code)
         user_info = await self._load_google_user_info(google_tokens["access_token"])
         user_id = self._create_user_from_google(google_tokens, user_info)
+        if on_connected:
+            on_connected(user_id)
         app_code = self._create_authorization_code(user_id, original)
 
         redirect_uri = original["redirect_uri"]

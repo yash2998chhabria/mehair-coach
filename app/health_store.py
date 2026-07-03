@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import math
 import re
 from collections import Counter, defaultdict
 from datetime import UTC, date, datetime, timedelta
+from time import monotonic
 from typing import Any
 
 from .auth import AuthService
@@ -136,6 +138,18 @@ METRIC_COACHING_REASONS = {
     "daily-sleep-temperature-derivations": "Sleep temperature deviation can be a useful recovery clue when available.",
 }
 
+SYNC_PRIORITY = (
+    "sleep",
+    "daily-resting-heart-rate",
+    "daily-heart-rate-variability",
+    "heart-rate",
+    "active-zone-minutes",
+    "exercise",
+    "time-in-heart-rate-zone",
+    "active-minutes",
+    "steps",
+)
+
 
 class HealthStore:
     def __init__(self, db: Database, auth: AuthService, settings: Settings):
@@ -148,8 +162,12 @@ class HealthStore:
         if not self.auth.refresh_token_available(user_id):
             return setup_required()
 
+        abandoned = self._mark_abandoned_syncs(user_id)
         if not force:
-            recent = self._recent_sync_result(user_id)
+            active = self._active_sync_result(user_id)
+            if active:
+                return active
+            recent = self._recent_sync_result(user_id, abandoned_syncs=abandoned)
             if recent:
                 return recent
 
@@ -175,27 +193,121 @@ class HealthStore:
             }
         )
 
+        metric_errors: list[dict[str, str]] = []
+        metrics_synced: list[str] = []
+        time_budget_exhausted = False
+        budget_seconds = max(1, int(self.settings.sync_request_budget_seconds or 1))
+        metric_timeout = max(1, int(self.settings.sync_metric_timeout_seconds or 1))
+        started_monotonic = monotonic()
+        deadline = monotonic() + budget_seconds
+
         try:
-            for spec in SYNC_DATA_TYPES:
-                if spec.operation == "dailyRollUp":
-                    records = await self.google.daily_rollup(access_token, spec, start_date, end_date)
-                else:
-                    records = await self.google.list_data_points(access_token, spec, start_time, end_time)
+            for spec in self._sync_specs():
+                remaining = deadline - monotonic()
+                if remaining <= 1:
+                    time_budget_exhausted = True
+                    break
+                timeout = max(1, min(metric_timeout, int(remaining)))
+                try:
+                    records = await asyncio.wait_for(
+                        self._fetch_metric_records(
+                            access_token,
+                            spec,
+                            start_time=start_time,
+                            end_time=end_time,
+                            start_date=start_date,
+                            end_date=end_date,
+                        ),
+                        timeout=timeout,
+                    )
+                except Exception as exc:
+                    metric_errors.append(
+                        {
+                            "metric": spec.id,
+                            "category": _sync_error_category(exc),
+                            "error": _sync_error_message(exc),
+                        }
+                    )
+                    if deadline - monotonic() <= 1:
+                        time_budget_exhausted = True
+                        break
+                    continue
                 upserted += self.upsert_records(user_id, spec.id, records)
-            self._finish_sync(sync_id, "ok", upserted, "Sync complete.")
+                metrics_synced.append(spec.id)
+
+            partial = bool(metric_errors or time_budget_exhausted)
+            elapsed_seconds = round(monotonic() - started_monotonic, 3)
+            if upserted == 0 and metric_errors:
+                message = (
+                    "Google Health sync failed before any records were saved. "
+                    f"elapsed={elapsed_seconds}s first_metric={metric_errors[0]['metric']} "
+                    f"first_error={metric_errors[0]['category']}: {metric_errors[0]['error']}"
+                )
+                self._finish_sync(sync_id, "error", upserted, message)
+                return {
+                    "status": "error",
+                    "message": "Google Health sync failed.",
+                    "detail": metric_errors[0]["error"],
+                    "records_upserted": upserted,
+                    "elapsed_seconds": elapsed_seconds,
+                    "sync_diagnostics": {
+                        "metric_timeout_seconds": metric_timeout,
+                        "request_budget_seconds": budget_seconds,
+                        "time_budget_exhausted": time_budget_exhausted,
+                    },
+                    "metric_errors": metric_errors[:10],
+                }
+
+            finish_status = "partial" if partial else "ok"
+            finish_message = (
+                (
+                    "Partial Google Health sync saved available records. "
+                    f"elapsed={elapsed_seconds}s metrics_synced={len(metrics_synced)} "
+                    f"errors={len(metric_errors)} time_budget_exhausted={time_budget_exhausted}"
+                )
+                if partial
+                else f"Sync complete. elapsed={elapsed_seconds}s metrics_synced={len(metrics_synced)}"
+            )
+            self._finish_sync(sync_id, finish_status, upserted, finish_message)
         except Exception as exc:
-            self._finish_sync(sync_id, "error", upserted, str(exc))
+            elapsed_seconds = round(monotonic() - started_monotonic, 3)
+            detail = _sync_error_message(exc)
+            self._finish_sync(sync_id, "error", upserted, detail)
             return {
                 "status": "error",
                 "message": "Google Health sync failed.",
-                "detail": str(exc),
+                "detail": detail,
                 "records_upserted": upserted,
+                "elapsed_seconds": elapsed_seconds,
+                "sync_diagnostics": {
+                    "error_category": _sync_error_category(exc),
+                    "metric_timeout_seconds": metric_timeout,
+                    "request_budget_seconds": budget_seconds,
+                    "time_budget_exhausted": time_budget_exhausted,
+                    "metrics_synced": metrics_synced,
+                },
             }
 
+        elapsed_seconds = round(monotonic() - started_monotonic, 3)
         result = {
             "status": "ok",
-            "message": "Google Health sync complete.",
+            "message": (
+                "Google Health sync saved available records; some metrics were skipped."
+                if metric_errors or time_budget_exhausted
+                else "Google Health sync complete."
+            ),
             "records_upserted": upserted,
+            "partial_sync": bool(metric_errors or time_budget_exhausted),
+            "time_budget_exhausted": time_budget_exhausted,
+            "metrics_synced": metrics_synced,
+            "elapsed_seconds": elapsed_seconds,
+            "sync_diagnostics": {
+                "metric_timeout_seconds": metric_timeout,
+                "request_budget_seconds": budget_seconds,
+                "time_budget_exhausted": time_budget_exhausted,
+                "metric_error_count": len(metric_errors),
+            },
+            "metric_errors": metric_errors[:10],
             "lookback_days": sync_window["lookback_days"],
             "sync_window": sync_window,
         }
@@ -214,9 +326,152 @@ class HealthStore:
             )
         return result
 
-    def _recent_sync_result(self, user_id: str) -> dict[str, Any] | None:
+    async def _fetch_metric_records(
+        self,
+        access_token: str,
+        spec: Any,
+        *,
+        start_time: str,
+        end_time: str,
+        start_date: str,
+        end_date: str,
+    ) -> list[dict[str, Any]]:
+        if spec.operation == "dailyRollUp":
+            return await self.google.daily_rollup(access_token, spec, start_date, end_date)
+        return await self.google.list_data_points(access_token, spec, start_time, end_time)
+
+    def _sync_specs(self) -> list[Any]:
+        priority = {metric: index for index, metric in enumerate(SYNC_PRIORITY)}
+        return sorted(SYNC_DATA_TYPES, key=lambda spec: priority.get(spec.id, len(priority)))
+
+    def _active_sync_result(self, user_id: str) -> dict[str, Any] | None:
+        minutes = max(1, int(self.settings.sync_abandoned_after_minutes or 1))
+        row = self.db.one(
+            """
+            SELECT id, started_at
+            FROM sync_runs
+            WHERE user_id = ? AND status = 'running' AND finished_at IS NULL
+            ORDER BY started_at DESC
+            LIMIT 1
+            """,
+            (user_id,),
+        )
+        if not row:
+            return None
+        try:
+            started = datetime.fromisoformat(row["started_at"])
+            if started.tzinfo is None:
+                started = started.replace(tzinfo=UTC)
+        except (TypeError, ValueError):
+            return None
+        elapsed_minutes = (utc_now() - started).total_seconds() / 60
+        if elapsed_minutes >= minutes:
+            return None
+
+        freshness = self.freshness(user_id)
+        context = self.latest_context(user_id)
+        result: dict[str, Any] = {
+            "status": "sync_in_progress",
+            "message": "Google Health sync is already running from the recent connection; retry shortly.",
+            "sync_in_progress": True,
+            "sync_skipped": True,
+            "skip_reason": "active_sync_in_progress",
+            "records_upserted": 0,
+            "sync_window": {
+                "mode": "active_sync_in_progress",
+                "started_at": row["started_at"],
+                "elapsed_minutes": round(elapsed_minutes, 2),
+                "abandoned_after_minutes": minutes,
+            },
+            "freshness": freshness,
+        }
+        if context.get("status") == "ok":
+            result.update(
+                {
+                    "status": "ok",
+                    "message": "Google Health sync is still running; using the records already available.",
+                    "context": context,
+                    "latest_date": context.get("latest_date"),
+                    "readiness": context.get("readiness"),
+                    "today": context.get("today"),
+                    "evidence": context.get("evidence"),
+                    "total_records": context.get("data_freshness", {}).get("records"),
+                }
+            )
+        return result
+
+    def _mark_abandoned_syncs(self, user_id: str) -> int:
+        minutes = max(1, int(self.settings.sync_abandoned_after_minutes or 1))
+        cutoff = utc_now() - timedelta(minutes=minutes)
+        rows = self.db.all(
+            """
+            SELECT id, started_at
+            FROM sync_runs
+            WHERE user_id = ? AND status = 'running' AND finished_at IS NULL
+            """,
+            (user_id,),
+        )
+        abandoned_ids: list[int] = []
+        for row in rows:
+            try:
+                started = datetime.fromisoformat(row["started_at"])
+                if started.tzinfo is None:
+                    started = started.replace(tzinfo=UTC)
+            except (TypeError, ValueError):
+                started = datetime.min.replace(tzinfo=UTC)
+            if started < cutoff:
+                abandoned_ids.append(int(row["id"]))
+
+        if not abandoned_ids:
+            return 0
+
+        message = (
+            "Marked abandoned after connector request ended before sync completion "
+            f"(timeout>{minutes}m)."
+        )
+        with self.db.connect() as conn:
+            for sync_id in abandoned_ids:
+                conn.execute(
+                    """
+                    UPDATE sync_runs
+                    SET finished_at = ?, status = 'abandoned', message = ?
+                    WHERE id = ? AND status = 'running'
+                    """,
+                    (iso_now(), message, sync_id),
+                )
+        return len(abandoned_ids)
+
+    def _recent_sync_result(
+        self,
+        user_id: str,
+        *,
+        abandoned_syncs: int = 0,
+    ) -> dict[str, Any] | None:
         min_interval = max(0, int(self.settings.sync_min_interval_minutes or 0))
         if min_interval <= 0:
+            return None
+
+        last_finished = self.db.one(
+            """
+            SELECT finished_at, status
+            FROM sync_runs
+            WHERE user_id = ?
+              AND status IN ('ok', 'partial')
+              AND finished_at IS NOT NULL
+            ORDER BY finished_at DESC
+            LIMIT 1
+            """,
+            (user_id,),
+        )
+        if not last_finished:
+            return None
+        try:
+            finished_at = datetime.fromisoformat(last_finished["finished_at"])
+            if finished_at.tzinfo is None:
+                finished_at = finished_at.replace(tzinfo=UTC)
+        except (TypeError, ValueError):
+            return None
+        if (utc_now() - finished_at).total_seconds() / 60 >= min_interval:
             return None
 
         freshness = self.freshness(user_id)
@@ -248,6 +503,8 @@ class HealthStore:
                 "sync_age_minutes": sync_age,
                 "latest_observed_date": freshness.get("latest_observed_date"),
                 "last_sync": freshness.get("last_sync"),
+                "previous_sync_status": last_finished["status"],
+                "abandoned_syncs_cleaned": abandoned_syncs,
             },
             "freshness": freshness,
             "context": context,
@@ -1047,6 +1304,33 @@ def empty_data(message: str = "No Fitbit data has synced yet.") -> dict[str, Any
         "message": message,
         "next_actions": ["Run sync_latest_fitbit_data after connecting Google Health."],
     }
+
+
+def _sync_error_category(exc: Exception) -> str:
+    if isinstance(exc, (TimeoutError, asyncio.TimeoutError)):
+        return "timeout"
+    response = getattr(exc, "response", None)
+    status_code = getattr(response, "status_code", None)
+    if status_code is not None:
+        return f"google_http_{status_code}"
+    if exc.__class__.__module__.startswith("httpx"):
+        return exc.__class__.__name__
+    return exc.__class__.__name__
+
+
+def _sync_error_message(exc: Exception) -> str:
+    response = getattr(exc, "response", None)
+    status_code = getattr(response, "status_code", None)
+    if status_code is not None:
+        body = ""
+        try:
+            body = response.text[:500]
+        except Exception:
+            body = ""
+        return f"Google Health HTTP {status_code}: {body or str(exc)}"
+    if isinstance(exc, (TimeoutError, asyncio.TimeoutError)):
+        return "Google Health metric request timed out."
+    return str(exc) or exc.__class__.__name__
 
 
 def freshness_details(latest_observed_date: str | None, last_sync: str | None) -> dict[str, Any]:
