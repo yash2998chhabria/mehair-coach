@@ -12,6 +12,20 @@ authorize/callback/token exchange, bearer-authenticated MCP JSON-RPC calls,
 Google Health sync, empty states, coaching outputs, refresh token exchange,
 unauthenticated challenges, and sync failure handling.
 
+It also includes golden coaching evals in `tests/test_coach_evals.py`. These
+seed realistic local Fitbit-like records and validate that the assistant stack
+uses the right signals for real questions:
+
+- under-recovered/tired day: short sleep, suppressed HRV, elevated resting HR,
+  high recent zone minutes, low energy, and soreness should produce an easy day
+  with specific evidence.
+- green training day: strong sleep, HRV above baseline, stable resting HR, low
+  soreness, and goal context should keep harder training available.
+- stale data: time-sensitive workout questions should ask for sync before
+  confident advice.
+- heart-safety question: high resting HR plus dizziness/concern language should
+  produce medical caution instead of pure training advice.
+
 Run a local server:
 
 ```bash
@@ -39,3 +53,5 @@ Golden prompts:
 - `Why?`
 - `Compare my sleep and heart rate.`
 - `Show my activity load this week.`
+- `I feel cooked today. Which metrics matter, and what clues do you see?`
+- `Should I worry about my high heart rate and dizziness?`

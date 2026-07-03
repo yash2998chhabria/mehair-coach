@@ -695,6 +695,8 @@ class HealthStore:
             overview=overview,
             comparison=comparison,
         )
+        safety_flags = _question_safety_flags(question_text, context)
+        watchouts = safety_flags + watchouts
         if context.get("data_freshness", {}).get("needs_sync_before_time_sensitive_advice"):
             next_actions.insert(0, "Run sync_latest_fitbit_data before answering time-sensitive training questions.")
 
@@ -714,6 +716,7 @@ class HealthStore:
             "positives": _dedupe(positives),
             "watchouts": _dedupe(watchouts),
             "next_actions": _dedupe(next_actions),
+            "safety_flags": safety_flags,
             "readiness": context["readiness"],
             "today": _compact_today_context(context["today"]),
             "overview_context": _compact_overview_context(overview),
@@ -1396,6 +1399,50 @@ def _question_clue_takeaways(
     if not next_actions:
         next_actions.append("Use get_health_overview before answering broad health and fitness questions.")
     return clues, positives, watchouts, next_actions
+
+
+def _question_safety_flags(question: str, context: dict[str, Any]) -> list[str]:
+    text = question.lower()
+    flags: list[str] = []
+    urgent_terms = (
+        "chest pain",
+        "shortness of breath",
+        "trouble breathing",
+        "faint",
+        "fainting",
+        "dizzy",
+        "dizziness",
+        "palpitation",
+        "palpitations",
+        "irregular",
+        "arrhythmia",
+    )
+    concern_terms = (
+        "should i worry",
+        "worried",
+        "concerning",
+        "concerned",
+        "abnormal",
+        "too high",
+        "heart rate high",
+        "high heart rate",
+        "pulse high",
+    )
+    if any(term in text for term in urgent_terms):
+        flags.append(
+            "The question mentions symptoms or heart concerns that need medical caution; do not diagnose from wearable data and recommend urgent care for severe, new, or worsening symptoms."
+        )
+    elif any(term in text for term in concern_terms):
+        flags.append(
+            "Treat this as a health-safety question, not only a fitness question; explain wearable limits and suggest clinical advice for persistent or concerning heart-rate changes."
+        )
+
+    resting_hr = context.get("today", {}).get("resting_heart_rate")
+    if resting_hr is not None and resting_hr >= 90:
+        flags.append(
+            f"Latest resting heart rate is high at {resting_hr} bpm, so avoid hard training advice without caution and context."
+        )
+    return _dedupe(flags)
 
 
 def _question_clue_headline(
