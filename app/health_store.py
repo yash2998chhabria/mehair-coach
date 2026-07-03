@@ -1786,6 +1786,7 @@ def _daily_coaching_brief(
     label = readiness.get("label")
     score = readiness.get("score")
     priority_signals: list[dict[str, Any]] = []
+    context_gaps: list[str] = []
 
     def add_signal(category: str, label_text: str, detail: str, impact: str, status: str) -> None:
         if detail:
@@ -1876,6 +1877,14 @@ def _daily_coaching_brief(
     energy = _rating_from_checkins(checkins, "energy")
     soreness = _rating_from_checkins(checkins, "soreness")
     stress = _rating_from_checkins(checkins, "stress")
+    if not checkins:
+        context_gaps.append(
+            "No recent subjective check-in is logged; ask for energy, soreness, stress, pain, or illness before hard training."
+        )
+    elif energy is None or soreness is None or stress is None:
+        context_gaps.append(
+            "Recent check-ins are missing energy, soreness, or stress, so subjective readiness is incomplete."
+        )
     if energy is not None:
         add_signal(
             "checkin",
@@ -1903,6 +1912,8 @@ def _daily_coaching_brief(
 
     goal_payload = (goal or {}).get("goal") or {}
     days_per_week = goal_payload.get("days_per_week")
+    if not goal_payload:
+        context_gaps.append("No coaching goal is saved; set a weekly goal to make recommendations more targeted.")
     if days_per_week is not None:
         try:
             target_sessions = max(0, int(days_per_week))
@@ -1925,6 +1936,13 @@ def _daily_coaching_brief(
             "Keep recommendations aligned with this goal.",
             "context",
         )
+
+    if sleep.get("status") != "ok":
+        context_gaps.append("Sleep data is missing in this window, so recovery confidence is lower.")
+    if heart.get("status") != "ok":
+        context_gaps.append("Heart recovery data is missing in this window, so HRV/resting-HR context is unavailable.")
+    if activity.get("status") != "ok":
+        context_gaps.append("Activity/load data is missing in this window, so training-load context is limited.")
 
     if recovery.get("latest_spo2") is not None:
         add_signal(
@@ -1958,6 +1976,8 @@ def _daily_coaching_brief(
         "Explain the top recovery signal in plain English.",
         "Compare sleep, HRV, resting heart rate, and load.",
     ]
+    if not checkins or energy is None or soreness is None or stress is None:
+        prompt_suggestions.append("Log a quick energy, soreness, and stress check-in.")
     if not goal_payload:
         prompt_suggestions.append("Set a weekly fitness goal.")
     if freshness.get("needs_sync_before_time_sensitive_advice"):
@@ -1982,6 +2002,7 @@ def _daily_coaching_brief(
         "training_bias": training_bias,
         "today_plan": _dedupe(next_actions)[:5],
         "priority_signals": priority_signals[:9],
+        "context_gaps": _dedupe(context_gaps)[:5],
         "prompt_suggestions": _dedupe(prompt_suggestions)[:5],
         "confidence": confidence,
         "data_used": {

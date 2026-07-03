@@ -23,6 +23,8 @@ uses the right signals for real questions:
   priority signals, a short plan, confidence, and useful follow-up prompts.
 - daily-plan questions: vague prompts like `What should I do today?` should
   route through the daily brief plus workout recommendation tools.
+- context gaps: if goals or subjective check-ins are missing, overview and
+  workout tools should surface that before hard-training advice.
 - green training day: strong sleep, HRV above baseline, stable resting HR, low
   soreness, strong energy, and goal context should keep harder training
   available.

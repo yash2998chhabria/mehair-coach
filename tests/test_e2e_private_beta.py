@@ -441,6 +441,9 @@ async def test_private_beta_oauth_mcp_sync_and_coaching_flow(tmp_path, monkeypat
             assert recommendation["intensity"] == "moderate-to-hard"
             assert recommendation["today"]["steps"] == 9200
             assert recommendation["activity_date"] == today["activity_date"]
+            assert any("No recent subjective check-in" in item for item in recommendation["context_gaps"])
+            assert any("No coaching goal" in item for item in recommendation["context_gaps"])
+            assert any("Log a quick energy" in item for item in recommendation["next_actions"])
             assert "medical advice" in recommendation["safety_note"]
 
             sleep = tool_content(
@@ -619,6 +622,7 @@ async def test_private_beta_oauth_mcp_sync_and_coaching_flow(tmp_path, monkeypat
             assert personalized_recommendation["rpe_cap"] == 7
             assert personalized_recommendation["subjective_context"]["soreness"] == 6
             assert personalized_recommendation["goal_context"]["remaining_sessions"] == 3
+            assert personalized_recommendation["context_gaps"] == []
             assert "soreness check-in is moderate" in personalized_recommendation["recommendation"]
 
             refresh = await client.post(

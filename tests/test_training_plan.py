@@ -133,6 +133,7 @@ def test_today_recommendation_uses_goal_checkins_and_history() -> None:
     assert recommendation["data_used"]["recent_workouts"] == 1
     assert any("3 session(s) remain" in item for item in recommendation["next_actions"])
     assert "soreness check-in is moderate" in recommendation["recommendation"]
+    assert recommendation["context_gaps"] == []
     assert any("Latest energy check-in is 5/10." in item for item in recommendation["evidence"])
     assert any("Latest soreness check-in is 6/10." in item for item in recommendation["evidence"])
     assert any("Goal progress: 1/4 sessions logged; 3 remaining." in item for item in recommendation["evidence"])
@@ -174,5 +175,8 @@ def test_today_recommendation_keeps_sync_first_when_data_is_stale() -> None:
     )
     assert recommendation["next_actions"][1] == "Do a controlled session: zone 2, technique, or submax strength."
     assert recommendation["data_used"]["freshness_level"] == "stale"
+    assert any("No recent subjective check-in" in item for item in recommendation["context_gaps"])
+    assert any("No coaching goal" in item for item in recommendation["context_gaps"])
+    assert any("Log a quick energy, soreness, stress, and pain check-in" in item for item in recommendation["next_actions"])
     assert any("Data freshness is stale" in item for item in recommendation["evidence"])
     assert any("Latest sleep used for recommendation: 7.0h." in item for item in recommendation["evidence"])

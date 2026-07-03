@@ -256,6 +256,7 @@ def test_synthetic_records_calculate_context(tmp_path, monkeypatch) -> None:
     signal_labels = {item["label"] for item in brief["priority_signals"]}
     assert {"Readiness", "Sleep", "HRV", "Energy", "Current goal"} <= signal_labels
     assert any("Run four days per week" in item["detail"] for item in brief["priority_signals"])
+    assert brief["context_gaps"] == []
 
 
 def test_overview_flags_stale_data_before_time_sensitive_advice(tmp_path, monkeypatch) -> None:
@@ -304,6 +305,10 @@ def test_overview_flags_stale_data_before_time_sensitive_advice(tmp_path, monkey
     assert overview["daily_brief"]["training_bias"] == "sync-first"
     assert "Sync first" in overview["daily_brief"]["summary"]
     assert any(item["label"] == "Data freshness" for item in overview["daily_brief"]["priority_signals"])
+    assert any("No recent subjective check-in" in item for item in overview["daily_brief"]["context_gaps"])
+    assert any("No coaching goal" in item for item in overview["daily_brief"]["context_gaps"])
+    assert any("Heart recovery data is missing" in item for item in overview["daily_brief"]["context_gaps"])
+    assert "Log a quick energy, soreness, and stress check-in." in overview["daily_brief"]["prompt_suggestions"]
 
 
 def test_question_clues_choose_recovery_heart_and_load_metrics(tmp_path, monkeypatch) -> None:

@@ -82,6 +82,7 @@ async def test_widget_preview_route_renders_real_card_state() -> None:
     assert "recovery-first" in overview.text
     assert "Priority Signals" in overview.text
     assert "1/4 workout sessions logged; 3 remaining." in overview.text
+    assert "Pain location is not logged" in overview.text
     assert safety.status_code == 200
     assert "Should I worry about my high heart rate and dizziness?" in safety.text
     assert "Health Check" in safety.text

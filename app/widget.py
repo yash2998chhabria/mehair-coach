@@ -465,6 +465,11 @@ TODAY_WIDGET_HTML = """
         const hrv = heart.latest_hrv_ms ?? data.today?.hrv_ms;
         const rhr = heart.latest_resting_heart_rate ?? data.today?.resting_heart_rate;
         const primaryActions = (brief.today_plan || data.next_actions || []).slice(0, 4);
+        const contextGaps = brief.context_gaps || [];
+        const watchoutsAndGaps = [
+          ...(data.watchouts || []),
+          ...contextGaps.map((item) => `Context gap: ${item}`),
+        ];
         const prioritySignals = (brief.priority_signals || []).map((item) => {
           const label = item.label || item.category || "Signal";
           const detail = item.detail || item.impact || "";
@@ -496,8 +501,8 @@ TODAY_WIDGET_HTML = """
           ],
           evidenceTitle: prioritySignals.length ? "Priority Signals" : "Positives",
           evidence: prioritySignals.length ? prioritySignals : data.positives || [],
-          secondaryTitle: "Watchouts",
-          secondary: data.watchouts || [],
+          secondaryTitle: contextGaps.length ? "Watchouts & Gaps" : "Watchouts",
+          secondary: watchoutsAndGaps,
         };
       }
 
@@ -1055,6 +1060,9 @@ WIDGET_PREVIEW_STATES: dict[str, dict] = {
                 "Plan today's workout using this brief.",
                 "Compare sleep, HRV, resting heart rate, and load.",
                 "Plan around my sore areas.",
+            ],
+            "context_gaps": [
+                "Pain location is not logged; ask where soreness is before choosing loaded movements."
             ],
             "confidence": "high",
         },

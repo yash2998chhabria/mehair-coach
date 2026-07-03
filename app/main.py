@@ -509,6 +509,7 @@ def workout_recommendation(
     workout_count = int(workout_summary.get("workout_count") or 0)
     goal_payload = (goal or {}).get("goal") or {}
     goal_status = _goal_status(goal_payload, workout_count)
+    context_gaps = _workout_context_gaps(checkins or [], goal_status)
 
     if label == "green":
         plan = "Train normally: strength, intervals, or a full session are reasonable if your body agrees."
@@ -563,6 +564,8 @@ def workout_recommendation(
             )
         else:
             next_actions.append("Weekly workout target is already covered; prioritize quality and recovery.")
+    if context_gaps and intensity in {"moderate", "moderate-to-hard"}:
+        next_actions.append("Log a quick energy, soreness, stress, and pain check-in before committing to hard work.")
 
     if intensity == "moderate-to-hard":
         primary_action = "Train normally, but stop before form or breathing feels unusual."
@@ -595,6 +598,7 @@ def workout_recommendation(
         "today": today,
         "why": evidence,
         "evidence": evidence,
+        "context_gaps": context_gaps,
         "goal_context": goal_status,
         "subjective_context": {
             "energy": energy_rating,
@@ -833,6 +837,29 @@ def _workout_evidence(
         evidence.append(f"Hardest recent workout: {name}{suffix}.")
 
     return _dedupe(evidence)
+
+
+def _workout_context_gaps(checkins: list[dict[str, Any]], goal_status: dict[str, Any]) -> list[str]:
+    gaps: list[str] = []
+    if not checkins:
+        gaps.append(
+            "No recent subjective check-in is logged; energy, soreness, stress, pain, or illness could change the training call."
+        )
+    else:
+        missing = [
+            label
+            for label, value in (
+                ("energy", _latest_rating(checkins, "energy")),
+                ("soreness", _latest_rating(checkins, "soreness")),
+                ("stress", _latest_rating(checkins, "stress")),
+            )
+            if value is None
+        ]
+        if missing:
+            gaps.append(f"Recent check-ins are missing {', '.join(missing)}.")
+    if not goal_status.get("target") and goal_status.get("days_per_week") is None:
+        gaps.append("No coaching goal is set, so the recommendation cannot optimize toward a weekly target.")
+    return _dedupe(gaps)
 
 
 def _activity_guidance(planned: str, rpe_cap: int, intensity: str) -> tuple[list[str], list[str], list[str], list[str]]:

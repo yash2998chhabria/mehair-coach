@@ -17,6 +17,7 @@ The project starts empty. It does not import any existing Fitbit export and it d
 - Lets ChatGPT decide which Fitbit metrics, goals, check-ins, and workout-history clues matter for vague questions like “why am I tired?” or “how hard should I train today?”
 - Compares sleep, HRV, resting heart rate, overnight recovery context, and zone-minute load against recent baseline.
 - Flags whether synced data is fresh, aging, or stale before time-sensitive coaching.
+- Calls out context gaps such as missing check-ins or goals before confident hard-training advice.
 - Plans specific workouts using synced recovery/load data plus goals, check-ins, and constraints.
 - Stores local goals and subjective check-ins for better coaching prompts.
 - Returns clear setup and empty-state responses when a user has not connected or synced yet.
