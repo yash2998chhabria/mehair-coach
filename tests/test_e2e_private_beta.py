@@ -1,0 +1,537 @@
+from __future__ import annotations
+
+import base64
+import hashlib
+import json
+from datetime import UTC, datetime
+from typing import Any
+from urllib.parse import parse_qs, urlparse
+
+import httpx
+import pytest
+
+from app.crypto import generate_key
+from app.google_health import DataTypeSpec
+from app.main import ServerBundle, create_server
+from app.settings import Settings
+
+
+def make_bundle(tmp_path) -> ServerBundle:
+    return create_server(
+        Settings(
+            public_base_url="http://localhost:8787",
+            database_url=f"sqlite:///{tmp_path / 'e2e.sqlite3'}",
+            token_encryption_key=generate_key(),
+            google_client_id="fake-google-client",
+            google_client_secret="fake-google-secret",
+            google_redirect_uri="http://localhost:8787/oauth/callback/google",
+        )
+    )
+
+
+def pkce_pair() -> tuple[str, str]:
+    verifier = "realistic-private-beta-verifier"
+    digest = hashlib.sha256(verifier.encode("ascii")).digest()
+    challenge = base64.urlsafe_b64encode(digest).decode("ascii").rstrip("=")
+    return verifier, challenge
+
+
+def redirect_param(location: str, name: str) -> str:
+    values = parse_qs(urlparse(location).query).get(name)
+    assert values, f"Missing {name} in redirect: {location}"
+    return values[0]
+
+
+async def mcp_request(
+    client: httpx.AsyncClient,
+    access_token: str,
+    method: str,
+    params: dict[str, Any] | None = None,
+    request_id: int = 1,
+) -> dict[str, Any] | None:
+    response = await client.post(
+        "/mcp",
+        json={"jsonrpc": "2.0", "id": request_id, "method": method, "params": params or {}},
+        headers={
+            "Authorization": f"Bearer {access_token}",
+            "Accept": "application/json, text/event-stream",
+        },
+    )
+    assert response.status_code in {200, 202}, response.text
+    return response.json() if response.text else None
+
+
+def tool_content(response: dict[str, Any]) -> dict[str, Any]:
+    return response["result"]["structuredContent"]
+
+
+class FakeGoogleHealth:
+    def __init__(self) -> None:
+        self.requested_specs: list[str] = []
+        self.today = datetime.now(UTC).date().isoformat()
+
+    async def list_data_points(
+        self,
+        access_token: str,
+        spec: DataTypeSpec,
+        start_time: str,
+        end_time: str,
+    ) -> list[dict[str, Any]]:
+        assert access_token == "fake-google-access"
+        assert start_time < end_time
+        self.requested_specs.append(spec.id)
+        day = self.today
+        if spec.id == "steps":
+            return [
+                {
+                    "name": "steps-realistic",
+                    "steps": {"count": 9200},
+                    "interval": {"startTime": f"{day}T09:00:00Z", "endTime": f"{day}T18:00:00Z"},
+                }
+            ]
+        if spec.id == "active-zone-minutes":
+            return [
+                {
+                    "name": "azm-realistic",
+                    "activeZoneMinutes": {"activeZoneMinutes": 38},
+                    "interval": {"startTime": f"{day}T17:00:00Z", "endTime": f"{day}T18:00:00Z"},
+                }
+            ]
+        if spec.id == "active-minutes":
+            return [
+                {
+                    "name": "active-minutes-realistic",
+                    "activeMinutes": {
+                        "activeMinutesByActivityLevel": [
+                            {"activityLevel": "MODERATE", "activeMinutes": 42},
+                            {"activityLevel": "VIGOROUS", "activeMinutes": 12},
+                        ]
+                    },
+                    "interval": {"startTime": f"{day}T17:00:00Z", "endTime": f"{day}T18:00:00Z"},
+                }
+            ]
+        if spec.id == "distance":
+            return [
+                {
+                    "name": "distance-realistic",
+                    "distance": {"millimeters": 7_100_000},
+                    "interval": {"startTime": f"{day}T09:00:00Z", "endTime": f"{day}T18:00:00Z"},
+                }
+            ]
+        if spec.id == "sleep":
+            return [
+                {
+                    "name": "sleep-realistic",
+                    "sleep": {
+                        "interval": {
+                            "startTime": f"{day}T00:10:00Z",
+                            "endTime": f"{day}T07:40:00Z",
+                        },
+                        "stages": [
+                            {
+                                "type": "DEEP",
+                                "startTime": f"{day}T01:00:00Z",
+                                "endTime": f"{day}T02:05:00Z",
+                            },
+                            {
+                                "type": "REM",
+                                "startTime": f"{day}T05:30:00Z",
+                                "endTime": f"{day}T06:20:00Z",
+                            },
+                        ],
+                    },
+                }
+            ]
+        if spec.id == "heart-rate":
+            return [
+                {
+                    "name": "hr-realistic-1",
+                    "heartRate": {"beatsPerMinute": 62},
+                    "sampleTime": {"physicalTime": f"{day}T08:00:00Z"},
+                },
+                {
+                    "name": "hr-realistic-2",
+                    "heartRate": {"beatsPerMinute": 138},
+                    "sampleTime": {"physicalTime": f"{day}T17:30:00Z"},
+                },
+            ]
+        if spec.id == "daily-resting-heart-rate":
+            year, month, day_num = [int(part) for part in day.split("-")]
+            return [
+                {
+                    "name": "rhr-realistic",
+                    "dailyRestingHeartRate": {"beatsPerMinute": 57},
+                    "date": {"year": year, "month": month, "day": day_num},
+                }
+            ]
+        if spec.id == "daily-heart-rate-variability":
+            year, month, day_num = [int(part) for part in day.split("-")]
+            return [
+                {
+                    "name": "hrv-realistic",
+                    "dailyHeartRateVariability": {
+                        "averageHeartRateVariabilityMilliseconds": 48.5
+                    },
+                    "date": {"year": year, "month": month, "day": day_num},
+                }
+            ]
+        if spec.id == "exercise":
+            return [
+                {
+                    "name": "exercise-realistic",
+                    "exercise": {
+                        "exerciseType": "RUNNING",
+                        "displayName": "Easy run",
+                        "interval": {
+                            "startTime": f"{day}T17:00:00Z",
+                            "endTime": f"{day}T17:40:00Z",
+                        },
+                        "activeDuration": "2400s",
+                        "metricsSummary": {"averageHeartRateBeatsPerMinute": 132},
+                    },
+                }
+            ]
+        return []
+
+    async def daily_rollup(
+        self,
+        access_token: str,
+        spec: DataTypeSpec,
+        start_date: str,
+        end_date: str,
+    ) -> list[dict[str, Any]]:
+        assert access_token == "fake-google-access"
+        assert start_date < end_date
+        self.requested_specs.append(spec.id)
+        year, month, day_num = [int(part) for part in self.today.split("-")]
+        if spec.id == "total-calories":
+            return [
+                {
+                    "name": "total-calories-realistic",
+                    "totalCalories": {"kcalSum": 2350},
+                    "date": {"year": year, "month": month, "day": day_num},
+                }
+            ]
+        if spec.id == "floors":
+            return [
+                {
+                    "name": "floors-realistic",
+                    "floors": {"count": 7},
+                    "date": {"year": year, "month": month, "day": day_num},
+                }
+            ]
+        return []
+
+
+@pytest.mark.asyncio
+async def test_private_beta_oauth_mcp_sync_and_coaching_flow(tmp_path, monkeypatch) -> None:
+    bundle = make_bundle(tmp_path)
+    fake_health = FakeGoogleHealth()
+    bundle.health_store.google = fake_health
+
+    async def fake_exchange_google_code(code: str) -> dict[str, Any]:
+        assert code == "google-code"
+        return {
+            "access_token": "fake-google-access",
+            "refresh_token": "fake-google-refresh",
+            "expires_in": 3600,
+            "scope": " ".join(bundle.settings.google_scopes),
+        }
+
+    async def fake_load_google_user_info(access_token: str) -> dict[str, Any]:
+        assert access_token == "fake-google-access"
+        return {"email": "tester@example.com", "sub": "google-subject"}
+
+    monkeypatch.setattr(bundle.auth_service, "_exchange_google_code", fake_exchange_google_code)
+    monkeypatch.setattr(bundle.auth_service, "_load_google_user_info", fake_load_google_user_info)
+
+    verifier, challenge = pkce_pair()
+    transport = httpx.ASGITransport(app=bundle.app)
+
+    async with bundle.app.router.lifespan_context(bundle.app):
+        async with httpx.AsyncClient(
+            transport=transport,
+            base_url="http://localhost:8787",
+            follow_redirects=False,
+        ) as client:
+            registration = await client.post(
+                "/oauth/register",
+                json={
+                    "client_name": "ChatGPT private beta connector",
+                    "redirect_uris": ["https://chatgpt.com/connector/oauth/test-callback"],
+                    "token_endpoint_auth_method": "none",
+                },
+            )
+            assert registration.status_code == 201
+            client_id = registration.json()["client_id"]
+
+            authorize = await client.get(
+                "/oauth/authorize",
+                params={
+                    "client_id": client_id,
+                    "redirect_uri": "https://chatgpt.com/connector/oauth/test-callback",
+                    "response_type": "code",
+                    "scope": "health.read",
+                    "state": "chatgpt-state",
+                    "resource": "http://localhost:8787",
+                    "code_challenge": challenge,
+                    "code_challenge_method": "S256",
+                },
+            )
+            assert authorize.status_code == 307
+            google_location = authorize.headers["location"]
+            assert google_location.startswith("https://accounts.google.com/o/oauth2/v2/auth?")
+            assert redirect_param(google_location, "client_id") == "fake-google-client"
+            assert "googlehealth.nutrition" not in redirect_param(google_location, "scope")
+
+            callback = await client.get(
+                "/oauth/callback/google",
+                params={"code": "google-code", "state": redirect_param(google_location, "state")},
+            )
+            assert callback.status_code == 307
+            app_code = redirect_param(callback.headers["location"], "code")
+            assert redirect_param(callback.headers["location"], "state") == "chatgpt-state"
+
+            token = await client.post(
+                "/oauth/token",
+                data={
+                    "grant_type": "authorization_code",
+                    "client_id": client_id,
+                    "code": app_code,
+                    "redirect_uri": "https://chatgpt.com/connector/oauth/test-callback",
+                    "code_verifier": verifier,
+                    "resource": "http://localhost:8787",
+                },
+            )
+            assert token.status_code == 200
+            access_token = token.json()["access_token"]
+            refresh_token = token.json()["refresh_token"]
+            assert token.json()["scope"] == "health.read"
+
+            replay = await client.post(
+                "/oauth/token",
+                data={
+                    "grant_type": "authorization_code",
+                    "client_id": client_id,
+                    "code": app_code,
+                    "redirect_uri": "https://chatgpt.com/connector/oauth/test-callback",
+                    "code_verifier": verifier,
+                },
+            )
+            assert replay.status_code == 400
+            assert replay.json()["error"] == "invalid_grant"
+
+            initialize = await mcp_request(
+                client,
+                access_token,
+                "initialize",
+                {
+                    "protocolVersion": "2025-06-18",
+                    "capabilities": {},
+                    "clientInfo": {"name": "ChatGPT E2E", "version": "test"},
+                },
+                1,
+            )
+            assert initialize
+            assert initialize["result"]["serverInfo"]["name"] == "Mehair Coach"
+
+            initialized = await client.post(
+                "/mcp",
+                json={"jsonrpc": "2.0", "method": "notifications/initialized", "params": {}},
+                headers={
+                    "Authorization": f"Bearer {access_token}",
+                    "Accept": "application/json, text/event-stream",
+                },
+            )
+            assert initialized.status_code == 202
+
+            tools = await mcp_request(client, access_token, "tools/list", request_id=2)
+            tool_names = {item["name"] for item in tools["result"]["tools"]}
+            assert "sync_latest_fitbit_data" in tool_names
+            assert "get_today_context" in tool_names
+
+            before_sync = tool_content(
+                await mcp_request(
+                    client,
+                    access_token,
+                    "tools/call",
+                    {"name": "get_today_context", "arguments": {}},
+                    3,
+                )
+            )
+            assert before_sync["status"] == "empty"
+
+            sync = tool_content(
+                await mcp_request(
+                    client,
+                    access_token,
+                    "tools/call",
+                    {"name": "sync_latest_fitbit_data", "arguments": {}},
+                    4,
+                )
+            )
+            assert sync["status"] == "ok"
+            assert sync["records_upserted"] >= 10
+            assert "food" not in fake_health.requested_specs
+
+            today = tool_content(
+                await mcp_request(
+                    client,
+                    access_token,
+                    "tools/call",
+                    {"name": "get_today_context", "arguments": {}},
+                    5,
+                )
+            )
+            assert today["status"] == "ok"
+            assert today["today"]["steps"] == 9200
+            assert today["today"]["sleep"]["duration_hours"] == 7.5
+            assert today["today"]["resting_heart_rate"] == 57
+            assert today["readiness"]["label"] == "green"
+
+            recommendation = tool_content(
+                await mcp_request(
+                    client,
+                    access_token,
+                    "tools/call",
+                    {"name": "recommend_workout_today", "arguments": {}},
+                    6,
+                )
+            )
+            assert recommendation["status"] == "ok"
+            assert recommendation["intensity"] == "moderate-to-hard"
+            assert "medical advice" in recommendation["safety_note"]
+
+            sleep = tool_content(
+                await mcp_request(
+                    client,
+                    access_token,
+                    "tools/call",
+                    {"name": "get_sleep_analysis", "arguments": {"days": 7}},
+                    7,
+                )
+            )
+            assert sleep["latest"]["stages_minutes"]["deep"] == 65.0
+
+            goal = tool_content(
+                await mcp_request(
+                    client,
+                    access_token,
+                    "tools/call",
+                    {
+                        "name": "set_goal",
+                        "arguments": {
+                            "goal_type": "running",
+                            "target": "Run three easy days and one long run per week",
+                            "days_per_week": 4,
+                        },
+                    },
+                    8,
+                )
+            )
+            assert goal["status"] == "ok"
+            assert goal["goal"]["days_per_week"] == 4
+
+            refresh = await client.post(
+                "/oauth/token",
+                data={
+                    "grant_type": "refresh_token",
+                    "client_id": client_id,
+                    "refresh_token": refresh_token,
+                },
+            )
+            assert refresh.status_code == 200
+            assert refresh.json()["access_token"] != access_token
+
+
+@pytest.mark.asyncio
+async def test_mcp_rejects_unauthenticated_calls_with_oauth_challenge(tmp_path) -> None:
+    bundle = make_bundle(tmp_path)
+    transport = httpx.ASGITransport(app=bundle.app)
+
+    async with bundle.app.router.lifespan_context(bundle.app):
+        async with httpx.AsyncClient(transport=transport, base_url="http://localhost:8787") as client:
+            response = await client.post(
+                "/mcp",
+                json={
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "tools/list",
+                    "params": {},
+                },
+                headers={"Accept": "application/json, text/event-stream"},
+            )
+
+    assert response.status_code == 401
+    assert response.json()["error"] == "invalid_token"
+    assert "resource_metadata" in response.headers["www-authenticate"]
+
+
+class FailingGoogleHealth:
+    async def list_data_points(self, *args: Any, **kwargs: Any) -> list[dict[str, Any]]:
+        request = httpx.Request("GET", "https://health.googleapis.com/v4/fake")
+        response = httpx.Response(503, request=request, json={"error": "temporarily unavailable"})
+        raise httpx.HTTPStatusError("temporarily unavailable", request=request, response=response)
+
+    async def daily_rollup(self, *args: Any, **kwargs: Any) -> list[dict[str, Any]]:
+        return []
+
+
+@pytest.mark.asyncio
+async def test_sync_failure_is_reported_without_fabricated_context(tmp_path) -> None:
+    bundle = make_bundle(tmp_path)
+    bundle.health_store.google = FailingGoogleHealth()
+    user_id = bundle.auth_service._create_user_from_google(
+        {
+            "access_token": "fake-google-access",
+            "refresh_token": "fake-google-refresh",
+            "expires_in": 3600,
+            "scope": " ".join(bundle.settings.google_scopes),
+        },
+        {"email": "tester@example.com", "sub": "google-subject"},
+    )
+    bundle.db.one("SELECT id FROM users WHERE id = ?", (user_id,))
+    client_id = "failure-client"
+    with bundle.db.connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO oauth_clients (client_id, client_secret, metadata_json, created_at)
+            VALUES (?, NULL, ?, ?)
+            """,
+            (client_id, json.dumps({"token_endpoint_auth_method": "none"}), datetime.now(UTC).isoformat()),
+        )
+    token = json.loads(bundle.auth_service._issue_app_tokens(user_id, client_id, ["health.read"]).body)[
+        "access_token"
+    ]
+    transport = httpx.ASGITransport(app=bundle.app)
+
+    async with bundle.app.router.lifespan_context(bundle.app):
+        async with httpx.AsyncClient(transport=transport, base_url="http://localhost:8787") as client:
+            sync = tool_content(
+                await mcp_request(
+                    client,
+                    token,
+                    "tools/call",
+                    {"name": "sync_latest_fitbit_data", "arguments": {}},
+                    1,
+                )
+            )
+            today = tool_content(
+                await mcp_request(
+                    client,
+                    token,
+                    "tools/call",
+                    {"name": "get_today_context", "arguments": {}},
+                    2,
+                )
+            )
+
+    assert sync["status"] == "error"
+    assert sync["message"] == "Google Health sync failed."
+    assert sync["records_upserted"] == 0
+    assert today["status"] == "empty"
+
+    sync_run = bundle.db.one("SELECT status, records_upserted FROM sync_runs WHERE user_id = ?", (user_id,))
+    assert sync_run is not None
+    assert sync_run["status"] == "error"
+    assert sync_run["records_upserted"] == 0

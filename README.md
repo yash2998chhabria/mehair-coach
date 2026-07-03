@@ -170,7 +170,7 @@ Use MCP Inspector:
 npx @modelcontextprotocol/inspector@latest --server-url http://localhost:8787/mcp --transport http
 ```
 
-The current automated tests cover OAuth metadata, encrypted token storage, setup/empty states, synthetic health calculations, MCP tool registration, widget registration, and HTTP metadata routes.
+The current automated tests cover OAuth metadata, encrypted token storage, setup/empty states, synthetic health calculations, MCP tool registration, widget registration, HTTP metadata routes, and a local private-beta E2E flow that simulates ChatGPT plus Google Health without creating live credentials.
 
 ## Security Notes
 

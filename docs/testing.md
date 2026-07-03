@@ -6,6 +6,12 @@ Run unit tests:
 uv run pytest
 ```
 
+The suite includes a local private-beta E2E flow that simulates ChatGPT and
+Google without creating live credentials. It drives OAuth client registration,
+authorize/callback/token exchange, bearer-authenticated MCP JSON-RPC calls,
+Google Health sync, empty states, coaching outputs, refresh token exchange,
+unauthenticated challenges, and sync failure handling.
+
 Run a local server:
 
 ```bash
