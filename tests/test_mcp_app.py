@@ -51,6 +51,8 @@ async def test_mcp_tool_list_matches_private_beta_plan() -> None:
 def test_server_instructions_keep_normal_latest_questions_fast() -> None:
     assert "Use already-synced local data for normal current/latest/today questions" in SERVER_INSTRUCTIONS
     assert "Sync only when the user explicitly says sync" in SERVER_INSTRUCTIONS
+    assert "use list_available_health_metrics to inspect the per-user metric catalog" in SERVER_INSTRUCTIONS
+    assert "query_health_metrics to fetch the specific signals you choose" in SERVER_INSTRUCTIONS
     assert "call get_health_overview" in SERVER_INSTRUCTIONS
     assert "Do not substitute get_health_overview for live workout decisions" in SERVER_INSTRUCTIONS
 

@@ -462,3 +462,132 @@ def test_today_recommendation_keeps_sync_first_when_data_is_stale() -> None:
     assert any("Log a quick energy, soreness, stress, and pain check-in" in item for item in recommendation["next_actions"])
     assert any("Data freshness is stale" in item for item in recommendation["evidence"])
     assert any("Latest sleep used for recommendation: 7.0h." in item for item in recommendation["evidence"])
+
+
+def test_today_recommendation_downshifts_when_checkin_mentions_illness() -> None:
+    context = {
+        "status": "ok",
+        "latest_date": "2026-07-03",
+        "activity_date": "2026-07-03",
+        "recovery_date": "2026-07-03",
+        "data_freshness": {
+            "freshness_level": "fresh",
+            "needs_sync_before_time_sensitive_advice": False,
+        },
+        "readiness": {
+            "score": 84,
+            "label": "green",
+            "recommendation": "A normal training day is reasonable if you feel good.",
+            "evidence": ["Latest sleep is strong at 8.1h.", "Resting heart rate is steady."],
+        },
+        "today": {
+            "steps": 7200,
+            "active_minutes": 44,
+            "active_zone_minutes": 18,
+            "hrv_ms": 62.0,
+            "resting_heart_rate": 56,
+            "sleep": {"asleep_hours": 8.1, "sessions_count": 1},
+            "latest_training_load": {"date": "2026-07-03", "active_zone_minutes": 18},
+        },
+    }
+
+    recommendation = workout_recommendation(
+        context=context,
+        goal={"goal": {"target": "Lift three days this week", "days_per_week": 3}},
+        checkins=[
+            {
+                "checkin": {
+                    "energy": 7,
+                    "soreness": 2,
+                    "stress": 3,
+                    "notes": "Woke up with fever, chills, and a sore throat.",
+                }
+            }
+        ],
+        workout_history={"status": "ok", "summary": {"workout_count": 1}},
+    )
+
+    assert recommendation["intensity"] == "easy"
+    assert recommendation["rpe_cap"] <= 4
+    assert "Illness signs override normal training pressure" in recommendation["recommendation"]
+    assert recommendation["next_actions"][0].startswith("Rest today")
+    assert any("sick" in item or "feverish" in item for item in recommendation["avoid"])
+    assert recommendation["subjective_context"]["illness_flags"]
+    assert recommendation["data_used"]["illness_flags"]
+    assert any("Illness symptoms" in item for item in recommendation["evidence"])
+
+
+def test_workout_plan_downshifts_for_illness_even_with_green_readiness() -> None:
+    context = {
+        "status": "ok",
+        "latest_date": "2026-07-03",
+        "activity_date": "2026-07-03",
+        "recovery_date": "2026-07-03",
+        "readiness": {
+            "score": 82,
+            "label": "green",
+            "recommendation": "A normal training day is reasonable if you feel good.",
+            "evidence": ["Latest sleep is strong at 8.0h.", "Resting heart rate is steady."],
+        },
+        "today": {
+            "steps": 8500,
+            "active_minutes": 54,
+            "active_zone_minutes": 20,
+            "hrv_ms": 48.5,
+            "resting_heart_rate": 57,
+            "sleep": {"asleep_hours": 8.0, "sessions_count": 1},
+            "latest_training_load": {"date": "2026-07-03", "active_zone_minutes": 20},
+        },
+    }
+
+    plan = workout_plan_for_activity(
+        context=context,
+        planned_activity="upper body lift",
+        target_areas=["chest", "back"],
+        constraints="No chest pain and no dizziness, but I have fever and cold symptoms today.",
+        duration_minutes=45,
+    )
+
+    assert plan["recommended_intensity"] == "easy"
+    assert plan["rpe_cap"] <= 4
+    assert "Illness signs should override" in plan["summary"]
+    assert plan["data_used"]["illness_flags"]
+    assert any("illness" in item.lower() for item in plan["limiting_factors"])
+    assert any("Do not train hard" in item for item in plan["session_guidance"])
+    assert any("Sweat-it-out" in item for item in plan["avoid"])
+
+
+def test_workout_plan_does_not_flag_negated_illness_terms() -> None:
+    context = {
+        "status": "ok",
+        "latest_date": "2026-07-03",
+        "activity_date": "2026-07-03",
+        "recovery_date": "2026-07-03",
+        "readiness": {
+            "score": 82,
+            "label": "green",
+            "recommendation": "A normal training day is reasonable if you feel good.",
+            "evidence": ["Latest sleep is strong at 8.0h.", "Resting heart rate is steady."],
+        },
+        "today": {
+            "steps": 8500,
+            "active_minutes": 54,
+            "active_zone_minutes": 20,
+            "hrv_ms": 48.5,
+            "resting_heart_rate": 57,
+            "sleep": {"asleep_hours": 8.0, "sessions_count": 1},
+            "latest_training_load": {"date": "2026-07-03", "active_zone_minutes": 20},
+        },
+    }
+
+    plan = workout_plan_for_activity(
+        context=context,
+        planned_activity="upper body lift",
+        target_areas=["chest", "back"],
+        constraints="No fever, no chills, no sore throat, and no dizziness.",
+        duration_minutes=45,
+    )
+
+    assert plan["recommended_intensity"] == "moderate-to-hard"
+    assert plan["rpe_cap"] == 8
+    assert plan["data_used"]["illness_flags"] == []

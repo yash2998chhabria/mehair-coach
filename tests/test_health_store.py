@@ -208,6 +208,14 @@ def test_synthetic_records_calculate_context(tmp_path, monkeypatch) -> None:
     assert catalog["status"] == "ok"
     assert steps_metric["records"] == 1
     assert "food" in catalog["excluded_categories"]
+    assert "Choose metrics from the user's question" in catalog["model_guidance"]["principles"][0]
+    assert "query_health_metrics for model-selected metric details" in catalog["model_guidance"][
+        "general_tool_flow"
+    ]
+    assert "sleep" in catalog["model_guidance"]["metric_groups"]["recovery_readiness"]
+    assert "daily-heart-rate-variability" in catalog["model_guidance"]["metric_groups"]["recovery_readiness"]
+    assert "active-zone-minutes" in catalog["model_guidance"]["metric_groups"]["training_load"]
+    assert "daily-vo2-max" not in catalog["model_guidance"]["metric_groups"]["capacity"]
 
     metrics = store.query_metrics(user_id, metrics=["steps", "sleep"], days=1)
     assert metrics["status"] == "ok"
@@ -438,6 +446,125 @@ def test_question_clues_choose_recovery_heart_and_load_metrics(tmp_path, monkeyp
     assert active_prompt["recommended_tool_sequence"].index("guide_active_workout") < active_prompt[
         "recommended_tool_sequence"
     ].index("recommend_workout_today")
+
+
+def test_question_clues_surface_illness_checkin_before_workout_advice(tmp_path) -> None:
+    db, store = make_store(tmp_path)
+    user_id = create_user(db, "illness_user")
+
+    store.upsert_records(
+        user_id,
+        "sleep",
+        [
+            {
+                "name": "sleep-today",
+                "sleep": {
+                    "interval": {
+                        "startTime": "2026-07-03T00:00:00Z",
+                        "endTime": "2026-07-03T08:00:00Z",
+                    },
+                    "summary": {
+                        "minutesAsleep": "485",
+                        "minutesAwake": "20",
+                        "minutesInSleepPeriod": "505",
+                    },
+                },
+            }
+        ],
+    )
+    store.upsert_records(
+        user_id,
+        "daily-heart-rate-variability",
+        [
+            {
+                "name": "hrv-today",
+                "dailyHeartRateVariability": {
+                    "averageHeartRateVariabilityMilliseconds": 60.0
+                },
+                "date": {"year": 2026, "month": 7, "day": 3},
+            }
+        ],
+    )
+    store.upsert_records(
+        user_id,
+        "daily-resting-heart-rate",
+        [
+            {
+                "name": "rhr-today",
+                "dailyRestingHeartRate": {"beatsPerMinute": 56},
+                "date": {"year": 2026, "month": 7, "day": 3},
+            }
+        ],
+    )
+    store.upsert_records(
+        user_id,
+        "active-zone-minutes",
+        [
+            {
+                "name": "azm-today",
+                "activeZoneMinutes": {"activeZoneMinutes": 16},
+                "interval": {"startTime": "2026-07-03T12:00:00Z"},
+            }
+        ],
+    )
+    store.save_checkin(
+        user_id,
+        {
+            "energy": 7,
+            "soreness": 2,
+            "stress": 3,
+            "notes": "Woke up with fever, chills, and a sore throat.",
+        },
+    )
+
+    clues = store.health_question_clues(user_id, "Can I work out today?", days=7)
+
+    assert "symptom_safety" in clues["intent_hints"]
+    assert clues["safety_flags"]
+    assert any("Illness symptoms" in item for item in clues["safety_flags"])
+    assert any("avoid hard training" in item for item in clues["watchouts"])
+    assert "Latest check-in note: Woke up with fever, chills, and a sore throat." in clues["clues"]
+    assert "recommend_workout_today" in clues["recommended_tool_sequence"]
+
+
+def test_question_clues_do_not_flag_negated_illness_checkin(tmp_path) -> None:
+    db, store = make_store(tmp_path)
+    user_id = create_user(db, "no_illness_user")
+
+    store.upsert_records(
+        user_id,
+        "sleep",
+        [
+            {
+                "name": "sleep-today",
+                "sleep": {
+                    "interval": {
+                        "startTime": "2026-07-03T00:00:00Z",
+                        "endTime": "2026-07-03T08:00:00Z",
+                    },
+                    "summary": {
+                        "minutesAsleep": "485",
+                        "minutesAwake": "20",
+                        "minutesInSleepPeriod": "505",
+                    },
+                },
+            }
+        ],
+    )
+    store.save_checkin(
+        user_id,
+        {
+            "energy": 7,
+            "soreness": 2,
+            "stress": 3,
+            "notes": "No fever, no chills, no sore throat, and no dizziness.",
+        },
+    )
+
+    clues = store.health_question_clues(user_id, "Can I work out today?", days=7)
+
+    assert clues["safety_flags"] == []
+    assert not any("Illness symptoms" in item for item in clues["watchouts"])
 
 
 def test_partial_today_uses_latest_completed_recovery_signals(tmp_path) -> None:

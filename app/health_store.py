@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import math
+import re
 from collections import Counter, defaultdict
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
@@ -13,6 +14,24 @@ from .settings import Settings
 from .time_utils import iso_now, utc_now
 
 RECOVERY_KEYS = ("sleep", "hrv_ms", "resting_heart_rate", "spo2_avg", "respiratory_rate")
+ILLNESS_PHRASES = (
+    "fever",
+    "flu",
+    "covid",
+    "infection",
+    "vomit",
+    "vomiting",
+    "nausea",
+    "chills",
+    "sore throat",
+    "head cold",
+    "cold symptoms",
+    "feel sick",
+    "feeling sick",
+    "sick today",
+    "illness",
+    "body aches",
+)
 
 INTENT_METRICS = {
     "daily_plan": [
@@ -371,6 +390,7 @@ class HealthStore:
             "synced_metric_count": sum(1 for item in metrics if item["records"] > 0),
             "supported_metric_count": len(metrics),
             "excluded_categories": ["food", "nutrition", "ecg", "irregular-rhythm-notification"],
+            "model_guidance": metric_catalog_model_guidance(metrics),
             "message": "These are the device-first Google Health/Fitbit metrics this app can sync and query.",
         }
 
@@ -833,12 +853,15 @@ class HealthStore:
             overview=overview,
             comparison=comparison,
         )
-        safety_flags = _question_safety_flags(question_text, context)
+        personal_context = overview.get("personal_context", {}) if overview.get("status") == "ok" else {}
+        workout_context = overview.get("sections", {}).get("workouts", {}) if overview.get("status") == "ok" else {}
+        illness_flags = _question_illness_flags(question_text, personal_context)
+        if illness_flags:
+            intents = _dedupe(["symptom_safety", *intents])
+        safety_flags = _dedupe(_question_safety_flags(question_text, context) + illness_flags)
         watchouts = safety_flags + watchouts
         if context.get("data_freshness", {}).get("needs_sync_before_time_sensitive_advice"):
             next_actions.insert(0, "Run sync_latest_fitbit_data before answering time-sensitive training questions.")
-        personal_context = overview.get("personal_context", {}) if overview.get("status") == "ok" else {}
-        workout_context = overview.get("sections", {}).get("workouts", {}) if overview.get("status") == "ok" else {}
 
         return {
             "status": "ok",
@@ -1401,6 +1424,20 @@ def _question_intents(question: str) -> list[str]:
         intents.extend(["heart", "recovery", "activity_load"])
     if has("sore", "soreness", "pain", "injury", "ache", "stress", "energy", "feel"):
         intents.extend(["subjective", "recovery", "activity_load", "sleep"])
+    if has(
+        "sick",
+        "ill",
+        "illness",
+        "fever",
+        "flu",
+        "covid",
+        "cold symptoms",
+        "sore throat",
+        "nausea",
+        "chills",
+        "vomit",
+    ):
+        intents.extend(["symptom_safety", "subjective", "recovery", "heart", "sleep"])
     if has("step", "steps", "calorie", "calories", "zone", "active", "load", "distance", "walk"):
         intents.extend(["activity_load", "workout_decision"])
     if has("goal", "goals", "progress", "week", "weekly"):
@@ -1416,6 +1453,71 @@ def _metric_ids_for_intents(intents: list[str]) -> list[str]:
     for intent in intents:
         metric_ids.extend(INTENT_METRICS.get(intent, []))
     return _dedupe(metric_ids)
+
+
+def metric_catalog_model_guidance(metrics: list[dict[str, Any]]) -> dict[str, Any]:
+    available = {item["id"] for item in metrics if int(item.get("records") or 0) > 0}
+
+    def present(metric_ids: list[str]) -> list[str]:
+        return [metric_id for metric_id in metric_ids if metric_id in available]
+
+    groups = {
+        "recovery_readiness": present(
+            [
+                "sleep",
+                "daily-heart-rate-variability",
+                "daily-resting-heart-rate",
+                "daily-respiratory-rate",
+                "daily-oxygen-saturation",
+                "daily-sleep-temperature-derivations",
+            ]
+        ),
+        "training_load": present(
+            [
+                "active-zone-minutes",
+                "time-in-heart-rate-zone",
+                "exercise",
+                "active-minutes",
+                "steps",
+                "distance",
+            ]
+        ),
+        "heart_context": present(
+            [
+                "heart-rate",
+                "daily-resting-heart-rate",
+                "heart-rate-variability",
+                "daily-heart-rate-variability",
+                "time-in-heart-rate-zone",
+            ]
+        ),
+        "movement_volume": present(["steps", "distance", "active-minutes", "floors", "sedentary-period"]),
+        "capacity": present(["daily-vo2-max", "exercise"]),
+    }
+    return {
+        "principles": [
+            "Choose metrics from the user's question, not from a fixed recipe.",
+            "Check freshness before time-sensitive coaching and treat missing metrics as unknown, not zero.",
+            "Use subjective goals/check-ins together with wearable data when available.",
+            "For symptoms, pain, illness, or abnormal-heart-rate concerns, prioritize safety language and avoid diagnosis.",
+            "Prefer compact summaries for answers; query raw records only when the user asks for detail or the summary is insufficient.",
+        ],
+        "general_tool_flow": [
+            "connect_google_health_status",
+            "get_data_freshness",
+            "list_available_health_metrics",
+            "get_health_question_clues for ambiguous questions",
+            "query_health_metrics for model-selected metric details",
+            "get_health_overview or a specific coaching tool for the final card-ready answer",
+        ],
+        "metric_groups": groups,
+        "query_strategy": [
+            "Start with 7-14 days for coaching decisions; expand to 30 days for baseline or trend questions.",
+            "Pair sleep with HRV/resting heart rate for recovery questions.",
+            "Pair activity-zone minutes, exercises, and steps for training-load questions.",
+            "Pair live user input with guide_active_workout for in-session decisions.",
+        ],
+    }
 
 
 def _relevant_metric_cards(
@@ -1617,7 +1719,8 @@ def _question_clue_takeaways(
         elif stress <= 4:
             positives.append("Self-reported stress is not elevated.")
     if latest_note:
-        clues.append(f"Latest check-in note: {latest_note}.")
+        punctuation = "" if latest_note.endswith((".", "!", "?")) else "."
+        clues.append(f"Latest check-in note: {latest_note}{punctuation}")
 
     goal_target = goal_payload.get("target")
     days_per_week = goal_payload.get("days_per_week")
@@ -1702,6 +1805,29 @@ def _question_safety_flags(question: str, context: dict[str, Any]) -> list[str]:
             f"Latest resting heart rate is high at {resting_hr} bpm, so avoid hard training advice without caution and context."
         )
     return _dedupe(flags)
+
+
+def _question_illness_flags(question: str, personal_context: dict[str, Any]) -> list[str]:
+    notes = " ".join(
+        str((item.get("checkin") or {}).get(key) or "")
+        for item in personal_context.get("recent_checkins") or []
+        for key in ("notes", "symptoms", "illness")
+    )
+    text = f"{question} {notes}".lower()
+    if any(_has_unnegated_phrase(text, phrase) for phrase in ILLNESS_PHRASES):
+        return [
+            "Illness symptoms are present in the question or recent check-in; avoid hard training advice and suggest rest or very easy movement unless symptoms are mild and improving."
+        ]
+    return []
+
+
+def _has_unnegated_phrase(text: str, phrase: str) -> bool:
+    for match in re.finditer(rf"\b{re.escape(phrase)}\b", text):
+        prefix = text[max(0, match.start() - 28) : match.start()]
+        if re.search(r"\b(no|not|without|denies|deny|none)\b[\s,;:.-]{0,12}$", prefix):
+            continue
+        return True
+    return False
 
 
 def _question_clue_headline(

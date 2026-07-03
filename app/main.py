@@ -40,6 +40,9 @@ SERVER_INSTRUCTIONS = (
     "one fresh overview result. For broad health, fitness, recovery, current/latest/today, or 'use all "
     "my data' overview questions that do not explicitly request sync/refresh, call get_health_overview "
     "before answering. "
+    "For exploratory or unusual questions, use list_available_health_metrics to inspect the per-user "
+    "metric catalog and query_health_metrics to fetch the specific signals you choose; let the user's "
+    "question decide the metric mix instead of following a fixed recipe. "
     "For vague or diagnostic-sounding coaching questions like what the user should do today, "
     "why the user feels tired, how hard to train, whether heart signals look off, or which metrics matter, "
     "call get_health_question_clues "
@@ -63,6 +66,24 @@ WIDGET_META = {
     "ui": {"resourceUri": WIDGET_URI},
     "openai/outputTemplate": WIDGET_URI,
 }
+ILLNESS_PHRASES = (
+    "fever",
+    "flu",
+    "covid",
+    "infection",
+    "vomit",
+    "vomiting",
+    "nausea",
+    "chills",
+    "sore throat",
+    "head cold",
+    "cold symptoms",
+    "feel sick",
+    "feeling sick",
+    "sick today",
+    "illness",
+    "body aches",
+)
 
 
 @dataclass(frozen=True)
@@ -138,7 +159,10 @@ def create_server(settings_override: Settings | None = None) -> ServerBundle:
 
     @mcp.tool(
         title="List available health metrics",
-        description="List every device-first Google Health/Fitbit metric this app can sync and query, with per-user record counts when available.",
+        description=(
+            "List every device-first Google Health/Fitbit metric this app can sync and query, with "
+            "per-user record counts plus model-facing guidance for choosing which metrics to inspect."
+        ),
         annotations=READ_ONLY,
     )
     def list_available_health_metrics() -> dict[str, Any]:
@@ -146,7 +170,11 @@ def create_server(settings_override: Settings | None = None) -> ServerBundle:
 
     @mcp.tool(
         title="Query health metrics",
-        description="Query one or more synced Google Health/Fitbit metrics from the local store over a bounded date range.",
+        description=(
+            "Generic model-selected metric query. Use after list_available_health_metrics or "
+            "get_health_question_clues when a question needs specific synced Google Health/Fitbit signals "
+            "over a bounded date range."
+        ),
         annotations=READ_ONLY,
     )
     def query_health_metrics(
@@ -616,6 +644,7 @@ def workout_recommendation(
     soreness_rating = _latest_rating(checkins or [], "soreness")
     energy_rating = _latest_rating(checkins or [], "energy")
     stress_rating = _latest_rating(checkins or [], "stress")
+    illness_flags = _illness_flags_from_checkins(checkins or [])
     workout_summary = (workout_history or {}).get("summary", {}) if (workout_history or {}).get("status") == "ok" else {}
     workout_count = int(workout_summary.get("workout_count") or 0)
     goal_payload = (goal or {}).get("goal") or {}
@@ -663,6 +692,11 @@ def workout_recommendation(
     if stress_rating and stress_rating >= 7:
         plan += f" Stress is high at {stress_rating}/10, so keep the session predictable and avoid all-out work."
         rpe_cap = min(rpe_cap, 7)
+    if illness_flags:
+        plan += " Illness signs override normal training pressure: skip hard work and use rest or only very easy movement if symptoms are mild."
+        intensity = "easy"
+        rpe_cap = min(rpe_cap, 4)
+        avoid.append("High-intensity training while sick, feverish, or flu-like symptoms are present")
 
     if goal_status.get("remaining_sessions") is not None:
         if goal_status["remaining_sessions"] > 0 and intensity != "easy":
@@ -684,6 +718,8 @@ def workout_recommendation(
         primary_action = "Do a controlled session: zone 2, technique, or submax strength."
     else:
         primary_action = "Make today recovery-biased: walk, mobility, easy cardio, or rest."
+    if illness_flags:
+        primary_action = "Rest today, or keep movement to a short easy walk if symptoms are mild and improving."
     next_actions.insert(1 if freshness.get("needs_sync_before_time_sensitive_advice") else 0, primary_action)
     evidence = _workout_evidence(
         readiness=readiness,
@@ -692,6 +728,7 @@ def workout_recommendation(
         soreness_rating=soreness_rating,
         energy_rating=energy_rating,
         stress_rating=stress_rating,
+        illness_flags=illness_flags,
         goal_status=goal_status,
         workout_summary=workout_summary,
     )
@@ -715,6 +752,7 @@ def workout_recommendation(
             "energy": energy_rating,
             "soreness": soreness_rating,
             "stress": stress_rating,
+            "illness_flags": illness_flags,
             "latest_checkins": checkins or [],
         },
         "workout_history_summary": workout_summary or None,
@@ -731,6 +769,7 @@ def workout_recommendation(
             "energy_checkin": energy_rating,
             "soreness_checkin": soreness_rating,
             "stress_checkin": stress_rating,
+            "illness_flags": illness_flags,
             "goal": goal,
             "recent_workouts": workout_count,
             "freshness_level": freshness.get("freshness_level"),
@@ -772,10 +811,8 @@ def workout_plan_for_activity(
     stated_pain = _rating_from_text(constraint_text, ("pain", "ache", "tightness", "tight"))
     soreness_rating = _first_present(_latest_rating(checkins or [], "soreness"), stated_soreness, stated_pain)
     energy_rating = _first_present(_latest_rating(checkins or [], "energy"), stated_energy)
-    has_soreness_constraint = _mentions(
-        constraint_text,
-        ("sore", "soreness", "pain", "ache", "tight", "tweak", "injury", "complains"),
-    )
+    illness_flags = _dedupe(_illness_flags_from_text(all_context_text) + _illness_flags_from_checkins(checkins or []))
+    has_soreness_constraint = _has_training_pain_constraint(constraint_text)
     spinal_constraint = _mentions(
         constraint_text,
         (
@@ -827,6 +864,10 @@ def workout_plan_for_activity(
         limiting_factors.append("User wants to preserve readiness for another sport or workout soon.")
     if latest_load.get("active_zone_minutes", 0) > 45:
         rpe_cap = min(rpe_cap, 7)
+    if illness_flags:
+        intensity = "easy"
+        rpe_cap = min(rpe_cap, 4)
+        limiting_factors.extend(illness_flags)
 
     focus, avoid, warmup, session = _activity_guidance(all_context_text, rpe_cap, intensity)
     exercise_blocks, substitutions = _exercise_prescription(
@@ -846,6 +887,13 @@ def workout_plan_for_activity(
         session.insert(0, "Use a controlled session and stop 2-3 reps before failure.")
     else:
         session.insert(0, "A normal session is reasonable if warm-up movement feels good.")
+    if illness_flags:
+        session.insert(
+            0,
+            "Do not train hard while illness signs are present; choose rest, fluids, and only easy movement if symptoms are mild.",
+        )
+        focus.insert(0, "Treat symptoms as the limiter even if wearable readiness is not red.")
+        avoid.insert(0, "Sweat-it-out workouts, intervals, heavy sets, or long sessions while sick.")
 
     planned_date_text = planned_date or "next planned session"
     summary = (
@@ -854,6 +902,8 @@ def workout_plan_for_activity(
     )
     if readiness_label == "red":
         summary += " Treat this as a quality/recovery-biased session because recovery signals are red."
+    if illness_flags:
+        summary += " Illness signs should override the workout plan until symptoms are clearly improving."
 
     return {
         "status": "ok",
@@ -895,6 +945,7 @@ def workout_plan_for_activity(
             "stated_energy": stated_energy,
             "stated_soreness": stated_soreness,
             "stated_pain": stated_pain,
+            "illness_flags": illness_flags,
             "preserving_next_session": preserving_next_session,
             "goal": goal,
         },
@@ -1100,6 +1151,7 @@ def _workout_evidence(
     soreness_rating: int | None,
     energy_rating: int | None,
     stress_rating: int | None,
+    illness_flags: list[str],
     goal_status: dict[str, Any],
     workout_summary: dict[str, Any],
 ) -> list[str]:
@@ -1139,6 +1191,8 @@ def _workout_evidence(
         evidence.append(f"Latest soreness check-in is {soreness_rating}/10.")
     if stress_rating is not None:
         evidence.append(f"Latest stress check-in is {stress_rating}/10.")
+    for flag in illness_flags:
+        evidence.append(flag)
 
     if goal_status.get("target"):
         evidence.append(f"Current goal: {goal_status['target']}.")
@@ -1433,6 +1487,41 @@ def _latest_rating(checkins: list[dict[str, Any]], key: str) -> int | None:
         if value is not None:
             return _bounded_rating(value)
     return None
+
+
+def _illness_flags_from_checkins(checkins: list[dict[str, Any]]) -> list[str]:
+    flags: list[str] = []
+    for item in checkins:
+        checkin = item.get("checkin", {})
+        text = " ".join(
+            str(checkin.get(key) or "")
+            for key in ("notes", "symptoms", "illness")
+        )
+        flags.extend(_illness_flags_from_text(text))
+        if flags:
+            break
+    return _dedupe(flags)
+
+
+def _illness_flags_from_text(text: str) -> list[str]:
+    if not text:
+        return []
+    lower = text.lower()
+    if any(_has_unnegated_phrase(lower, phrase) for phrase in ILLNESS_PHRASES):
+        return [
+            "Illness symptoms are present in the latest user context, so hard training should be avoided."
+        ]
+    return []
+
+
+def _has_training_pain_constraint(text: str) -> bool:
+    if not text:
+        return False
+    musculoskeletal_text = re.sub(r"\b(no\s+)?sore throat\b", "", text.lower())
+    return any(
+        _has_unnegated_phrase(musculoskeletal_text, term)
+        for term in ("sore", "soreness", "pain", "ache", "tight", "tweak", "injury", "complains")
+    )
 
 
 def _rating_from_text(text: str, labels: tuple[str, ...]) -> int | None:
