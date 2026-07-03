@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import time
 from datetime import UTC, datetime
 
 import app.health_store as health_store_module
@@ -195,6 +197,20 @@ def seed_workout(store: HealthStore, user_id: str, day: str, name: str, azm: int
             }
         ],
     )
+
+
+def seed_heart_samples(store: HealthStore, user_id: str, day: str, count: int = 24) -> None:
+    records = []
+    for hour in range(count):
+        bpm = 58 + (hour % 10) * 7
+        records.append(
+            {
+                "name": f"hr-{day}-{hour}",
+                "heartRate": {"beatsPerMinute": bpm},
+                "sampleTime": {"physicalTime": f"{day}T{hour % 24:02d}:15:00Z"},
+            }
+        )
+    store.upsert_records(user_id, "heart-rate", records)
 
 
 def metric_ids(result: dict) -> set[str]:
@@ -435,3 +451,46 @@ def test_eval_heart_safety_question_returns_caution_not_just_training_advice(tmp
     assert any("medical" in item.lower() or "urgent care" in item.lower() for item in clues["safety_flags"])
     assert any("92 bpm" in item for item in clues["watchouts"])
     assert any("clinical" in item.lower() or "diagnos" in item.lower() for item in clues["answering_guidance"])
+
+
+def test_eval_large_synced_dataset_keeps_question_clues_fast_and_compact(tmp_path, monkeypatch) -> None:
+    freeze_now(monkeypatch)
+    db, store = make_store(tmp_path)
+    user_id = create_user(db, "large_dataset")
+
+    for offset in range(30):
+        day_num = offset + 1
+        day = f"2026-06-{day_num:02d}" if day_num <= 30 else "2026-07-01"
+        seed_day(
+            store,
+            user_id,
+            day,
+            sleep_hours=7.0 + (offset % 5) * 0.15,
+            hrv_ms=48 + (offset % 7),
+            resting_hr=57 + (offset % 4),
+            active_zone_minutes=18 + (offset % 6) * 4,
+            steps=6500 + offset * 120,
+        )
+        seed_heart_samples(store, user_id, day, count=24)
+    seed_workout(store, user_id, "2026-06-28", "Long run", azm=44)
+    store.save_goal(user_id, {"goal_type": "endurance", "target": "Build aerobic base", "days_per_week": 5})
+    store.save_checkin(user_id, {"energy": 7, "soreness": 3, "stress": 4, "notes": "Solid week"})
+
+    started = time.perf_counter()
+    clues = store.health_question_clues(
+        user_id,
+        "Give me a smart overview of what matters before I train today.",
+        days=30,
+    )
+    elapsed = time.perf_counter() - started
+    serialized = json.dumps(clues)
+
+    assert clues["status"] == "ok"
+    assert elapsed < 1.5
+    assert len(serialized) < 80_000
+    assert clues["data_used"]["synced_metric_count"] >= 6
+    assert clues["data_used"]["recent_workout_count"] == 1
+    assert clues["data_used"]["recent_checkins_count"] == 1
+    assert "payload_json" not in serialized
+    assert "sampleTime" not in serialized
+    assert "heart-rate" in clues["available_metric_ids"]

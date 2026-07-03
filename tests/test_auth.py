@@ -78,3 +78,25 @@ def test_google_tokens_are_encrypted_and_refresh_token_is_preserved(tmp_path) ->
     assert row is not None
     assert "sample_access_two" not in row["access_token_encrypted"]
     assert "sample_refresh_one" not in row["refresh_token_encrypted"]
+
+
+def test_database_schema_has_health_query_indexes(tmp_path) -> None:
+    auth = make_auth(tmp_path)
+
+    rows = auth.db.all(
+        """
+        SELECT name
+        FROM sqlite_master
+        WHERE type = 'index'
+        ORDER BY name
+        """
+    )
+    indexes = {row["name"] for row in rows}
+
+    assert {
+        "idx_raw_health_user_observed",
+        "idx_raw_health_user_type_observed",
+        "idx_raw_health_user_synced",
+        "idx_sync_runs_user_started",
+        "idx_checkins_user_recent",
+    } <= indexes

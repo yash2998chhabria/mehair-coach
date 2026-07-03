@@ -26,6 +26,9 @@ uses the right signals for real questions:
   confident advice.
 - heart-safety question: high resting HR plus dizziness/concern language should
   produce medical caution instead of pure training advice.
+- large synced dataset: high-frequency heart samples plus 30 days of daily
+  records should keep question clues fast, compact, and free of raw payload
+  dumps.
 
 Run a local server:
 

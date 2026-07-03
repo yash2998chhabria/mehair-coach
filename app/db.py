@@ -86,6 +86,15 @@ CREATE TABLE IF NOT EXISTS raw_health_records (
   UNIQUE(user_id, data_type, record_key)
 );
 
+CREATE INDEX IF NOT EXISTS idx_raw_health_user_observed
+ON raw_health_records(user_id, observed_date DESC, id DESC);
+
+CREATE INDEX IF NOT EXISTS idx_raw_health_user_type_observed
+ON raw_health_records(user_id, data_type, observed_date DESC);
+
+CREATE INDEX IF NOT EXISTS idx_raw_health_user_synced
+ON raw_health_records(user_id, synced_at DESC);
+
 CREATE TABLE IF NOT EXISTS sync_runs (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -95,6 +104,9 @@ CREATE TABLE IF NOT EXISTS sync_runs (
   records_upserted INTEGER NOT NULL DEFAULT 0,
   message TEXT
 );
+
+CREATE INDEX IF NOT EXISTS idx_sync_runs_user_started
+ON sync_runs(user_id, started_at DESC);
 
 CREATE TABLE IF NOT EXISTS goals (
   user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
@@ -108,6 +120,9 @@ CREATE TABLE IF NOT EXISTS checkins (
   payload_json TEXT NOT NULL,
   created_at TEXT NOT NULL
 );
+
+CREATE INDEX IF NOT EXISTS idx_checkins_user_recent
+ON checkins(user_id, id DESC);
 """
 
 
