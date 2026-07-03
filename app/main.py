@@ -24,7 +24,12 @@ from .widget import TODAY_WIDGET_HTML, WIDGET_MIME_TYPE, WIDGET_URI
 SERVER_INSTRUCTIONS = (
     "Mehair Coach provides read-only Google Health/Fitbit context for a connected user. "
     "If connection or synced data is missing, call status/freshness tools and explain setup; "
-    "never invent health data. Sync only when the user asks for fresh Fitbit data."
+    "never invent health data. Sync only when the user asks for fresh Fitbit data. "
+    "For broad health, fitness, recovery, or 'use all my data' overview questions, call "
+    "get_health_overview before answering. "
+    "For any specific workout, sport, muscle-group, soreness, or recovery decision, call "
+    "plan_workout_with_health_context or recommend_workout_today before answering; do not infer "
+    "readiness, HRV, sleep, or load from conversation memory."
 )
 
 READ_ONLY = ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True)
@@ -171,6 +176,21 @@ def create_server(settings_override: Settings | None = None) -> ServerBundle:
         return health_store.latest_context(user_id)
 
     @mcp.tool(
+        title="Health overview",
+        description=(
+            "Return an all-data coaching overview across readiness, activity, sleep, heart, "
+            "recovery, workouts, goals, check-ins, data coverage, and concrete next actions."
+        ),
+        annotations=READ_ONLY,
+        meta=WIDGET_META,
+    )
+    def get_health_overview(days: int = 14) -> dict[str, Any]:
+        user_id = current_user_id()
+        if not user_id:
+            return setup_required()
+        return health_store.health_overview(user_id, max(1, min(days, 30)))
+
+    @mcp.tool(
         title="Recovery readiness",
         description="Return a readiness score with evidence from sleep, HRV, resting heart rate, and activity load.",
         annotations=READ_ONLY,
@@ -204,6 +224,39 @@ def create_server(settings_override: Settings | None = None) -> ServerBundle:
         if not user_id:
             return setup_required()
         return workout_recommendation(health_store.latest_context(user_id))
+
+    @mcp.tool(
+        title="Plan workout with health context",
+        description=(
+            "Plan a specific upcoming workout, sport session, or muscle-group day using synced "
+            "sleep, HRV, resting heart rate, activity load, goals, check-ins, and user-stated constraints."
+        ),
+        annotations=READ_ONLY,
+        meta=WIDGET_META,
+    )
+    def plan_workout_with_health_context(
+        planned_activity: str,
+        target_areas: list[str] | None = None,
+        planned_date: str | None = None,
+        constraints: str | None = None,
+        duration_minutes: int | None = None,
+    ) -> dict[str, Any]:
+        user_id = current_user_id()
+        if not user_id:
+            return setup_required()
+        context = health_store.latest_context(user_id)
+        if context.get("status") != "ok":
+            return context
+        return workout_plan_for_activity(
+            context=context,
+            planned_activity=planned_activity,
+            target_areas=target_areas or [],
+            planned_date=planned_date,
+            constraints=constraints,
+            duration_minutes=duration_minutes,
+            goal=health_store.latest_goal(user_id),
+            checkins=health_store.recent_checkins(user_id),
+        )
 
     @mcp.tool(
         title="Sleep analysis",
@@ -425,6 +478,173 @@ def workout_recommendation(context: dict[str, Any]) -> dict[str, Any]:
         "context": context,
         "safety_note": "This is fitness coaching context, not medical advice.",
     }
+
+
+def workout_plan_for_activity(
+    context: dict[str, Any],
+    planned_activity: str,
+    target_areas: list[str],
+    planned_date: str | None = None,
+    constraints: str | None = None,
+    duration_minutes: int | None = None,
+    goal: dict[str, Any] | None = None,
+    checkins: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    if context.get("status") != "ok":
+        return context
+
+    readiness = context["readiness"]
+    today = context.get("today", {})
+    sleep = today.get("sleep", {})
+    latest_load = today.get("latest_training_load", {})
+    planned = " ".join([planned_activity or "", " ".join(target_areas or []), constraints or ""]).lower()
+    readiness_label = readiness.get("label", "pending")
+    readiness_score = int(readiness.get("score", 0))
+    soreness_rating = _latest_rating(checkins or [], "soreness")
+    energy_rating = _latest_rating(checkins or [], "energy")
+
+    intensity = _base_intensity(readiness_label)
+    rpe_cap = {"easy": 6, "moderate": 7, "moderate-to-hard": 8}.get(intensity, 6)
+    limiting_factors = list(readiness.get("evidence", []))
+    if soreness_rating and soreness_rating >= 7:
+        intensity = "easy"
+        rpe_cap = min(rpe_cap, 6)
+        limiting_factors.append(f"Latest soreness check-in is high at {soreness_rating}/10.")
+    elif soreness_rating and soreness_rating >= 5:
+        intensity = "moderate" if intensity == "moderate-to-hard" else intensity
+        rpe_cap = min(rpe_cap, 7)
+        limiting_factors.append(f"Latest soreness check-in is moderate at {soreness_rating}/10.")
+    if _mentions(planned, ("back", "low back", "lower back", "hip", "sore", "pain", "ache")):
+        rpe_cap = min(rpe_cap, 7)
+        limiting_factors.append("User-stated back/hip soreness or constraint should cap spinal loading.")
+    if latest_load.get("active_zone_minutes", 0) > 45:
+        rpe_cap = min(rpe_cap, 7)
+
+    focus, avoid, warmup, session = _activity_guidance(planned, rpe_cap, intensity)
+    if duration_minutes:
+        session.append(f"Keep the session near {max(15, min(duration_minutes, 120))} minutes including warm-up.")
+    if readiness_label == "red":
+        session.insert(0, "Do not chase PRs; keep every compound lift 3-4 reps in reserve.")
+    elif readiness_label == "yellow":
+        session.insert(0, "Use a controlled session and stop 2-3 reps before failure.")
+    else:
+        session.insert(0, "A normal session is reasonable if warm-up movement feels good.")
+
+    planned_date_text = planned_date or "next planned session"
+    summary = (
+        f"For {planned_date_text}, keep {planned_activity} at {intensity} intensity "
+        f"with an RPE cap around {rpe_cap}/10."
+    )
+    if readiness_label == "red":
+        summary += " Treat this as a quality/recovery-biased session because recovery signals are red."
+
+    return {
+        "status": "ok",
+        "planned_activity": planned_activity,
+        "planned_date": planned_date,
+        "target_areas": target_areas,
+        "constraints": constraints,
+        "summary": summary,
+        "recommended_intensity": intensity,
+        "rpe_cap": rpe_cap,
+        "readiness": readiness,
+        "focus": focus,
+        "warmup": warmup,
+        "session_guidance": session,
+        "avoid": avoid,
+        "progression_rules": [
+            "If warm-up raises pain, heaviness, dizziness, or unusual breathlessness, downshift or stop.",
+            "If HRV and resting heart rate rebound and sleep improves, progress load or volume next session.",
+            "If recovery stays red for two straight days, bias toward zone 2, mobility, or a full rest day.",
+        ],
+        "limiting_factors": _dedupe(limiting_factors),
+        "data_used": {
+            "activity_date": context.get("activity_date"),
+            "recovery_date": context.get("recovery_date"),
+            "readiness_score": readiness_score,
+            "readiness_label": readiness_label,
+            "sleep_asleep_hours": sleep.get("asleep_hours") or sleep.get("duration_hours"),
+            "sleep_sessions": sleep.get("sessions_count"),
+            "hrv_ms": today.get("hrv_ms"),
+            "resting_heart_rate": today.get("resting_heart_rate"),
+            "steps": today.get("steps", 0),
+            "active_minutes": today.get("active_minutes", 0),
+            "active_zone_minutes": today.get("active_zone_minutes", 0),
+            "latest_training_load": latest_load,
+            "energy_checkin": energy_rating,
+            "soreness_checkin": soreness_rating,
+            "goal": goal,
+        },
+        "questions_to_ask_if_uncertain": [
+            "Any pain above 3/10 during warm-up?",
+            "Did sleep feel restorative despite the wearable score?",
+            "Is the planned workout performance-focused, maintenance, or just keeping the habit?",
+        ],
+        "safety_note": "This is fitness coaching context, not medical advice.",
+        "context": context,
+    }
+
+
+def _base_intensity(label: str) -> str:
+    if label == "green":
+        return "moderate-to-hard"
+    if label == "yellow":
+        return "moderate"
+    return "easy"
+
+
+def _activity_guidance(planned: str, rpe_cap: int, intensity: str) -> tuple[list[str], list[str], list[str], list[str]]:
+    warmup = [
+        "5-8 minutes easy cardio to check readiness.",
+        "Dynamic hips, thoracic rotations, and shoulder/scapular activation.",
+        "Two ramp sets before the first working set.",
+    ]
+    focus = ["Move well first, then add load only if the warm-up feels better than expected."]
+    avoid = ["Max-effort attempts", "Adding extra hard conditioning after the session"]
+    session = [f"Keep working sets at or below RPE {rpe_cap}/10."]
+
+    if _mentions(planned, ("chest", "bench", "press", "push")):
+        focus.extend(
+            [
+                "Use chest-supported or machine options if bracing feels off.",
+                "Prioritize controlled pressing, stable feet, and shoulder-blade position.",
+                "Choose dumbbell or machine press before barbell PR attempts when recovery is red.",
+            ]
+        )
+        session.extend(["Main press: 2-4 working sets.", "Accessories: incline press, cable fly, and light triceps."])
+        avoid.extend(["Aggressive bench arch if low back feels sensitive", "Forced reps on pressing"])
+    if _mentions(planned, ("back", "row", "pull", "deadlift", "hinge")):
+        focus.extend(["Prefer chest-supported rows, pulldowns, and cable work.", "Keep bracing neutral and pain-free."])
+        session.extend(["Pulling volume should be smooth and submaximal.", "Pair rows with face pulls or rear delts."])
+        avoid.extend(["Heavy deadlifts", "Heavy bent-over rows", "Loaded spinal flexion"])
+    if _mentions(planned, ("squash", "tennis", "court", "run", "interval", "hiit")):
+        focus.extend(["Bias skill, footwork quality, and easy aerobic work over all-out intervals."])
+        session.extend(["Keep change-of-direction volume low if recovery is red.", "Stop before movement gets sloppy."])
+        avoid.extend(["Repeated max sprints", "Hard cutting if knee, hip, or back feels unstable"])
+    if _mentions(planned, ("leg", "squat", "lower", "quad", "hamstring")):
+        focus.extend(["Use controlled range and stable unilateral work only if joints feel calm."])
+        session.extend(["Keep lower-body compounds submaximal.", "Use machines or tempo work before heavy free-weight loading."])
+        avoid.extend(["Max squats", "High-volume plyometrics", "Hard lateral work after high zone-minute days"])
+    if intensity == "easy":
+        focus.append("A productive session today means leaving the gym feeling better, not crushed.")
+
+    return _dedupe(focus), _dedupe(avoid), _dedupe(warmup), _dedupe(session)
+
+
+def _latest_rating(checkins: list[dict[str, Any]], key: str) -> int | None:
+    for item in checkins:
+        value = item.get("checkin", {}).get(key)
+        if value is not None:
+            return _bounded_rating(value)
+    return None
+
+
+def _mentions(text: str, words: tuple[str, ...]) -> bool:
+    return any(word in text for word in words)
+
+
+def _dedupe(items: list[str]) -> list[str]:
+    return list(dict.fromkeys(item for item in items if item))
 
 
 def _bounded_rating(value: int | None) -> int | None:

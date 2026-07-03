@@ -13,9 +13,11 @@ The project starts empty. It does not import any existing Fitbit export and it d
 - Lists all device-first health metrics the app can sync, with per-user availability.
 - Lets ChatGPT query specific synced metrics over bounded date windows.
 - Summarizes readiness, sleep, activity load, heart trends, and workout history.
+- Produces an all-data health overview with positives, watchouts, and next actions.
+- Plans specific workouts using synced recovery/load data plus goals, check-ins, and constraints.
 - Stores local goals and subjective check-ins for better coaching prompts.
 - Returns clear setup and empty-state responses when a user has not connected or synced yet.
-- Shows an inline Apps SDK health card for readiness, sleep, activity, and evidence.
+- Shows an inline Apps SDK health card for overview, readiness, sleep, activity, workout plans, and evidence.
 
 ## What It Does Not Do
 
@@ -39,7 +41,7 @@ The sync tool queries read-only Google Health data categories that are useful fo
 
 Food and nutrition are intentionally excluded because the first version is device-first coaching, and the user may not log food data.
 
-The app exposes this in two layers: high-level coaching tools for normal prompts, plus a metric catalog and metric query tool so ChatGPT can inspect specific signals when a question needs more detail.
+The app exposes this in three layers: a high-level overview tool for normal “what does my data say?” prompts, coaching tools for workout decisions, and a metric catalog/query layer so ChatGPT can inspect specific signals when a question needs more detail.
 
 ## Architecture
 
@@ -62,8 +64,10 @@ flowchart LR
 - `sync_latest_fitbit_data` pulls the latest available Google Health/Fitbit records.
 - `get_data_freshness` reports last observed and last synced dates.
 - `get_today_context` returns the latest daily activity, sleep, heart, readiness, and evidence.
+- `get_health_overview` returns an all-data overview across readiness, activity, sleep, heart, recovery, workouts, goals, check-ins, coverage, positives, watchouts, and next actions.
 - `get_recovery_readiness` returns the readiness score and evidence.
 - `recommend_workout_today` recommends the day’s training intensity.
+- `plan_workout_with_health_context` plans a specific workout, sport session, or muscle-group day from synced data and user constraints.
 - `get_sleep_analysis` summarizes recent sleep.
 - `get_activity_load` summarizes recent activity.
 - `get_heart_trends` summarizes heart rate, resting heart rate, and HRV.
@@ -142,7 +146,9 @@ Restart the server, then in ChatGPT:
 
 ```text
 Sync latest Fitbit data.
+Give me a full health and fitness overview using all my data.
 How hard should I work out today?
+I want to train chest tomorrow, but my lower back is sore from squash. Plan it using my data.
 Why?
 Compare my sleep and heart rate.
 ```
@@ -176,7 +182,7 @@ Use MCP Inspector:
 npx @modelcontextprotocol/inspector@latest --server-url http://localhost:8787/mcp --transport http
 ```
 
-The current automated tests cover OAuth metadata, encrypted token storage, setup/empty states, synthetic health calculations, MCP tool registration, widget registration, HTTP metadata routes, and a local private-beta E2E flow that simulates ChatGPT plus Google Health without creating live credentials.
+The current automated tests cover OAuth metadata, encrypted token storage, setup/empty states, synthetic health calculations, all-data overview summaries, workout planning, MCP tool registration, widget registration, HTTP metadata routes, and a local private-beta E2E flow that simulates ChatGPT plus Google Health without creating live credentials.
 
 ### ChatGPT Connector Cache
 

@@ -222,6 +222,26 @@ def test_synthetic_records_calculate_context(tmp_path) -> None:
     ] == 15.0
     assert richer_metrics["metrics"]["oxygen-saturation"]["daily"][-1]["spo2_sample"]["avg"] == 98.4
 
+    store.save_goal(user_id, {"goal_type": "running", "target": "Run four days per week"})
+    store.save_checkin(user_id, {"energy": 8, "soreness": 2, "stress": 3, "notes": "Feeling good"})
+
+    overview = store.health_overview(user_id, days=7)
+
+    assert overview["status"] == "ok"
+    assert overview["overview_type"] == "health_overview"
+    assert overview["sections"]["activity"]["totals"]["steps"] == 8500
+    assert overview["sections"]["activity"]["time_in_heart_rate_zones_minutes"]["fat_burn"] == 20.0
+    assert overview["sections"]["sleep"]["latest_asleep_hours"] == 8.0
+    assert overview["sections"]["heart"]["latest_hrv_ms"] == 45.2
+    assert overview["sections"]["recovery"]["latest_spo2"] == 98.4
+    assert overview["personal_context"]["goal"]["goal"]["target"] == "Run four days per week"
+    assert overview["personal_context"]["recent_checkins"][0]["checkin"]["energy"] == 8
+    synced_ids = {item["id"] for item in overview["data_used"]["synced_metrics"]}
+    assert {"steps", "sleep", "heart-rate", "oxygen-saturation"} <= synced_ids
+    assert overview["daily"][-1]["time_in_hr_zones_minutes"]["fat_burn"] == 20.0
+    assert overview["positives"]
+    assert overview["next_actions"]
+
 
 def test_partial_today_uses_latest_completed_recovery_signals(tmp_path) -> None:
     db, store = make_store(tmp_path)

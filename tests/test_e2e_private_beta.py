@@ -351,6 +351,8 @@ async def test_private_beta_oauth_mcp_sync_and_coaching_flow(tmp_path, monkeypat
             tool_names = {item["name"] for item in tools["result"]["tools"]}
             assert "sync_latest_fitbit_data" in tool_names
             assert "get_today_context" in tool_names
+            assert "get_health_overview" in tool_names
+            assert "plan_workout_with_health_context" in tool_names
             assert "list_available_health_metrics" in tool_names
             assert "query_health_metrics" in tool_names
 
@@ -468,6 +470,74 @@ async def test_private_beta_oauth_mcp_sync_and_coaching_flow(tmp_path, monkeypat
             )
             assert goal["status"] == "ok"
             assert goal["goal"]["days_per_week"] == 4
+
+            checkin = tool_content(
+                await mcp_request(
+                    client,
+                    access_token,
+                    "tools/call",
+                    {
+                        "name": "log_checkin",
+                        "arguments": {
+                            "energy": 5,
+                            "soreness": 6,
+                            "stress": 4,
+                            "notes": "left lower back soreness after squash",
+                        },
+                    },
+                    9,
+                )
+            )
+            assert checkin["status"] == "ok"
+            assert checkin["checkin"]["soreness"] == 6
+
+            overview = tool_content(
+                await mcp_request(
+                    client,
+                    access_token,
+                    "tools/call",
+                    {"name": "get_health_overview", "arguments": {"days": 7}},
+                    10,
+                )
+            )
+            assert overview["status"] == "ok"
+            assert overview["overview_type"] == "health_overview"
+            assert overview["sections"]["activity"]["totals"]["steps"] == 9200
+            assert overview["sections"]["sleep"]["latest_asleep_hours"] == 7.5
+            assert overview["sections"]["heart"]["latest_hrv_ms"] == 48.5
+            assert overview["sections"]["workouts"]["workout_count"] == 1
+            assert overview["personal_context"]["goal"]["goal"]["days_per_week"] == 4
+            assert overview["personal_context"]["recent_checkins"][0]["checkin"]["soreness"] == 6
+            assert "food" not in {item["id"] for item in overview["data_used"]["synced_metrics"]}
+            assert overview["positives"]
+            assert overview["next_actions"]
+
+            plan = tool_content(
+                await mcp_request(
+                    client,
+                    access_token,
+                    "tools/call",
+                    {
+                        "name": "plan_workout_with_health_context",
+                        "arguments": {
+                            "planned_activity": "chest day",
+                            "target_areas": ["chest"],
+                            "planned_date": "tomorrow",
+                            "constraints": "left lower back soreness after squash",
+                            "duration_minutes": 60,
+                        },
+                    },
+                    11,
+                )
+            )
+            assert plan["status"] == "ok"
+            assert plan["planned_activity"] == "chest day"
+            assert plan["recommended_intensity"] == "moderate"
+            assert plan["rpe_cap"] == 7
+            assert plan["data_used"]["soreness_checkin"] == 6
+            assert plan["data_used"]["goal"]["goal"]["days_per_week"] == 4
+            assert any("Aggressive bench arch" in item for item in plan["avoid"])
+            assert "medical advice" in plan["safety_note"]
 
             refresh = await client.post(
                 "/oauth/token",

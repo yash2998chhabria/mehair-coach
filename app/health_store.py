@@ -340,6 +340,96 @@ class HealthStore:
             "data_freshness": self.freshness(user_id),
         }
 
+    def health_overview(self, user_id: str, days: int = 14) -> dict[str, Any]:
+        records = self.records_for_user(user_id)
+        if not records:
+            return empty_data()
+
+        safe_days = max(1, min(int(days or 14), 30))
+        context = self.latest_context(user_id)
+        if context.get("status") != "ok":
+            return context
+
+        summary = summarize_records(records)
+        recent_items = sorted(summary["daily"].items())[-safe_days:]
+        daily_rows = [{"date": day, **_public_daily_values(values)} for day, values in recent_items]
+        metric_counts = Counter(item["data_type"] for item in records)
+        catalog_by_id = {item["id"]: item for item in metric_catalog()}
+        synced_metrics = [
+            {
+                "id": metric_id,
+                "label": catalog_by_id.get(metric_id, {}).get("label", metric_id),
+                "category": catalog_by_id.get(metric_id, {}).get("category", "Other"),
+                "records": count,
+            }
+            for metric_id, count in sorted(metric_counts.items())
+        ]
+        missing_supported_metrics = sorted(SYNC_DATA_TYPE_IDS - set(metric_counts))
+        activity = _overview_activity(daily_rows)
+        sleep = _overview_sleep(daily_rows)
+        heart = _overview_heart(daily_rows)
+        recovery = _overview_recovery(daily_rows)
+        workouts = _overview_workouts(
+            [
+                item
+                for item in records
+                if item["data_type"] == "exercise"
+                and (item["observed_date"] or "") >= (daily_rows[0]["date"] if daily_rows else "")
+            ]
+        )
+        readiness = context["readiness"]
+        goal = self.latest_goal(user_id)
+        checkins = self.recent_checkins(user_id)
+        positives, watchouts, next_actions = _overview_coaching(
+            context=context,
+            activity=activity,
+            sleep=sleep,
+            heart=heart,
+            recovery=recovery,
+            workouts=workouts,
+            goal=goal,
+            checkins=checkins,
+        )
+        return {
+            "status": "ok",
+            "overview_type": "health_overview",
+            "window_days": safe_days,
+            "date_range": {
+                "start": daily_rows[0]["date"] if daily_rows else None,
+                "end": daily_rows[-1]["date"] if daily_rows else None,
+            },
+            "headline": _overview_headline(readiness, sleep, activity, heart),
+            "readiness": readiness,
+            "today": context["today"],
+            "sections": {
+                "activity": activity,
+                "sleep": sleep,
+                "heart": heart,
+                "recovery": recovery,
+                "workouts": workouts,
+            },
+            "positives": positives,
+            "watchouts": watchouts,
+            "next_actions": next_actions,
+            "personal_context": {
+                "goal": goal,
+                "recent_checkins": checkins,
+            },
+            "daily": daily_rows,
+            "data_coverage": context["data_coverage"],
+            "data_freshness": context["data_freshness"],
+            "data_used": {
+                "synced_metric_count": len(synced_metrics),
+                "synced_metrics": synced_metrics,
+                "missing_supported_metrics": missing_supported_metrics,
+                "raw_record_count": len(records),
+                "activity_date": context.get("activity_date"),
+                "recovery_date": context.get("recovery_date"),
+            },
+            "message": "Overview generated from all currently synced local Google Health/Fitbit records.",
+            "safety_note": "This is fitness coaching context, not medical advice.",
+        }
+
     def sleep_analysis(self, user_id: str, days: int = 7) -> dict[str, Any]:
         context = self.latest_context(user_id)
         if context.get("status") != "ok":
@@ -495,6 +585,31 @@ class HealthStore:
             )
         return {"status": "ok", "checkin": checkin}
 
+    def latest_goal(self, user_id: str) -> dict[str, Any] | None:
+        row = self.db.one(
+            "SELECT goal_json, updated_at FROM goals WHERE user_id = ?",
+            (user_id,),
+        )
+        if not row:
+            return None
+        return {"goal": loads(row["goal_json"], {}), "updated_at": row["updated_at"]}
+
+    def recent_checkins(self, user_id: str, limit: int = 5) -> list[dict[str, Any]]:
+        rows = self.db.all(
+            """
+            SELECT payload_json, created_at
+            FROM checkins
+            WHERE user_id = ?
+            ORDER BY id DESC
+            LIMIT ?
+            """,
+            (user_id, max(1, min(limit, 20))),
+        )
+        return [
+            {"checkin": loads(row["payload_json"], {}), "created_at": row["created_at"]}
+            for row in rows
+        ]
+
     def _start_sync(self, user_id: str, started_at: str) -> int:
         with self.db.connect() as conn:
             cursor = conn.execute(
@@ -533,6 +648,325 @@ def empty_data(message: str = "No Fitbit data has synced yet.") -> dict[str, Any
         "message": message,
         "next_actions": ["Run sync_latest_fitbit_data after connecting Google Health."],
     }
+
+
+def _overview_activity(daily_rows: list[dict[str, Any]]) -> dict[str, Any]:
+    step_days = [day for day in daily_rows if day.get("steps") is not None]
+    active_days = [
+        day
+        for day in daily_rows
+        if any(day.get(key) is not None for key in ("active_minutes", "active_zone_minutes", "distance_mm"))
+    ]
+    total_steps = sum(_float({"value": day.get("steps")}, ["value"]) for day in daily_rows)
+    total_active = sum(_float({"value": day.get("active_minutes")}, ["value"]) for day in daily_rows)
+    total_zone = sum(_float({"value": day.get("active_zone_minutes")}, ["value"]) for day in daily_rows)
+    total_distance_km = sum(_float({"value": day.get("distance_mm")}, ["value"]) for day in daily_rows) / 1_000_000
+    highest_load = max(
+        daily_rows,
+        key=lambda day: _float({"value": day.get("active_zone_minutes")}, ["value"]),
+        default={},
+    )
+    levels: dict[str, float] = defaultdict(float)
+    zones: dict[str, float] = defaultdict(float)
+    for day in daily_rows:
+        for name, minutes in (day.get("activity_levels_minutes") or {}).items():
+            levels[name] += _float({"value": minutes}, ["value"])
+        for name, minutes in (day.get("time_in_hr_zones_minutes") or {}).items():
+            zones[name] += _float({"value": minutes}, ["value"])
+    return {
+        "status": "ok" if active_days or step_days else "missing",
+        "days_with_activity": len(active_days or step_days),
+        "latest": _last_with(daily_rows, ("steps", "active_minutes", "active_zone_minutes", "distance_mm")) or {},
+        "totals": {
+            "steps": round(total_steps),
+            "active_minutes": round(total_active, 1),
+            "active_zone_minutes": round(total_zone, 1),
+            "distance_km": round(total_distance_km, 2),
+        },
+        "averages": {
+            "steps_per_day": round(total_steps / len(step_days)) if step_days else None,
+            "active_minutes_per_day": round(total_active / len(active_days), 1) if active_days else None,
+            "active_zone_minutes_per_day": round(total_zone / len(active_days), 1) if active_days else None,
+        },
+        "highest_load_day": {
+            "date": highest_load.get("date"),
+            "active_zone_minutes": highest_load.get("active_zone_minutes", 0),
+            "steps": highest_load.get("steps", 0),
+        }
+        if highest_load
+        else None,
+        "activity_levels_minutes": {name: round(value, 1) for name, value in sorted(levels.items())},
+        "time_in_heart_rate_zones_minutes": {
+            name: round(value, 1) for name, value in sorted(zones.items())
+        },
+        "sedentary_minutes_average": _average(
+            [_float({"value": day.get("sedentary_minutes")}, ["value"]) for day in daily_rows]
+        ),
+        "calories": {
+            "active_kcal_total": round(
+                sum(_float({"value": day.get("active_kcal")}, ["value"]) for day in daily_rows), 1
+            ),
+            "total_kcal_latest": _latest_number(daily_rows, "total_kcal"),
+        },
+    }
+
+
+def _overview_sleep(daily_rows: list[dict[str, Any]]) -> dict[str, Any]:
+    sleep_days = [day for day in daily_rows if day.get("sleep")]
+    latest = sleep_days[-1].get("sleep", {}) if sleep_days else {}
+    hours = [
+        value
+        for day in sleep_days
+        if (value := day.get("sleep", {}).get("asleep_hours") or day.get("sleep", {}).get("duration_hours"))
+        is not None
+    ]
+    latest_hours = latest.get("asleep_hours") or latest.get("duration_hours")
+    average_hours = _average(hours)
+    return {
+        "status": "ok" if sleep_days else "missing",
+        "days_with_sleep": len(sleep_days),
+        "latest": {"date": sleep_days[-1]["date"], **latest} if sleep_days else None,
+        "average_asleep_hours": average_hours,
+        "latest_asleep_hours": latest_hours,
+        "latest_vs_average_hours": round(latest_hours - average_hours, 2)
+        if latest_hours is not None and average_hours is not None
+        else None,
+        "total_sleep_sessions": sum(_int(day.get("sleep", {}), ["sessions_count"]) or 1 for day in sleep_days),
+        "stage_averages_minutes": _stage_averages(sleep_days),
+    }
+
+
+def _overview_heart(daily_rows: list[dict[str, Any]]) -> dict[str, Any]:
+    hrv_values = [_float({"value": day.get("hrv_ms")}, ["value"]) for day in daily_rows if day.get("hrv_ms")]
+    rhr_values = [
+        _float({"value": day.get("resting_heart_rate")}, ["value"])
+        for day in daily_rows
+        if day.get("resting_heart_rate")
+    ]
+    avg_bpm_values = [
+        _float({"value": day.get("heart", {}).get("avg_bpm")}, ["value"])
+        for day in daily_rows
+        if day.get("heart", {}).get("avg_bpm")
+    ]
+    latest_hrv_day = _last_with(daily_rows, ("hrv_ms",))
+    latest_rhr_day = _last_with(daily_rows, ("resting_heart_rate",))
+    latest_heart_day = _last_with(daily_rows, ("heart",))
+    return {
+        "status": "ok" if hrv_values or rhr_values or avg_bpm_values else "missing",
+        "latest_hrv_ms": latest_hrv_day.get("hrv_ms") if latest_hrv_day else None,
+        "latest_hrv_date": latest_hrv_day.get("date") if latest_hrv_day else None,
+        "average_hrv_ms": _average(hrv_values),
+        "latest_resting_heart_rate": latest_rhr_day.get("resting_heart_rate") if latest_rhr_day else None,
+        "latest_resting_heart_rate_date": latest_rhr_day.get("date") if latest_rhr_day else None,
+        "average_resting_heart_rate": _average(rhr_values),
+        "latest_heart_sample_summary": latest_heart_day.get("heart") if latest_heart_day else None,
+        "average_sampled_bpm": _average(avg_bpm_values),
+    }
+
+
+def _overview_recovery(daily_rows: list[dict[str, Any]]) -> dict[str, Any]:
+    spo2_day = _last_with(daily_rows, ("spo2_avg", "spo2_sample"))
+    resp_day = _last_with(daily_rows, ("respiratory_rate",))
+    vo2_day = _last_with(daily_rows, ("vo2_max",))
+    latest_spo2 = None
+    if spo2_day:
+        latest_spo2 = spo2_day.get("spo2_avg") or spo2_day.get("spo2_sample", {}).get("avg")
+    return {
+        "status": "ok" if spo2_day or resp_day or vo2_day else "missing",
+        "latest_spo2": latest_spo2,
+        "latest_spo2_date": spo2_day.get("date") if spo2_day else None,
+        "latest_respiratory_rate": resp_day.get("respiratory_rate") if resp_day else None,
+        "latest_respiratory_rate_date": resp_day.get("date") if resp_day else None,
+        "latest_vo2_max": vo2_day.get("vo2_max") if vo2_day else None,
+        "latest_vo2_max_date": vo2_day.get("date") if vo2_day else None,
+    }
+
+
+def _overview_workouts(records: list[dict[str, Any]]) -> dict[str, Any]:
+    workouts = []
+    for item in records:
+        exercise = item["payload"].get("exercise", {})
+        interval = exercise.get("interval", {})
+        duration_minutes = _duration_minutes(exercise.get("activeDuration"))
+        if duration_minutes is not None and duration_minutes < 2:
+            continue
+        workouts.append(
+            {
+                "date": item["observed_date"],
+                "type": exercise.get("exerciseType"),
+                "display_name": exercise.get("displayName"),
+                "start_time": interval.get("startTime"),
+                "duration_minutes": duration_minutes,
+                "active_zone_minutes": _int(exercise.get("metricsSummary", {}), ["activeZoneMinutes"]),
+                "average_heart_rate": exercise.get("metricsSummary", {}).get(
+                    "averageHeartRateBeatsPerMinute"
+                ),
+            }
+        )
+    hardest = max(
+        workouts,
+        key=lambda item: (item.get("active_zone_minutes") or 0, item.get("average_heart_rate") or 0),
+        default=None,
+    )
+    return {
+        "status": "ok" if workouts else "missing",
+        "workout_count": len(workouts),
+        "recent": workouts[:10],
+        "hardest_workout": hardest,
+    }
+
+
+def _overview_coaching(
+    context: dict[str, Any],
+    activity: dict[str, Any],
+    sleep: dict[str, Any],
+    heart: dict[str, Any],
+    recovery: dict[str, Any],
+    workouts: dict[str, Any],
+    goal: dict[str, Any] | None,
+    checkins: list[dict[str, Any]],
+) -> tuple[list[str], list[str], list[str]]:
+    readiness = context["readiness"]
+    today = context.get("today", {})
+    label = readiness.get("label")
+    positives: list[str] = []
+    watchouts: list[str] = []
+    next_actions: list[str] = []
+
+    if label == "green":
+        positives.append(f"Readiness is green at {readiness.get('score')}/100.")
+        next_actions.append("A normal session is reasonable if warm-up movement feels good.")
+    elif label == "yellow":
+        watchouts.append(f"Readiness is yellow at {readiness.get('score')}/100.")
+        next_actions.append("Keep training controlled: technique, zone 2, or submax strength.")
+    else:
+        watchouts.append(f"Readiness is red at {readiness.get('score')}/100.")
+        next_actions.append("Bias toward recovery, mobility, walking, and earlier sleep.")
+
+    latest_sleep = sleep.get("latest_asleep_hours")
+    if latest_sleep is not None:
+        if latest_sleep >= 7:
+            positives.append(f"Latest sleep is supportive at {latest_sleep:.1f}h.")
+        elif latest_sleep < 6:
+            watchouts.append(f"Latest sleep is short at {latest_sleep:.1f}h.")
+            next_actions.append("Avoid stacking high-intensity work on short sleep.")
+    if sleep.get("latest_vs_average_hours") is not None:
+        delta = sleep["latest_vs_average_hours"]
+        if delta >= 0.5:
+            positives.append(f"Sleep is {delta:.1f}h above your recent average.")
+        elif delta <= -0.5:
+            watchouts.append(f"Sleep is {abs(delta):.1f}h below your recent average.")
+
+    latest_load = today.get("latest_training_load", {})
+    if latest_load.get("active_zone_minutes", 0) > 45:
+        watchouts.append(
+            f"Recent training load is high: {latest_load['active_zone_minutes']} zone minutes on {latest_load.get('date')}."
+        )
+        next_actions.append("Do not add another max-effort conditioning block today.")
+    elif activity.get("totals", {}).get("active_zone_minutes", 0) > 0:
+        positives.append(
+            f"Recent activity load is visible: {activity['totals']['active_zone_minutes']:.0f} zone minutes in the window."
+        )
+
+    if heart.get("latest_hrv_ms") and heart.get("average_hrv_ms"):
+        if heart["latest_hrv_ms"] >= heart["average_hrv_ms"] * 1.05:
+            positives.append("HRV is running above the recent average.")
+        elif heart["latest_hrv_ms"] < heart["average_hrv_ms"] * 0.9:
+            watchouts.append("HRV is running below the recent average.")
+    if heart.get("latest_resting_heart_rate") and heart.get("average_resting_heart_rate"):
+        if heart["latest_resting_heart_rate"] > heart["average_resting_heart_rate"] + 5:
+            watchouts.append("Resting heart rate is elevated versus the recent average.")
+        else:
+            positives.append("Resting heart rate is not elevated versus the recent average.")
+
+    if recovery.get("latest_spo2"):
+        positives.append(f"Latest SpO2 is {recovery['latest_spo2']:.1f}%.")
+    if workouts.get("workout_count"):
+        positives.append(f"{workouts['workout_count']} workout sessions are available in this window.")
+
+    soreness = _rating_from_checkins(checkins, "soreness")
+    energy = _rating_from_checkins(checkins, "energy")
+    if soreness and soreness >= 5:
+        watchouts.append(f"Your latest soreness check-in is {soreness}/10.")
+        next_actions.append("Choose exercises that avoid sore areas unless warm-up pain stays under 3/10.")
+    if energy and energy <= 4:
+        watchouts.append(f"Your latest energy check-in is low at {energy}/10.")
+    if energy and energy >= 7:
+        positives.append(f"Your latest energy check-in is strong at {energy}/10.")
+
+    goal_text = (goal or {}).get("goal", {}).get("target")
+    if goal_text:
+        next_actions.append(f"Keep the plan aligned with your goal: {goal_text}.")
+
+    if not positives:
+        positives.append("Enough synced data is present to produce a personalized overview.")
+    if not watchouts:
+        watchouts.append("No major recovery red flags were detected in the synced window.")
+    next_actions.append("Ask for a specific workout plan before training so the assistant can factor in soreness and constraints.")
+    return _dedupe(positives), _dedupe(watchouts), _dedupe(next_actions)
+
+
+def _overview_headline(
+    readiness: dict[str, Any],
+    sleep: dict[str, Any],
+    activity: dict[str, Any],
+    heart: dict[str, Any],
+) -> str:
+    parts = [f"{str(readiness.get('label', 'pending')).title()} readiness at {readiness.get('score')}/100"]
+    if sleep.get("latest_asleep_hours") is not None:
+        parts.append(f"{sleep['latest_asleep_hours']:.1f}h latest sleep")
+    if activity.get("totals", {}).get("active_zone_minutes") is not None:
+        parts.append(f"{activity['totals']['active_zone_minutes']:.0f} zone minutes")
+    if heart.get("latest_hrv_ms") is not None:
+        parts.append(f"{heart['latest_hrv_ms']:.1f} ms HRV")
+    return "; ".join(parts) + "."
+
+
+def _last_with(daily_rows: list[dict[str, Any]], keys: tuple[str, ...]) -> dict[str, Any] | None:
+    for day in reversed(daily_rows):
+        if any(day.get(key) is not None for key in keys):
+            return day
+    return None
+
+
+def _latest_number(daily_rows: list[dict[str, Any]], key: str) -> float | None:
+    latest = _last_with(daily_rows, (key,))
+    if not latest:
+        return None
+    return _float({"value": latest.get(key)}, ["value"])
+
+
+def _average(values: list[float]) -> float | None:
+    usable = [value for value in values if value is not None and value > 0]
+    if not usable:
+        return None
+    return round(sum(usable) / len(usable), 2)
+
+
+def _stage_averages(sleep_days: list[dict[str, Any]]) -> dict[str, float]:
+    totals: dict[str, float] = defaultdict(float)
+    counts: dict[str, int] = defaultdict(int)
+    for day in sleep_days:
+        for stage, minutes in day.get("sleep", {}).get("stages_minutes", {}).items():
+            totals[stage] += _float({"value": minutes}, ["value"])
+            counts[stage] += 1
+    return {stage: round(total / counts[stage], 1) for stage, total in sorted(totals.items()) if counts[stage]}
+
+
+def _rating_from_checkins(checkins: list[dict[str, Any]], key: str) -> int | None:
+    for item in checkins:
+        value = item.get("checkin", {}).get(key)
+        if value is None:
+            continue
+        try:
+            return max(1, min(10, int(value)))
+        except (TypeError, ValueError):
+            continue
+    return None
+
+
+def _dedupe(items: list[str]) -> list[str]:
+    return list(dict.fromkeys(item for item in items if item))
 
 
 def summarize_records(records: list[dict[str, Any]]) -> dict[str, Any]:

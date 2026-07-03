@@ -1,4 +1,4 @@
-WIDGET_URI = "ui://mehair/today-v2.html"
+WIDGET_URI = "ui://mehair/today-v3.html"
 WIDGET_MIME_TYPE = "text/html;profile=mcp-app"
 
 
@@ -12,127 +12,223 @@ TODAY_WIDGET_HTML = """
     <style>
       :root {
         color-scheme: light;
-        color: #171a1f;
-        background: #f7f8f6;
-        font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+        --ink: #171a1f;
+        --muted: #667078;
+        --line: #dde3df;
+        --surface: #ffffff;
+        --wash: #f5f7f4;
+        --tile: #fafbf9;
+        --accent: #39745c;
+        --accent-soft: #edf5f0;
+        --warn: #9b741c;
+        --danger: #a94f43;
+        --info: #386f8f;
+        font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
           "Segoe UI", sans-serif;
       }
 
       * { box-sizing: border-box; }
 
-      html, body {
+      html,
+      body {
         margin: 0;
         min-height: 100%;
       }
 
       body {
-        padding: 12px;
-        background: #f7f8f6;
+        background: var(--wash);
+        color: var(--ink);
+        padding: 10px;
       }
 
       main {
-        max-width: 600px;
         margin: 0 auto;
+        max-width: 660px;
       }
 
       .panel {
-        --accent: #4f7f36;
-        border: 1px solid #dfe4dd;
+        --accent: #39745c;
+        --accent-soft: #edf5f0;
+        background: var(--surface);
+        border: 1px solid var(--line);
         border-radius: 8px;
-        background: #fff;
-        box-shadow: 0 1px 0 rgba(16, 24, 40, 0.04);
+        box-shadow: 0 1px 2px rgba(17, 24, 39, 0.05);
         overflow: hidden;
       }
 
-      .topbar {
-        display: flex;
-        align-items: flex-start;
-        justify-content: space-between;
-        gap: 12px;
-        padding: 14px 14px 0;
+      .empty {
+        display: grid;
+        gap: 8px;
+        padding: 18px;
+        color: #404a52;
+        font-size: 14px;
+        line-height: 1.4;
+      }
+
+      .empty strong {
+        color: var(--ink);
+        font-size: 15px;
+      }
+
+      .mast {
+        display: grid;
+        grid-template-columns: 1fr auto;
+        gap: 14px;
+        align-items: start;
+        padding: 14px 14px 8px;
+        border-bottom: 1px solid #edf0ea;
+      }
+
+      .identity {
+        min-width: 0;
+      }
+
+      .eyebrow {
+        margin: 0 0 4px;
+        color: var(--accent);
+        font-size: 11px;
+        font-weight: 820;
+        letter-spacing: 0;
+        text-transform: uppercase;
       }
 
       h1 {
         margin: 0;
-        font-size: 15px;
-        line-height: 1.2;
-        font-weight: 760;
+        color: var(--ink);
+        font-size: 18px;
+        font-weight: 820;
+        line-height: 1.16;
       }
 
-      .date {
-        color: #69737a;
+      .headline {
+        margin: 7px 0 0;
+        color: #333d45;
+        font-size: 13px;
+        line-height: 1.38;
+      }
+
+      .stamp {
+        min-width: 96px;
+        color: var(--muted);
         font-size: 12px;
-        line-height: 1.25;
+        line-height: 1.3;
         text-align: right;
       }
 
-      .pill {
+      .status-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        padding: 0 14px 12px;
+      }
+
+      .chip {
         display: inline-flex;
         align-items: center;
         min-height: 24px;
-        border: 1px solid color-mix(in srgb, var(--accent) 34%, #dfe4dd);
+        border: 1px solid #d9e1dc;
         border-radius: 999px;
-        padding: 3px 9px;
-        background: color-mix(in srgb, var(--accent) 10%, #fff);
-        color: #2d333b;
+        background: #fff;
+        color: #313940;
         font-size: 12px;
-        font-weight: 700;
+        font-weight: 720;
+        line-height: 1;
+        padding: 5px 9px;
         text-transform: capitalize;
+      }
+
+      .chip.accent {
+        border-color: var(--accent);
+        background: var(--accent-soft);
+        color: #173d31;
       }
 
       .hero {
         display: grid;
-        grid-template-columns: 126px 1fr;
-        gap: 14px;
-        align-items: stretch;
+        grid-template-columns: 136px 1fr;
+        gap: 12px;
         padding: 14px;
       }
 
-      .primary {
-        min-height: 118px;
-        border: 1px solid color-mix(in srgb, var(--accent) 28%, #e5e7e2);
-        border-left: 5px solid var(--accent);
-        border-radius: 8px;
-        background: color-mix(in srgb, var(--accent) 8%, #fff);
-        padding: 12px;
-        display: flex;
-        flex-direction: column;
-        justify-content: center;
+      .gauge {
+        position: relative;
+        display: grid;
+        place-items: center;
+        width: 136px;
+        aspect-ratio: 1;
+        min-height: 136px;
+        border: 1px solid #dfe6e1;
+        border-radius: 50%;
+        background: conic-gradient(var(--accent) calc(var(--score, 0) * 1%), #e8ece8 0);
+        overflow: hidden;
       }
 
-      .primary b {
-        display: block;
-        font-size: 32px;
-        line-height: 1;
-        font-weight: 820;
+      .gauge-inner {
+        display: grid;
+        gap: 2px;
+        place-items: center;
+        width: 92px;
+        height: 92px;
+        border: 1px solid #e5eae6;
+        border-radius: 50%;
+        background: #fff;
       }
 
-      .primary small {
-        display: block;
-        margin-top: 4px;
-        color: #5f6870;
-        font-size: 12px;
+      .gauge b {
+        color: var(--ink);
+        font-size: 30px;
+        font-weight: 840;
+        line-height: 1.1;
       }
 
-      .summary {
+      .gauge span {
+        color: var(--muted);
+        font-size: 11px;
+        font-weight: 720;
+        line-height: 1.2;
+        text-align: center;
+      }
+
+      .plan-box {
+        display: grid;
+        gap: 10px;
+        align-content: start;
         min-width: 0;
-        display: flex;
-        flex-direction: column;
-        justify-content: center;
+        border: 1px solid #dfe6e1;
+        border-radius: 8px;
+        background: #fbfcfb;
+        padding: 12px;
       }
 
-      .headline {
-        margin: 8px 0 0;
-        color: #27313a;
+      .plan-box h2 {
+        margin: 0;
+        color: var(--ink);
         font-size: 14px;
+        font-weight: 780;
+        line-height: 1.2;
+      }
+
+      .plan-box p {
+        margin: 0;
+        color: #3b454d;
+        font-size: 13px;
         line-height: 1.38;
       }
 
-      .source {
-        margin-top: 8px;
-        color: #69737a;
+      .focus-list {
+        display: grid;
+        gap: 6px;
+        margin: 0;
+        padding: 0;
+        list-style: none;
+      }
+
+      .focus-list li {
+        border-left: 3px solid var(--accent);
+        padding-left: 8px;
+        color: #303942;
         font-size: 12px;
-        line-height: 1.35;
+        line-height: 1.34;
       }
 
       .metrics {
@@ -143,11 +239,13 @@ TODAY_WIDGET_HTML = """
       }
 
       .metric {
-        min-height: 74px;
-        border: 1px solid #e5e7e2;
+        display: grid;
+        align-content: center;
+        min-height: 76px;
+        border: 1px solid #e4e9e4;
         border-radius: 8px;
+        background: var(--tile);
         padding: 10px;
-        background: #fbfcfb;
       }
 
       .metric b {
@@ -155,13 +253,14 @@ TODAY_WIDGET_HTML = """
         overflow-wrap: anywhere;
         color: #20272e;
         font-size: 18px;
-        line-height: 1.12;
+        font-weight: 800;
+        line-height: 1.1;
       }
 
       .metric span {
         display: block;
-        margin-top: 4px;
-        color: #667078;
+        margin-top: 5px;
+        color: var(--muted);
         font-size: 12px;
         line-height: 1.25;
       }
@@ -169,54 +268,65 @@ TODAY_WIDGET_HTML = """
       .metric small {
         display: block;
         margin-top: 4px;
-        color: #8a939b;
+        color: #89939a;
         font-size: 11px;
         line-height: 1.25;
       }
 
-      .evidence-wrap {
+      .details {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 12px;
         border-top: 1px solid #edf0ea;
-        padding: 12px 14px 14px;
         background: #fcfdfb;
+        padding: 12px 14px 14px;
       }
 
-      .section-title {
+      .section {
+        min-width: 0;
+      }
+
+      .section h3 {
         margin: 0 0 8px;
-        color: #5d6670;
+        color: #59636b;
         font-size: 12px;
-        font-weight: 760;
+        font-weight: 800;
+        line-height: 1.2;
       }
 
       .evidence {
         display: grid;
-        gap: 8px;
+        gap: 7px;
         margin: 0;
         padding: 0;
         list-style: none;
       }
 
       .evidence li {
-        border-left: 3px solid var(--accent);
-        padding-left: 9px;
-        color: #343b43;
-        font-size: 13px;
+        color: #343d45;
+        font-size: 12px;
         line-height: 1.35;
       }
 
-      .empty {
-        padding: 16px;
-        color: #57606a;
-        line-height: 1.4;
-        font-size: 14px;
+      .evidence li::before {
+        content: "";
+        display: inline-block;
+        width: 6px;
+        height: 6px;
+        margin-right: 7px;
+        border-radius: 999px;
+        background: var(--accent);
+        vertical-align: 1px;
       }
 
-      @media (max-width: 480px) {
-        body { padding: 10px; }
-        .topbar { flex-direction: column; }
-        .date { text-align: left; }
+      @media (max-width: 560px) {
+        body { padding: 8px; }
+        .mast { grid-template-columns: 1fr; gap: 8px; }
+        .stamp { min-width: 0; text-align: left; }
         .hero { grid-template-columns: 1fr; }
-        .primary { min-height: 98px; }
+        .gauge { justify-self: center; min-height: 136px; }
         .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+        .details { grid-template-columns: 1fr; }
       }
 
       @media (max-width: 340px) {
@@ -227,7 +337,10 @@ TODAY_WIDGET_HTML = """
   <body>
     <main>
       <section class="panel" id="root">
-        <div class="empty">Waiting for health context.</div>
+        <div class="empty">
+          <strong>Mehair Coach</strong>
+          <span>Waiting for health context.</span>
+        </div>
       </section>
     </main>
     <script>
@@ -281,7 +394,7 @@ TODAY_WIDGET_HTML = """
       async function initialize() {
         try {
           await rpcRequest("ui/initialize", {
-            appInfo: { name: "mehair-coach-widget", version: "0.2.0" },
+            appInfo: { name: "mehair-coach-widget", version: "0.3.0" },
             appCapabilities: {},
             protocolVersion: "2026-01-26",
           });
@@ -295,26 +408,82 @@ TODAY_WIDGET_HTML = """
         const data = state.data || {};
         const status = data.status;
         if (status && status !== "ok" && status !== "connected") {
-          root.innerHTML = `<div class="empty">${escapeHtml(data.message || "No synced data yet.")}</div>`;
+          renderEmpty(data.message || "No synced Fitbit data yet.", data.status || "setup");
           return;
         }
         renderModel(toViewModel(data));
       }
 
+      function renderEmpty(message, status) {
+        root.style.setProperty("--accent", "#667078");
+        root.style.setProperty("--accent-soft", "#f1f3f4");
+        root.innerHTML = `
+          <div class="empty">
+            <strong>${escapeHtml(status === "empty" ? "No synced data yet" : "Setup needed")}</strong>
+            <span>${escapeHtml(message)}</span>
+          </div>
+        `;
+      }
+
       function toViewModel(data) {
+        if (data?.overview_type === "health_overview" && data?.sections) return healthOverviewModel(data);
+        if (data?.planned_activity && Array.isArray(data.session_guidance)) return workoutPlanModel(data);
         if (data?.latest && Array.isArray(data.days) && (data.latest.stages_minutes || data.latest.sessions_count != null)) {
           return sleepModel(data);
         }
-        if (data?.totals && data?.highest_load_day && Array.isArray(data.days)) {
-          return activityModel(data);
-        }
+        if (data?.totals && data?.highest_load_day && Array.isArray(data.days)) return activityModel(data);
         if (data?.summary && Array.isArray(data.days) && ("average_hrv_ms" in data.summary || "average_resting_bpm" in data.summary)) {
           return heartModel(data);
         }
-        if (data?.metrics && data?.requested_metrics) {
-          return metricQueryModel(data);
-        }
+        if (data?.metrics && data?.requested_metrics) return metricQueryModel(data);
         return readinessModel(data);
+      }
+
+      function healthOverviewModel(data) {
+        const readiness = data.readiness || {};
+        const label = readiness.label || "pending";
+        const sections = data.sections || {};
+        const activity = sections.activity || {};
+        const sleep = sections.sleep || {};
+        const heart = sections.heart || {};
+        const recovery = sections.recovery || {};
+        const workouts = sections.workouts || {};
+        const dataUsed = data.data_used || {};
+        const dateRange = data.date_range || {};
+        const range = dateRange.start && dateRange.end ? `${dateRange.start} to ${dateRange.end}` : "";
+        const sleepHours = sleep.latest_asleep_hours ?? data.today?.sleep?.asleep_hours ?? data.today?.sleep?.duration_hours;
+        const hrv = heart.latest_hrv_ms ?? data.today?.hrv_ms;
+        const rhr = heart.latest_resting_heart_rate ?? data.today?.resting_heart_rate;
+        const primaryActions = (data.next_actions || []).slice(0, 4);
+        return {
+          accent: readinessAccent(label),
+          title: "Health Overview",
+          eyebrow: "Mehair Coach",
+          date: range || data.data_freshness?.latest_observed_date || "",
+          chips: [
+            label,
+            `${data.window_days || 14} days`,
+            `${dataUsed.synced_metric_count || 0} metrics`,
+            data.data_freshness?.latest_observed_date ? `fresh ${data.data_freshness.latest_observed_date}` : "",
+          ].filter(Boolean),
+          score: finiteNumber(readiness.score, 0),
+          primaryLabel: "Readiness",
+          headline: data.headline || readiness.recommendation || "All synced health data summarized.",
+          focusTitle: "Next Actions",
+          focus: primaryActions,
+          metrics: [
+            ["Steps", intText(activity.totals?.steps ?? data.today?.steps ?? 0), "window"],
+            ["Zone min", intText(activity.totals?.active_zone_minutes ?? data.today?.active_zone_minutes ?? 0), "window"],
+            ["Sleep", sleepHours ? `${num(sleepHours, 1)}h` : null, sleep.days_with_sleep ? `${sleep.days_with_sleep} nights` : ""],
+            ["HRV", hrv ? `${num(hrv, 1)} ms` : null, heart.average_hrv_ms ? `avg ${num(heart.average_hrv_ms, 1)}` : ""],
+            ["Resting HR", rhr ? `${num(rhr, 1)} bpm` : null, heart.average_resting_heart_rate ? `avg ${num(heart.average_resting_heart_rate, 1)}` : ""],
+            ["Workouts", intText(workouts.workout_count ?? 0), recovery.latest_spo2 ? `SpO2 ${num(recovery.latest_spo2, 1)}%` : ""],
+          ],
+          evidenceTitle: "Positives",
+          evidence: data.positives || [],
+          secondaryTitle: "Watchouts",
+          secondary: data.watchouts || [],
+        };
       }
 
       function readinessModel(data) {
@@ -330,27 +499,63 @@ TODAY_WIDGET_HTML = """
         const latestLoad = today.latest_training_load || {};
         const sleepHours = sleep.asleep_hours ?? sleep.duration_hours;
         const source = activityDate && recoveryDate && activityDate !== recoveryDate
-          ? `Activity from ${activityDate}; recovery from ${recoveryDate}.`
-          : activityDate ? `Using health context from ${activityDate}.` : "Waiting for synced health context.";
+          ? `Activity ${activityDate}; recovery ${recoveryDate}.`
+          : activityDate ? `Health context from ${activityDate}.` : "Waiting for synced health context.";
         return {
-          type: "readiness",
           accent: readinessAccent(label),
-          title: "Mehair Coach",
-          date: activityDate || data.latest_observed_date || "",
-          pill: label,
-          primaryValue: `${Math.round(score)}`,
+          title: "Readiness",
+          eyebrow: "Mehair Coach",
+          date: source,
+          chips: [label, activityDate].filter(Boolean),
+          score,
           primaryLabel: "Readiness",
           headline: readiness.recommendation || data.recommendation || "Health context synced.",
-          source,
+          focusTitle: "Coach Take",
+          focus: [readiness.recommendation || data.recommendation || "Health context synced."],
           metrics: [
             ["Steps", intText(today.steps ?? 0)],
-            ["Zone minutes", intText(today.active_zone_minutes ?? 0), latestLoad.date && latestLoad.date !== activityDate ? `Latest ${latestLoad.active_zone_minutes ?? 0} on ${latestLoad.date}` : ""],
-            ["Active minutes", optionalInt(today.active_minutes)],
+            ["Zone min", intText(today.active_zone_minutes ?? 0), latestLoad.date && latestLoad.date !== activityDate ? `${latestLoad.active_zone_minutes ?? 0} on ${latestLoad.date}` : ""],
+            ["Active", optionalInt(today.active_minutes), "minutes"],
             ["Sleep", sleepHours ? `${num(sleepHours, 1)}h` : null, sleep.sessions_count ? `${sleep.sessions_count} sessions` : ""],
-            ["Resting HR", today.resting_heart_rate ? `${today.resting_heart_rate} bpm` : heart.avg_bpm ? `${heart.avg_bpm} avg bpm` : null],
+            ["Resting HR", today.resting_heart_rate ? `${today.resting_heart_rate} bpm` : heart.avg_bpm ? `${heart.avg_bpm} avg` : null],
             ["HRV", today.hrv_ms ? `${num(today.hrv_ms, 1)} ms` : null],
           ],
+          evidenceTitle: "Evidence",
           evidence: readiness.evidence || data.evidence || [],
+        };
+      }
+
+      function workoutPlanModel(data) {
+        const readiness = data.readiness || {};
+        const label = readiness.label || data.data_used?.readiness_label || "pending";
+        const dataUsed = data.data_used || {};
+        const planFocus = [
+          ...(data.session_guidance || []).slice(0, 3),
+          ...(data.focus || []).slice(0, 2),
+        ];
+        return {
+          accent: readinessAccent(label),
+          title: data.planned_activity || "Workout Plan",
+          eyebrow: "Workout Plan",
+          date: data.planned_date ? `Planned for ${data.planned_date}` : "Next planned session",
+          chips: [data.recommended_intensity, `RPE ${data.rpe_cap || "?"}`, label].filter(Boolean),
+          score: finiteNumber(readiness.score ?? dataUsed.readiness_score, 0),
+          primaryLabel: "Readiness",
+          headline: data.summary || "Workout adjusted to your synced health context.",
+          focusTitle: "Session",
+          focus: planFocus,
+          metrics: [
+            ["RPE cap", data.rpe_cap != null ? `${data.rpe_cap}/10` : null],
+            ["Intensity", titleCase(data.recommended_intensity || "")],
+            ["Sleep", dataUsed.sleep_asleep_hours ? `${num(dataUsed.sleep_asleep_hours, 1)}h` : null, dataUsed.sleep_sessions ? `${dataUsed.sleep_sessions} sessions` : ""],
+            ["HRV", dataUsed.hrv_ms ? `${num(dataUsed.hrv_ms, 1)} ms` : null],
+            ["Resting HR", dataUsed.resting_heart_rate ? `${dataUsed.resting_heart_rate} bpm` : null],
+            ["Latest load", dataUsed.latest_training_load?.active_zone_minutes != null ? `${dataUsed.latest_training_load.active_zone_minutes} AZM` : null, dataUsed.latest_training_load?.date || ""],
+          ],
+          evidenceTitle: "Limits",
+          evidence: (data.limiting_factors || data.why || []).slice(0, 5),
+          secondaryTitle: "Avoid",
+          secondary: (data.avoid || []).slice(0, 4),
         };
       }
 
@@ -361,33 +566,29 @@ TODAY_WIDGET_HTML = """
         const sessions = latest.sessions_count || 1;
         const delta = data.summary?.latest_vs_average_hours;
         const evidence = [];
-        if (delta != null) {
-          evidence.push(`Latest sleep is ${Math.abs(delta)}h ${delta < 0 ? "below" : "above"} recent average.`);
-        }
-        if (latest.awake_minutes != null) {
-          evidence.push(`${latest.awake_minutes} minutes awake during the sleep window.`);
-        }
-        if (stages.deep != null || stages.rem != null) {
-          evidence.push(`Deep ${num(stages.deep, 0)}m and REM ${num(stages.rem, 0)}m were detected.`);
-        }
+        if (delta != null) evidence.push(`Latest sleep is ${Math.abs(delta)}h ${delta < 0 ? "below" : "above"} recent average.`);
+        if (latest.awake_minutes != null) evidence.push(`${latest.awake_minutes} minutes awake during the sleep window.`);
+        if (stages.deep != null || stages.rem != null) evidence.push(`Deep ${num(stages.deep, 0)}m and REM ${num(stages.rem, 0)}m were detected.`);
         return {
-          type: "sleep",
-          accent: "#2f6f8f",
+          accent: "#386f8f",
           title: "Sleep",
-          date: latest.date || "",
-          pill: `${sessions} session${sessions === 1 ? "" : "s"}`,
-          primaryValue: asleep ? `${num(asleep, 1)}h` : "No data",
-          primaryLabel: "Asleep",
+          eyebrow: "Recovery",
+          date: latest.date ? `Latest sleep from ${latest.date}` : "Latest synced sleep",
+          chips: [`${sessions} session${sessions === 1 ? "" : "s"}`],
+          score: asleep ? Math.min(100, Math.round((asleep / 8) * 100)) : 0,
+          primaryLabel: "Sleep target",
           headline: sessions > 1 ? "Split sleep was combined for coaching." : "Sleep session captured.",
-          source: latest.date ? `Latest sleep from ${latest.date}.` : "Latest synced sleep.",
+          focusTitle: "Sleep Context",
+          focus: evidence.slice(0, 3),
           metrics: [
+            ["Asleep", asleep ? `${num(asleep, 1)}h` : null],
             ["Duration", latest.duration_hours ? `${num(latest.duration_hours, 1)}h` : null],
             ["Awake", latest.awake_minutes != null ? `${latest.awake_minutes}m` : null],
             ["Deep", stages.deep != null ? `${num(stages.deep, 0)}m` : null],
             ["REM", stages.rem != null ? `${num(stages.rem, 0)}m` : null],
-            ["Light", stages.light != null ? `${num(stages.light, 0)}m` : null],
             ["Average", data.summary?.average_asleep_hours ? `${num(data.summary.average_asleep_hours, 1)}h` : null],
           ],
+          evidenceTitle: "Evidence",
           evidence,
         };
       }
@@ -397,24 +598,26 @@ TODAY_WIDGET_HTML = """
         const highest = data.highest_load_day || {};
         const days = data.days || [];
         return {
-          type: "activity",
           accent: "#7a6a18",
           title: "Activity Load",
+          eyebrow: "Training",
           date: rangeText(days),
-          pill: `${days.length || 0} days`,
-          primaryValue: intText(totals.active_zone_minutes ?? highest.active_zone_minutes ?? 0),
-          primaryLabel: "Zone minutes",
+          chips: [`${days.length || 0} days`],
+          score: clamp(Math.round((Number(totals.active_zone_minutes || highest.active_zone_minutes || 0) / 150) * 100), 0, 100),
+          primaryLabel: "Load",
           headline: `${intText(totals.steps ?? 0)} steps across the queried window.`,
-          source: highest.date ? `Highest load day: ${highest.date}.` : "Latest synced activity.",
+          focusTitle: "Load Context",
+          focus: highest.date ? [`${highest.date} had the highest zone-minute load in this window.`] : ["Latest synced activity load."],
           metrics: [
             ["Steps", intText(totals.steps ?? 0)],
-            ["Active minutes", intText(totals.active_minutes ?? 0)],
-            ["Zone minutes", intText(totals.active_zone_minutes ?? 0)],
+            ["Active", intText(totals.active_minutes ?? 0), "minutes"],
+            ["Zone min", intText(totals.active_zone_minutes ?? 0)],
             ["Highest AZM", highest.active_zone_minutes != null ? intText(highest.active_zone_minutes) : null, highest.date || ""],
             ["Latest day", days.length ? days[days.length - 1].date : null],
             ["Distance", sumDistance(days)],
           ],
-          evidence: highest.date ? [`${highest.date} had the highest zone-minute load in this window.`] : [],
+          evidenceTitle: "Evidence",
+          evidence: highest.date ? [`${highest.date} was the highest load day.`] : [],
         };
       }
 
@@ -422,30 +625,35 @@ TODAY_WIDGET_HTML = """
         const days = data.days || [];
         const latest = data.latest || days[days.length - 1] || {};
         const summary = data.summary || {};
-        const primary = latest.hrv_ms != null
-          ? [`${num(latest.hrv_ms, 1)}`, "Latest HRV"]
-          : latest.resting_bpm != null ? [`${latest.resting_bpm}`, "Resting HR"] : ["No data", "Heart"];
+        const score = latest.hrv_ms && summary.average_hrv_ms
+          ? clamp(Math.round((latest.hrv_ms / summary.average_hrv_ms) * 75), 0, 100)
+          : 50;
         return {
-          type: "heart",
           accent: "#8a4b3e",
           title: "Heart Trends",
+          eyebrow: "Recovery",
           date: latest.date || rangeText(days),
-          pill: "heart",
-          primaryValue: primary[0],
-          primaryLabel: primary[1],
+          chips: ["heart", days.length ? `${days.length} days` : ""].filter(Boolean),
+          score,
+          primaryLabel: latest.hrv_ms != null ? "HRV vs avg" : "Heart",
           headline: "Recent HRV and resting heart-rate context.",
-          source: latest.date ? `Latest heart signals from ${latest.date}.` : "Latest synced heart signals.",
+          focusTitle: "Heart Context",
+          focus: [
+            summary.average_hrv_ms != null ? `Average HRV is ${num(summary.average_hrv_ms, 1)} ms.` : null,
+            summary.average_resting_bpm != null ? `Average resting HR is ${num(summary.average_resting_bpm, 1)} bpm.` : null,
+          ].filter(Boolean),
           metrics: [
             ["Latest HRV", latest.hrv_ms != null ? `${num(latest.hrv_ms, 1)} ms` : null],
             ["Avg HRV", summary.average_hrv_ms != null ? `${num(summary.average_hrv_ms, 1)} ms` : null],
             ["Resting HR", latest.resting_bpm != null ? `${latest.resting_bpm} bpm` : null],
-            ["Avg resting HR", summary.average_resting_bpm != null ? `${num(summary.average_resting_bpm, 1)} bpm` : null],
+            ["Avg RHR", summary.average_resting_bpm != null ? `${num(summary.average_resting_bpm, 1)} bpm` : null],
             ["Avg BPM", latest.avg_bpm != null ? `${num(latest.avg_bpm, 1)} bpm` : null],
             ["Days", intText(days.length || 0)],
           ],
+          evidenceTitle: "Evidence",
           evidence: [
-            summary.average_hrv_ms != null ? `Average HRV is ${num(summary.average_hrv_ms, 1)} ms.` : null,
-            summary.average_resting_bpm != null ? `Average resting HR is ${num(summary.average_resting_bpm, 1)} bpm.` : null,
+            summary.average_hrv_ms != null ? `Average HRV: ${num(summary.average_hrv_ms, 1)} ms.` : null,
+            summary.average_resting_bpm != null ? `Average resting HR: ${num(summary.average_resting_bpm, 1)} bpm.` : null,
           ].filter(Boolean),
         };
       }
@@ -454,20 +662,22 @@ TODAY_WIDGET_HTML = """
         const metrics = data.metrics || {};
         const entries = Object.entries(metrics);
         return {
-          type: "metrics",
           accent: "#4b6f8f",
           title: "Metric Query",
+          eyebrow: "Data",
           date: data.start_date && data.end_date ? `${data.start_date} to ${data.end_date}` : "",
-          pill: `${data.requested_metrics.length} metrics`,
-          primaryValue: intText(data.record_count ?? 0),
+          chips: [`${data.requested_metrics.length} metrics`, data.source || ""].filter(Boolean),
+          score: clamp(Number(data.record_count || 0), 0, 100),
           primaryLabel: "Records",
           headline: "Synced local health metrics returned for this window.",
-          source: data.source || "local synced store",
+          focusTitle: "Returned Metrics",
+          focus: entries.slice(0, 5).map(([id, item]) => `${item.catalog?.label || id}: ${item.record_count || 0} records`),
           metrics: entries.slice(0, 6).map(([id, item]) => [
             item.catalog?.label || id,
             intText(item.record_count ?? 0),
             item.latest_observed_date || "",
           ]),
+          evidenceTitle: "Gaps",
           evidence: [
             data.missing_metrics?.length ? `No records in range for: ${data.missing_metrics.join(", ")}.` : null,
             data.unknown_metrics?.length ? `Unsupported metrics ignored: ${data.unknown_metrics.join(", ")}.` : null,
@@ -476,33 +686,50 @@ TODAY_WIDGET_HTML = """
       }
 
       function renderModel(model) {
-        root.style.setProperty("--accent", model.accent || "#4f7f36");
+        const accent = model.accent || "#39745c";
+        root.style.setProperty("--accent", accent);
+        root.style.setProperty("--accent-soft", softFor(accent));
+        const score = clamp(Math.round(Number(model.score || 0)), 0, 100);
+        root.style.setProperty("--score", String(score));
+        const primaryFocus = listItems(model.focus, "Health context synced.");
+        const secondaryTitle = model.secondaryTitle || "Evidence";
+        const secondary = model.secondary || model.evidence || [];
         root.innerHTML = `
-          <div class="topbar">
-            <div>
+          <div class="mast">
+            <div class="identity">
+              <p class="eyebrow">${escapeHtml(model.eyebrow || "Mehair Coach")}</p>
               <h1>${escapeHtml(model.title || "Mehair Coach")}</h1>
               <p class="headline">${escapeHtml(model.headline || "Health context synced.")}</p>
             </div>
-            <div class="date">${escapeHtml(model.date || "")}</div>
+            <div class="stamp">${escapeHtml(model.date || "")}</div>
+          </div>
+          <div class="status-row">
+            ${(model.chips || ["health"]).slice(0, 4).map((item, index) => `<span class="chip ${index === 0 ? "accent" : ""}">${escapeHtml(item)}</span>`).join("")}
           </div>
           <div class="hero">
-            <div class="primary">
-              <b>${escapeHtml(model.primaryValue ?? "No data")}</b>
-              <small>${escapeHtml(model.primaryLabel || "")}</small>
+            <div class="gauge" aria-label="${escapeHtml(model.primaryLabel || "score")} ${score}">
+              <div class="gauge-inner">
+                <b>${escapeHtml(score)}</b>
+                <span>${escapeHtml(model.primaryLabel || "Score")}</span>
+              </div>
             </div>
-            <div class="summary">
-              <div><span class="pill">${escapeHtml(model.pill || model.type || "health")}</span></div>
-              <div class="source">${escapeHtml(model.source || "Latest synced health context.")}</div>
+            <div class="plan-box">
+              <h2>${escapeHtml(model.focusTitle || "Coach Take")}</h2>
+              <ul class="focus-list">${primaryFocus}</ul>
             </div>
           </div>
           <div class="metrics">
             ${(model.metrics || []).slice(0, 6).map((item) => metric(item[0], item[1], item[2])).join("")}
           </div>
-          <div class="evidence-wrap">
-            <p class="section-title">Why</p>
-            <ul class="evidence">
-              ${((model.evidence || []).length ? model.evidence : ["More synced Fitbit data will make this richer."]).slice(0, 4).map((item) => `<li>${escapeHtml(item)}</li>`).join("")}
-            </ul>
+          <div class="details">
+            <div class="section">
+              <h3>${escapeHtml(model.evidenceTitle || "Evidence")}</h3>
+              <ul class="evidence">${listItems(model.evidence, "More synced Fitbit data will make this richer.")}</ul>
+            </div>
+            <div class="section">
+              <h3>${escapeHtml(secondaryTitle)}</h3>
+              <ul class="evidence">${listItems(secondary, "No extra limits detected.")}</ul>
+            </div>
           </div>
         `;
       }
@@ -512,16 +739,41 @@ TODAY_WIDGET_HTML = """
         return `<div class="metric"><b>${escapeHtml(value ?? "No data")}</b><span>${escapeHtml(label)}</span>${detailHtml}</div>`;
       }
 
+      function listItems(items, fallback) {
+        const usable = (items || []).filter(Boolean).slice(0, 5);
+        const content = usable.length ? usable : [fallback];
+        return content.map((item) => `<li>${escapeHtml(item)}</li>`).join("");
+      }
+
       function readinessAccent(label) {
-        if (label === "green") return "#4f7f36";
+        if (label === "green") return "#39745c";
         if (label === "yellow") return "#9b741c";
         if (label === "red") return "#a94f43";
         return "#667078";
       }
 
+      function softFor(accent) {
+        const map = {
+          "#39745c": "#edf5f0",
+          "#9b741c": "#fbf5e7",
+          "#a94f43": "#fbefed",
+          "#386f8f": "#edf5fa",
+          "#7a6a18": "#f8f4df",
+          "#8a4b3e": "#f7efed",
+          "#4b6f8f": "#eef4fa",
+        };
+        return map[accent] || "#f1f3f4";
+      }
+
       function finiteNumber(value, fallback) {
         const number = Number(value);
         return Number.isFinite(number) ? number : fallback;
+      }
+
+      function clamp(value, min, max) {
+        const number = Number(value);
+        if (!Number.isFinite(number)) return min;
+        return Math.max(min, Math.min(max, number));
       }
 
       function num(value, digits) {
@@ -549,6 +801,14 @@ TODAY_WIDGET_HTML = """
       function sumDistance(days) {
         const km = (days || []).reduce((total, day) => total + Number(day.distance_km || 0), 0);
         return km ? `${num(km, 1)} km` : null;
+      }
+
+      function titleCase(value) {
+        return String(value)
+          .split("-")
+          .filter(Boolean)
+          .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+          .join(" ");
       }
 
       function escapeHtml(value) {
