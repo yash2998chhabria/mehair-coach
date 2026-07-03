@@ -336,7 +336,7 @@ def create_server(settings_override: Settings | None = None) -> ServerBundle:
         user_id = current_user_id()
         if not user_id:
             return setup_required()
-        context = health_store.latest_context(user_id)
+        context = health_store.health_overview(user_id, 14)
         if context.get("status") != "ok":
             return context
         return workout_plan_for_activity(
@@ -590,7 +590,10 @@ def workout_recommendation(
     readiness = context["readiness"]
     label = readiness.get("label")
     today = context.get("today", {})
-    sleep = today.get("sleep", {})
+    sleep_hours = _sleep_hours_from_context(context)
+    hrv_ms = _hrv_ms_from_context(context)
+    resting_heart_rate = _resting_heart_rate_from_context(context)
+    activity_date, recovery_date = _context_dates(context)
     freshness = context.get("data_freshness", {})
     soreness_rating = _latest_rating(checkins or [], "soreness")
     energy_rating = _latest_rating(checkins or [], "energy")
@@ -623,7 +626,7 @@ def workout_recommendation(
         plan += " You already have a high zone-minute load today, so avoid stacking another hard effort."
         avoid.append("Another hard conditioning block today")
         rpe_cap = min(rpe_cap, 7)
-    if sleep.get("asleep_hours") and sleep["asleep_hours"] < 5:
+    if sleep_hours is not None and sleep_hours < 5:
         plan += " Keep impact low because the latest sleep block was short."
         avoid.append("High-impact or max-effort work on short sleep")
         rpe_cap = min(rpe_cap, 6)
@@ -683,8 +686,8 @@ def workout_recommendation(
         "next_actions": _dedupe(next_actions),
         "avoid": _dedupe(avoid),
         "latest_date": context.get("latest_date"),
-        "activity_date": context.get("activity_date"),
-        "recovery_date": context.get("recovery_date"),
+        "activity_date": activity_date,
+        "recovery_date": recovery_date,
         "today": today,
         "why": evidence,
         "evidence": evidence,
@@ -699,14 +702,14 @@ def workout_recommendation(
         "workout_history_summary": workout_summary or None,
         "data_freshness": freshness,
         "data_used": {
-            "activity_date": context.get("activity_date"),
-            "recovery_date": context.get("recovery_date"),
+            "activity_date": activity_date,
+            "recovery_date": recovery_date,
             "steps_today": today.get("steps", 0),
             "active_minutes_today": today.get("active_minutes", 0),
             "active_zone_minutes_today": today.get("active_zone_minutes", 0),
-            "latest_sleep_hours": sleep.get("asleep_hours") or sleep.get("duration_hours"),
-            "resting_heart_rate": today.get("resting_heart_rate"),
-            "hrv_ms": today.get("hrv_ms"),
+            "latest_sleep_hours": sleep_hours,
+            "resting_heart_rate": resting_heart_rate,
+            "hrv_ms": hrv_ms,
             "energy_checkin": energy_rating,
             "soreness_checkin": soreness_rating,
             "stress_checkin": stress_rating,
@@ -735,8 +738,12 @@ def workout_plan_for_activity(
 
     readiness = context["readiness"]
     today = context.get("today", {})
-    sleep = today.get("sleep", {})
     latest_load = today.get("latest_training_load", {})
+    sleep_hours = _sleep_hours_from_context(context)
+    sleep_sessions = _sleep_sessions_from_context(context)
+    hrv_ms = _hrv_ms_from_context(context)
+    resting_heart_rate = _resting_heart_rate_from_context(context)
+    activity_date, recovery_date = _context_dates(context)
     planned = " ".join([planned_activity or "", " ".join(target_areas or [])]).lower()
     constraint_text = (constraints or "").lower()
     all_context_text = " ".join([planned, constraint_text])
@@ -831,14 +838,14 @@ def workout_plan_for_activity(
         ],
         "limiting_factors": _dedupe(limiting_factors),
         "data_used": {
-            "activity_date": context.get("activity_date"),
-            "recovery_date": context.get("recovery_date"),
+            "activity_date": activity_date,
+            "recovery_date": recovery_date,
             "readiness_score": readiness_score,
             "readiness_label": readiness_label,
-            "sleep_asleep_hours": sleep.get("asleep_hours") or sleep.get("duration_hours"),
-            "sleep_sessions": sleep.get("sessions_count"),
-            "hrv_ms": today.get("hrv_ms"),
-            "resting_heart_rate": today.get("resting_heart_rate"),
+            "sleep_asleep_hours": sleep_hours,
+            "sleep_sessions": sleep_sessions,
+            "hrv_ms": hrv_ms,
+            "resting_heart_rate": resting_heart_rate,
             "steps": today.get("steps", 0),
             "active_minutes": today.get("active_minutes", 0),
             "active_zone_minutes": today.get("active_zone_minutes", 0),
@@ -876,10 +883,13 @@ def active_workout_guidance(
     readiness = context["readiness"]
     today = context.get("today", {})
     latest_load = today.get("latest_training_load", {})
+    hrv_ms = _hrv_ms_from_context(context)
+    resting_heart_rate = _resting_heart_rate_from_context(context)
+    activity_date, recovery_date = _context_dates(context)
     readiness_label = readiness.get("label", "pending")
     readiness_score = int(readiness.get("score", 0))
     rpe = _bounded_rating(current_rpe)
-    pain = _bounded_rating(pain_level)
+    pain = _bounded_rating(pain_level, minimum=0)
     symptoms_text = " ".join([symptoms or "", notes or ""]).lower()
     safety_flags = _active_workout_safety_flags(symptoms_text, current_heart_rate_bpm, pain)
     evidence = list(readiness.get("evidence", []))
@@ -991,13 +1001,13 @@ def active_workout_guidance(
             "notes": notes,
         },
         "data_used": {
-            "activity_date": context.get("activity_date"),
-            "recovery_date": context.get("recovery_date"),
+            "activity_date": activity_date,
+            "recovery_date": recovery_date,
             "readiness_score": readiness_score,
             "readiness_label": readiness_label,
             "latest_training_load": latest_load,
-            "resting_heart_rate": today.get("resting_heart_rate"),
-            "hrv_ms": today.get("hrv_ms"),
+            "resting_heart_rate": resting_heart_rate,
+            "hrv_ms": hrv_ms,
         },
         "questions_to_ask_if_uncertain": [
             "Are symptoms new, severe, or getting worse?",
@@ -1389,10 +1399,57 @@ def _dedupe(items: list[str]) -> list[str]:
     return list(dict.fromkeys(item for item in items if item))
 
 
-def _bounded_rating(value: int | None) -> int | None:
+def _first_present(*values: Any) -> Any:
+    for value in values:
+        if value is not None:
+            return value
+    return None
+
+
+def _context_dates(context: dict[str, Any]) -> tuple[str | None, str | None]:
+    data_used = context.get("data_used", {})
+    return (
+        context.get("activity_date") or data_used.get("activity_date"),
+        context.get("recovery_date") or data_used.get("recovery_date"),
+    )
+
+
+def _sleep_hours_from_context(context: dict[str, Any]) -> float | int | None:
+    today = context.get("today", {})
+    sleep = today.get("sleep", {})
+    overview_sleep = context.get("sections", {}).get("sleep", {})
+    return _first_present(
+        sleep.get("asleep_hours"),
+        sleep.get("duration_hours"),
+        overview_sleep.get("latest_asleep_hours"),
+    )
+
+
+def _sleep_sessions_from_context(context: dict[str, Any]) -> int | None:
+    today = context.get("today", {})
+    sleep = today.get("sleep", {})
+    return sleep.get("sessions_count")
+
+
+def _hrv_ms_from_context(context: dict[str, Any]) -> float | int | None:
+    today = context.get("today", {})
+    overview_heart = context.get("sections", {}).get("heart", {})
+    return _first_present(today.get("hrv_ms"), overview_heart.get("latest_hrv_ms"))
+
+
+def _resting_heart_rate_from_context(context: dict[str, Any]) -> float | int | None:
+    today = context.get("today", {})
+    overview_heart = context.get("sections", {}).get("heart", {})
+    return _first_present(
+        today.get("resting_heart_rate"),
+        overview_heart.get("latest_resting_heart_rate"),
+    )
+
+
+def _bounded_rating(value: int | None, minimum: int = 1) -> int | None:
     if value is None:
         return None
-    return max(1, min(10, int(value)))
+    return max(minimum, min(10, int(value)))
 
 
 bundle = create_server()

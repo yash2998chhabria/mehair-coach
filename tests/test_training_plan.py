@@ -126,6 +126,43 @@ def test_back_workout_without_soreness_is_not_treated_as_lower_back_constraint()
     assert any(block["exercise"] == "Chest-supported row" for block in plan["exercise_blocks"])
 
 
+def test_workout_plan_uses_overview_section_recovery_values() -> None:
+    context = {
+        "status": "ok",
+        "latest_date": "2026-07-03",
+        "data_used": {"activity_date": "2026-07-03", "recovery_date": "2026-07-02"},
+        "readiness": {
+            "score": 44,
+            "label": "red",
+            "recommendation": "Prioritize recovery, mobility, walking, and sleep.",
+            "evidence": ["Recent training load is high: 63 zone minutes on 2026-07-02."],
+        },
+        "today": {
+            "steps": 136,
+            "active_minutes": 17,
+            "active_zone_minutes": 0,
+            "latest_training_load": {"date": "2026-07-02", "active_zone_minutes": 63},
+        },
+        "sections": {
+            "sleep": {"latest_asleep_hours": 6.07, "days_with_sleep": 4},
+            "heart": {"latest_hrv_ms": 31.3, "latest_resting_heart_rate": 65},
+        },
+    }
+
+    plan = workout_plan_for_activity(
+        context=context,
+        planned_activity="chest and back gym session",
+        target_areas=["chest", "back"],
+        constraints="lower back feels tight from sitting",
+    )
+
+    assert plan["data_used"]["activity_date"] == "2026-07-03"
+    assert plan["data_used"]["recovery_date"] == "2026-07-02"
+    assert plan["data_used"]["sleep_asleep_hours"] == 6.07
+    assert plan["data_used"]["hrv_ms"] == 31.3
+    assert plan["data_used"]["resting_heart_rate"] == 65
+
+
 def test_active_workout_stops_for_dizziness_even_when_readiness_is_green() -> None:
     context = {
         "status": "ok",
@@ -241,6 +278,45 @@ def test_active_workout_does_not_treat_negated_red_flags_as_symptoms() -> None:
     assert guidance["decision"] == "downshift_now"
     assert guidance["safety_flags"] == []
     assert any("Take 3-5 minutes easy" in item for item in guidance["immediate_actions"])
+
+
+def test_active_workout_preserves_zero_pain_level() -> None:
+    context = {
+        "status": "ok",
+        "latest_date": "2026-07-03",
+        "activity_date": "2026-07-03",
+        "recovery_date": "2026-07-03",
+        "readiness": {
+            "score": 82,
+            "label": "green",
+            "recommendation": "A normal training day is reasonable if you feel good.",
+            "evidence": ["Latest sleep is strong at 8.0h."],
+        },
+        "today": {
+            "steps": 8500,
+            "active_minutes": 54,
+            "active_zone_minutes": 35,
+            "hrv_ms": 48.5,
+            "resting_heart_rate": 57,
+            "sleep": {"asleep_hours": 8.0, "sessions_count": 1},
+            "latest_training_load": {"date": "2026-07-03", "active_zone_minutes": 35},
+        },
+    }
+
+    guidance = active_workout_guidance(
+        context=context,
+        planned_activity="easy treadmill run",
+        current_heart_rate_bpm=142,
+        current_rpe=6,
+        pain_level=0,
+        symptoms="no dizziness, no chest pain, no chest tightness, breathing feels normal",
+        elapsed_minutes=18,
+        planned_duration_minutes=35,
+    )
+
+    assert guidance["live_inputs"]["pain_level"] == 0
+    assert guidance["safety_flags"] == []
+    assert any("Live pain reported: 0/10." in item for item in guidance["evidence"])
 
 
 def test_today_recommendation_uses_goal_checkins_and_history() -> None:

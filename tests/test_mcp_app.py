@@ -62,8 +62,11 @@ async def test_widget_resource_is_registered() -> None:
 
     assert str(resources[0].uri) == WIDGET_URI
     assert resources[0].mimeType == "text/html;profile=mcp-app"
-    assert "Waiting for data" in html
-    assert 'renderEmpty("Waiting for synced health context.", "waiting")' in html
+    assert "Preparing card" in html
+    assert 'renderEmpty("Preparing the health card from the latest tool result.", "waiting")' in html
+    assert "function hasCardData(data)" in html
+    assert "dataUsed.sleep_asleep_hours != null" in html
+    assert "dataUsed.hrv_ms != null" in html
 
 
 @pytest.mark.asyncio
@@ -122,6 +125,8 @@ async def test_widget_preview_route_renders_real_card_state() -> None:
     assert "Machine chest press" in workout_plan.text
     assert "Chest-supported row" in workout_plan.text
     assert "Bent-over row -> chest-supported row." in workout_plan.text
+    assert "sleep_asleep_hours" in workout_plan.text
+    assert "31.3" in workout_plan.text
     assert "Latest energy check-in is 3/10." in today_workout.text
 
 

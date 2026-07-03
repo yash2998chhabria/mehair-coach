@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 
 
-WIDGET_URI = "ui://mehair/today-v4.html"
+WIDGET_URI = "ui://mehair/today-v5.html"
 WIDGET_MIME_TYPE = "text/html;profile=mcp-app"
 
 
@@ -387,7 +387,7 @@ TODAY_WIDGET_HTML = """
       <section class="panel" id="root">
         <div class="empty">
           <strong>Mehair Coach</strong>
-          <span>Waiting for health context.</span>
+          <span>Preparing health card...</span>
         </div>
       </section>
     </main>
@@ -453,8 +453,8 @@ TODAY_WIDGET_HTML = """
       }
 
       function render() {
-        if (!state.data) {
-          renderEmpty("Waiting for synced health context.", "waiting");
+        if (!hasCardData(state.data)) {
+          renderEmpty("Preparing the health card from the latest tool result.", "waiting");
           return;
         }
         const data = state.data;
@@ -472,7 +472,7 @@ TODAY_WIDGET_HTML = """
         const title = status === "empty"
           ? "No synced data yet"
           : status === "waiting"
-            ? "Waiting for data"
+            ? "Preparing card"
             : "Setup needed";
         root.innerHTML = `
           <div class="empty">
@@ -480,6 +480,27 @@ TODAY_WIDGET_HTML = """
             <span>${escapeHtml(message)}</span>
           </div>
         `;
+      }
+
+      function hasCardData(data) {
+        if (!data || typeof data !== "object") return false;
+        const keys = Object.keys(data).filter((key) => key !== "status");
+        if (!keys.length) return false;
+        return Boolean(
+          data.readiness ||
+          data.today ||
+          data.sections ||
+          data.guidance_type ||
+          data.planned_activity ||
+          data.recommendation ||
+          data.latest ||
+          data.totals ||
+          data.summary ||
+          data.metrics ||
+          data.clue_type ||
+          data.comparison_type ||
+          data.requested_metrics
+        );
       }
 
       function toViewModel(data) {
@@ -547,9 +568,9 @@ TODAY_WIDGET_HTML = """
           metrics: [
             ["Steps", intText(activity.totals?.steps ?? data.today?.steps ?? 0), "window"],
             ["Zone min", intText(activity.totals?.active_zone_minutes ?? data.today?.active_zone_minutes ?? 0), "window"],
-            ["Sleep", sleepHours ? `${num(sleepHours, 1)}h` : null, sleep.days_with_sleep ? `${sleep.days_with_sleep} nights` : ""],
-            ["HRV", hrv ? `${num(hrv, 1)} ms` : null, heart.average_hrv_ms ? `avg ${num(heart.average_hrv_ms, 1)}` : ""],
-            ["Resting HR", rhr ? `${num(rhr, 1)} bpm` : null, heart.average_resting_heart_rate ? `avg ${num(heart.average_resting_heart_rate, 1)}` : ""],
+            ["Sleep", sleepHours != null ? `${num(sleepHours, 1)}h` : null, sleep.days_with_sleep ? `${sleep.days_with_sleep} nights` : ""],
+            ["HRV", hrv != null ? `${num(hrv, 1)} ms` : null, heart.average_hrv_ms ? `avg ${num(heart.average_hrv_ms, 1)}` : ""],
+            ["Resting HR", rhr != null ? `${num(rhr, 1)} bpm` : null, heart.average_resting_heart_rate ? `avg ${num(heart.average_resting_heart_rate, 1)}` : ""],
             ["Workouts", intText(workouts.workout_count ?? 0), recovery.latest_spo2 ? `SpO2 ${num(recovery.latest_spo2, 1)}%` : ""],
           ],
           evidenceTitle: prioritySignals.length ? "Priority Signals" : "Positives",
@@ -665,8 +686,8 @@ TODAY_WIDGET_HTML = """
           metrics: [
             ["Steps", intText(today.steps ?? data.data_used?.steps_today ?? 0), "today"],
             ["Zone min", intText(today.active_zone_minutes ?? data.data_used?.active_zone_minutes_today ?? 0), "today"],
-            ["Sleep", sleepHours ? `${num(sleepHours, 1)}h` : null],
-            ["HRV", data.data_used?.hrv_ms ? `${num(data.data_used.hrv_ms, 1)} ms` : null],
+            ["Sleep", sleepHours != null ? `${num(sleepHours, 1)}h` : null],
+            ["HRV", data.data_used?.hrv_ms != null ? `${num(data.data_used.hrv_ms, 1)} ms` : null],
             ["Soreness", subjective.soreness != null ? `${subjective.soreness}/10` : null, subjective.energy != null ? `energy ${subjective.energy}/10` : ""],
             ["Goal", goal.remaining_sessions != null ? intText(goal.remaining_sessions) : "No goal", goalDetail],
           ],
@@ -731,9 +752,9 @@ TODAY_WIDGET_HTML = """
             ["Steps", intText(today.steps ?? 0)],
             ["Zone min", intText(today.active_zone_minutes ?? 0), latestLoad.date && latestLoad.date !== activityDate ? `${latestLoad.active_zone_minutes ?? 0} on ${latestLoad.date}` : ""],
             ["Active", optionalInt(today.active_minutes), "minutes"],
-            ["Sleep", sleepHours ? `${num(sleepHours, 1)}h` : null, sleep.sessions_count ? `${sleep.sessions_count} sessions` : ""],
+            ["Sleep", sleepHours != null ? `${num(sleepHours, 1)}h` : null, sleep.sessions_count ? `${sleep.sessions_count} sessions` : ""],
             ["Resting HR", today.resting_heart_rate ? `${today.resting_heart_rate} bpm` : heart.avg_bpm ? `${heart.avg_bpm} avg` : null],
-            ["HRV", today.hrv_ms ? `${num(today.hrv_ms, 1)} ms` : null],
+            ["HRV", today.hrv_ms != null ? `${num(today.hrv_ms, 1)} ms` : null],
           ],
           evidenceTitle: "Evidence",
           evidence: readiness.evidence || data.evidence || [],
@@ -764,8 +785,8 @@ TODAY_WIDGET_HTML = """
           metrics: [
             ["RPE cap", data.rpe_cap != null ? `${data.rpe_cap}/10` : null],
             ["Intensity", titleCase(data.recommended_intensity || "")],
-            ["Sleep", dataUsed.sleep_asleep_hours ? `${num(dataUsed.sleep_asleep_hours, 1)}h` : null, dataUsed.sleep_sessions ? `${dataUsed.sleep_sessions} sessions` : ""],
-            ["HRV", dataUsed.hrv_ms ? `${num(dataUsed.hrv_ms, 1)} ms` : null],
+            ["Sleep", dataUsed.sleep_asleep_hours != null ? `${num(dataUsed.sleep_asleep_hours, 1)}h` : null, dataUsed.sleep_sessions ? `${dataUsed.sleep_sessions} sessions` : ""],
+            ["HRV", dataUsed.hrv_ms != null ? `${num(dataUsed.hrv_ms, 1)} ms` : null],
             ["Resting HR", dataUsed.resting_heart_rate ? `${dataUsed.resting_heart_rate} bpm` : null],
             ["Latest load", dataUsed.latest_training_load?.active_zone_minutes != null ? `${dataUsed.latest_training_load.active_zone_minutes} AZM` : null, dataUsed.latest_training_load?.date || ""],
           ],
