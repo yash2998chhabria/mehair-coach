@@ -892,7 +892,7 @@ TODAY_WIDGET_HTML = """
           eyebrow: data.planned_activity || "In-Session Check",
           date: live.elapsed_minutes != null ? `${live.elapsed_minutes} min elapsed` : data.activity_date || "",
           chips: [
-            titleCase(data.decision || "guidance"),
+            decisionLabel(data.decision || "guidance"),
             live.current_heart_rate_bpm != null ? `${live.current_heart_rate_bpm} bpm` : "",
             live.current_rpe != null ? rpeChip(live.current_rpe) : "",
             live.pain_level != null ? `Pain ${live.pain_level}/10` : "",
@@ -1335,6 +1335,17 @@ TODAY_WIDGET_HTML = """
           .filter(Boolean)
           .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
           .join(" ");
+      }
+
+      function decisionLabel(value) {
+        const labels = {
+          stop_and_assess: "Stop + Assess",
+          stop_session: "End Session",
+          downshift_now: "Back Off Now",
+          continue_controlled: "Continue Controlled",
+          modify: "Modify",
+        };
+        return labels[value] || titleCase(value || "guidance");
       }
 
       function escapeHtml(value) {

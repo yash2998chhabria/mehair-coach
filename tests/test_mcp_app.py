@@ -142,6 +142,7 @@ async def test_widget_preview_route_renders_real_card_state() -> None:
     assert active_workout.status_code == 200
     assert "Active Workout" in active_workout.text
     assert "stop_and_assess" in active_workout.text
+    assert "Stop + Assess" in active_workout.text
     assert recovery_comparison.status_code == 200
     assert "Recovery Comparison" in recovery_comparison.text
     assert "Latest recovery comparison" in recovery_comparison.text

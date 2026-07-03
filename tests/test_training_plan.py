@@ -291,6 +291,45 @@ def test_active_workout_downshifts_for_high_effort_without_urgent_symptoms() -> 
     assert any("Cut the next block" in item for item in guidance["modifications"])
 
 
+def test_active_workout_stops_for_lightheadedness_even_with_no_pain() -> None:
+    context = {
+        "status": "ok",
+        "latest_date": "2026-07-03",
+        "activity_date": "2026-07-03",
+        "recovery_date": "2026-07-03",
+        "readiness": {
+            "score": 84,
+            "label": "green",
+            "recommendation": "A normal training day is reasonable if you feel good.",
+            "evidence": ["Latest sleep is strong at 9.4h.", "Resting heart rate is steady."],
+        },
+        "today": {
+            "steps": 5000,
+            "active_minutes": 30,
+            "active_zone_minutes": 9,
+            "sleep": {"asleep_hours": 9.4, "sessions_count": 1},
+            "latest_training_load": {"date": "2026-07-03", "active_zone_minutes": 9},
+        },
+    }
+
+    guidance = active_workout_guidance(
+        context=context,
+        planned_activity="run",
+        current_heart_rate_bpm=158,
+        current_rpe=8,
+        pain_level=0,
+        symptoms="I feel a little lightheaded and more wiped than normal.",
+        elapsed_minutes=18,
+        planned_duration_minutes=40,
+    )
+
+    assert guidance["decision"] == "stop_and_assess"
+    assert guidance["safety_flags"]
+    assert any("Stop the set or interval now" in item for item in guidance["immediate_actions"])
+    assert guidance["coach_response"]["short_answer"].startswith("Stop the hard part now")
+    assert any(item["label"] == "HR" for item in guidance["coach_response"]["labels_explained"])
+
+
 def test_active_workout_does_not_treat_negated_red_flags_as_symptoms() -> None:
     context = {
         "status": "ok",
