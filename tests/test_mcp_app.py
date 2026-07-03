@@ -40,12 +40,12 @@ async def test_mcp_tool_list_matches_private_beta_plan() -> None:
     by_name = {tool.name: tool for tool in tools}
     assert by_name["get_health_overview"].meta["openai/outputTemplate"] == WIDGET_URI
     assert by_name["sync_and_get_health_overview"].meta["openai/outputTemplate"] == WIDGET_URI
+    assert by_name["get_health_question_clues"].meta["openai/outputTemplate"] == WIDGET_URI
+    assert by_name["get_recovery_signal_comparison"].meta["openai/outputTemplate"] == WIDGET_URI
     assert by_name["guide_active_workout"].meta["openai/outputTemplate"] == WIDGET_URI
     assert by_name["sync_latest_fitbit_data"].meta is None
     assert by_name["get_today_context"].meta is None
     assert by_name["get_recovery_readiness"].meta is None
-    assert by_name["get_health_question_clues"].meta is None
-    assert by_name["get_recovery_signal_comparison"].meta is None
 
 
 def test_server_instructions_keep_normal_latest_questions_fast() -> None:
@@ -103,6 +103,7 @@ async def test_widget_preview_route_renders_real_card_state() -> None:
         today_workout = await client.get("/docs/widget-preview?state=today-workout")
         workout_plan = await client.get("/docs/widget-preview?state=workout-plan")
         active_workout = await client.get("/docs/widget-preview?state=active-workout")
+        recovery_comparison = await client.get("/docs/widget-preview?state=recovery-comparison")
 
     assert response.status_code == 200
     assert "text/html" in response.headers["content-type"]
@@ -125,6 +126,9 @@ async def test_widget_preview_route_renders_real_card_state() -> None:
     assert active_workout.status_code == 200
     assert "Active Workout" in active_workout.text
     assert "stop_and_assess" in active_workout.text
+    assert recovery_comparison.status_code == 200
+    assert "Recovery Comparison" in recovery_comparison.text
+    assert "Latest recovery comparison" in recovery_comparison.text
     assert "dizzy during the interval" in active_workout.text
     assert today_workout.status_code == 200
     assert "Today's Workout" in today_workout.text

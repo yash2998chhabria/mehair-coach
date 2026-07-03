@@ -293,6 +293,7 @@ def create_server(settings_override: Settings | None = None) -> ServerBundle:
             "from overview data, and recommended follow-up tools."
         ),
         annotations=READ_ONLY,
+        meta=WIDGET_META,
     )
     def get_health_question_clues(question: str, days: int = 14) -> dict[str, Any]:
         user_id = current_user_id()
@@ -307,6 +308,7 @@ def create_server(settings_override: Settings | None = None) -> ServerBundle:
             "against baseline to explain recovery patterns."
         ),
         annotations=READ_ONLY,
+        meta=WIDGET_META,
     )
     def get_recovery_signal_comparison(days: int = 14) -> dict[str, Any]:
         user_id = current_user_id()
