@@ -21,6 +21,8 @@ uses the right signals for real questions:
   with specific evidence, goal progress, and check-in context.
 - all-data overview: the returned daily brief should include training bias,
   priority signals, a short plan, confidence, and useful follow-up prompts.
+- daily-plan questions: vague prompts like `What should I do today?` should
+  route through the daily brief plus workout recommendation tools.
 - green training day: strong sleep, HRV above baseline, stable resting HR, low
   soreness, strong energy, and goal context should keep harder training
   available.
@@ -69,6 +71,7 @@ For ChatGPT end-to-end testing, expose the server with HTTPS, create a developer
 Golden prompts:
 
 - `Sync latest Fitbit data.`
+- `What should I do today?`
 - `How hard should I work out today?`
 - `Why?`
 - `Compare my sleep and heart rate.`

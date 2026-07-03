@@ -153,6 +153,7 @@ Restart the server, then in ChatGPT:
 ```text
 Sync latest Fitbit data.
 Give me a full health and fitness overview using all my data.
+What should I do today?
 How hard should I work out today?
 I want to train chest tomorrow, but my lower back is sore from squash. Plan it using my data.
 Why?

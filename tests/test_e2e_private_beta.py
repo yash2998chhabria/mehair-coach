@@ -558,6 +558,26 @@ async def test_private_beta_oauth_mcp_sync_and_coaching_flow(tmp_path, monkeypat
                 item["id"] for item in clues["relevant_metrics"]
             }
 
+            day_plan_clues = tool_content(
+                await mcp_request(
+                    client,
+                    access_token,
+                    "tools/call",
+                    {
+                        "name": "get_health_question_clues",
+                        "arguments": {
+                            "question": "What should I do today?",
+                            "days": 7,
+                        },
+                    },
+                    103,
+                )
+            )
+            assert "daily_plan" in day_plan_clues["intent_hints"]
+            assert "get_health_overview" in day_plan_clues["recommended_tool_sequence"]
+            assert "recommend_workout_today" in day_plan_clues["recommended_tool_sequence"]
+            assert day_plan_clues["overview_context"]["daily_brief"]["today_plan"]
+
             plan = tool_content(
                 await mcp_request(
                     client,

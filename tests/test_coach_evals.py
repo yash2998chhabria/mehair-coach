@@ -258,6 +258,7 @@ def test_eval_under_recovered_user_gets_easy_day_with_specific_evidence(tmp_path
     store.save_checkin(user_id, {"energy": 3, "soreness": 7, "stress": 6, "notes": "Legs heavy after squash"})
 
     clues = store.health_question_clues(user_id, "I feel cooked. How hard should I work out today?", days=7)
+    day_plan_clues = store.health_question_clues(user_id, "What should I do today?", days=7)
     comparison = store.recovery_signal_comparison(user_id, days=7)
     recommendation = workout_recommendation(
         context=store.latest_context(user_id),
@@ -286,6 +287,14 @@ def test_eval_under_recovered_user_gets_easy_day_with_specific_evidence(tmp_path
     assert any("High soreness" in item for item in clues["watchouts"])
     assert any("3 goal session(s) remain" in item for item in clues["next_actions"])
     assert "get_recovery_signal_comparison" in clues["recommended_tool_sequence"]
+    assert "daily_plan" in day_plan_clues["intent_hints"]
+    assert "get_health_overview" in day_plan_clues["recommended_tool_sequence"]
+    assert "recommend_workout_today" in day_plan_clues["recommended_tool_sequence"]
+    assert day_plan_clues["overview_context"]["daily_brief"]["training_bias"] == "recovery-first"
+    assert any(
+        item["label"] == "Goal progress"
+        for item in day_plan_clues["overview_context"]["daily_brief"]["priority_signals"]
+    )
     assert comparison["current_vs_baseline"]["hrv_percent_delta"] <= -20
     assert comparison["current_vs_baseline"]["resting_heart_rate_delta"] >= 6
     assert any("Short sleep" in item or "HRV" in item for item in comparison["insights"] + comparison["watchouts"])

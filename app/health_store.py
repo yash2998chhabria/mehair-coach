@@ -15,6 +15,14 @@ from .time_utils import iso_now, utc_now
 RECOVERY_KEYS = ("sleep", "hrv_ms", "resting_heart_rate", "spo2_avg", "respiratory_rate")
 
 INTENT_METRICS = {
+    "daily_plan": [
+        "sleep",
+        "daily-heart-rate-variability",
+        "daily-resting-heart-rate",
+        "active-zone-minutes",
+        "steps",
+        "exercise",
+    ],
     "workout_decision": [
         "exercise",
         "active-zone-minutes",
@@ -1197,6 +1205,38 @@ def _question_intents(question: str) -> list[str]:
     def has(*words: str) -> bool:
         return any(word in text for word in words)
 
+    asks_for_today_plan = any(
+        phrase in text
+        for phrase in (
+            "what should i do",
+            "what do i do",
+            "what should my day",
+            "what's the plan",
+            "whats the plan",
+            "today's plan",
+            "todays plan",
+            "today plan",
+            "daily plan",
+            "daily brief",
+            "coach me today",
+            "what should i focus on",
+        )
+    ) or ("today" in text and any(word in text for word in ("recommend", "suggest", "plan", "focus")))
+    if asks_for_today_plan:
+        intents.extend(
+            [
+                "daily_plan",
+                "general_overview",
+                "workout_decision",
+                "recovery",
+                "activity_load",
+                "heart",
+                "sleep",
+                "subjective",
+                "goal",
+            ]
+        )
+
     if has(
         "workout",
         "work out",
@@ -1281,9 +1321,9 @@ def _recommended_tool_sequence(intents: list[str], freshness: dict[str, Any]) ->
     tools: list[str] = ["get_health_question_clues"]
     if freshness.get("needs_sync_before_time_sensitive_advice"):
         tools.extend(["get_data_freshness", "sync_latest_fitbit_data"])
-    if "general_overview" in intents:
+    if "general_overview" in intents or "daily_plan" in intents:
         tools.append("get_health_overview")
-    if "workout_decision" in intents:
+    if "workout_decision" in intents or "daily_plan" in intents:
         tools.extend(["recommend_workout_today", "plan_workout_with_health_context"])
     if any(intent in intents for intent in ("recovery", "sleep", "heart")):
         tools.extend(["get_recovery_signal_comparison", "get_sleep_analysis", "get_heart_trends"])
@@ -1531,6 +1571,8 @@ def _question_clue_headline(
     comparison: dict[str, Any],
 ) -> str:
     readiness = context.get("readiness", {})
+    if "daily_plan" in intents:
+        return f"Use the daily brief, readiness {readiness.get('score', '?')}/100, goals, and check-ins to choose today's plan."
     if comparison.get("status") == "ok" and any(intent in intents for intent in ("recovery", "sleep", "heart")):
         return comparison.get("headline", "Sleep, heart, and load signals are ready to compare.")
     if "workout_decision" in intents:
@@ -1562,6 +1604,7 @@ def _compact_overview_context(overview: dict[str, Any]) -> dict[str, Any]:
     return {
         "status": "ok",
         "headline": overview.get("headline"),
+        "daily_brief": overview.get("daily_brief"),
         "date_range": overview.get("date_range"),
         "activity": sections.get("activity"),
         "sleep": sections.get("sleep"),

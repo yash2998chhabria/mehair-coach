@@ -410,6 +410,18 @@ def test_question_clues_choose_recovery_heart_and_load_metrics(tmp_path, monkeyp
     assert "get_recovery_signal_comparison" in clues["recommended_tool_sequence"]
     assert any("HRV" in item for item in clues["clues"] + clues["watchouts"])
 
+    day_plan = store.health_question_clues(user_id, "What should I do today?", days=7)
+
+    assert "daily_plan" in day_plan["intent_hints"]
+    assert "general_overview" in day_plan["intent_hints"]
+    assert "workout_decision" in day_plan["intent_hints"]
+    assert "get_health_overview" in day_plan["recommended_tool_sequence"]
+    assert "recommend_workout_today" in day_plan["recommended_tool_sequence"]
+    assert "plan_workout_with_health_context" in day_plan["recommended_tool_sequence"]
+    assert day_plan["headline"].startswith("Use the daily brief")
+    assert day_plan["overview_context"]["daily_brief"]["training_bias"] == "recovery-first"
+    assert day_plan["overview_context"]["daily_brief"]["today_plan"]
+
 
 def test_partial_today_uses_latest_completed_recovery_signals(tmp_path) -> None:
     db, store = make_store(tmp_path)
