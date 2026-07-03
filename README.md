@@ -21,6 +21,7 @@ The project starts empty. It does not import any existing Fitbit export and it d
 - Stores local goals and subjective check-ins for better coaching prompts.
 - Returns clear setup and empty-state responses when a user has not connected or synced yet.
 - Shows an inline Apps SDK health card for overview, readiness, sleep, activity, workout plans, and evidence.
+- Provides a local widget preview route for visual QA of realistic coaching card states.
 
 ## What It Does Not Do
 

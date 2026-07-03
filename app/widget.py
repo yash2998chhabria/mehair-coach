@@ -1,3 +1,8 @@
+from __future__ import annotations
+
+import json
+
+
 WIDGET_URI = "ui://mehair/today-v4.html"
 WIDGET_MIME_TYPE = "text/html;profile=mcp-app"
 
@@ -497,32 +502,33 @@ TODAY_WIDGET_HTML = """
         const intents = data.intent_hints || [];
         const freshness = data.data_freshness || {};
         const topMetrics = (available.length ? available : metrics).slice(0, 6);
+        const hasSafetyFlags = (data.safety_flags || []).length > 0;
         return {
-          accent: "#4b6f8f",
-          title: "Health Clues",
-          eyebrow: "Metric Finder",
+          accent: hasSafetyFlags ? "#a94f43" : "#4b6f8f",
+          title: hasSafetyFlags ? "Health Check" : "Health Clues",
+          eyebrow: hasSafetyFlags ? "Safety Context" : "Metric Finder",
           date: data.today?.activity_date && data.today?.recovery_date && data.today.activity_date !== data.today.recovery_date
             ? `Activity ${data.today.activity_date}; recovery ${data.today.recovery_date}`
             : data.today?.activity_date || freshness.latest_observed_date || "",
           chips: [
-            intents[0] || "overview",
+            titleCase(intents[0] || "overview"),
             `${available.length}/${metrics.length || 0} metrics`,
             freshnessChip(freshness),
           ].filter(Boolean),
           score: finiteNumber(readiness.score, 0),
           primaryLabel: "Readiness",
           headline: data.headline || "Useful Fitbit signals selected for this question.",
-          focusTitle: "Best Clues",
-          focus: data.clues || [],
+          focusTitle: hasSafetyFlags ? "Safety First" : "Best Clues",
+          focus: hasSafetyFlags ? data.safety_flags || [] : data.clues || [],
           metrics: topMetrics.map((item) => [
             item.label || item.id,
             intText(item.records ?? 0),
             item.latest_observed_date || "not synced",
           ]),
-          evidenceTitle: "Why These",
+          evidenceTitle: hasSafetyFlags ? "Relevant Metrics" : "Why These",
           evidence: topMetrics.map((item) => `${item.label || item.id}: ${item.reason || "Useful context."}`),
-          secondaryTitle: "Watchouts",
-          secondary: data.watchouts || [],
+          secondaryTitle: hasSafetyFlags ? "Data Clues" : "Watchouts",
+          secondary: hasSafetyFlags ? data.clues || [] : data.watchouts || [],
         };
       }
 
@@ -940,7 +946,7 @@ TODAY_WIDGET_HTML = """
 
       function titleCase(value) {
         return String(value)
-          .split("-")
+          .split(/[-_\\s]+/)
           .filter(Boolean)
           .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
           .join(" ");
@@ -960,3 +966,205 @@ TODAY_WIDGET_HTML = """
   </body>
 </html>
 """.strip()
+
+
+WIDGET_PREVIEW_STATES: dict[str, dict] = {
+    "health-clues": {
+        "status": "ok",
+        "clue_type": "health_question_clues",
+        "question": "I feel cooked today. Which metrics matter?",
+        "headline": "Latest recovery comparison: sleep 5.1h (-2.2h); HRV 36.0 ms (-36%); RHR 67 bpm (+9.5).",
+        "intent_hints": ["workout_decision", "recovery", "sleep", "heart", "activity_load"],
+        "relevant_metrics": [
+            {
+                "id": "sleep",
+                "label": "Sleep",
+                "records": 4,
+                "latest_observed_date": "2026-07-03",
+                "reason": "Sleep duration, timing, and stages are primary recovery and fatigue context.",
+            },
+            {
+                "id": "daily-heart-rate-variability",
+                "label": "Daily HRV",
+                "records": 4,
+                "latest_observed_date": "2026-07-03",
+                "reason": "Daily HRV helps spot autonomic recovery changes versus baseline.",
+            },
+            {
+                "id": "daily-resting-heart-rate",
+                "label": "Resting heart rate",
+                "records": 4,
+                "latest_observed_date": "2026-07-03",
+                "reason": "Resting heart rate often rises with stress, fatigue, illness, or under-recovery.",
+            },
+            {
+                "id": "active-zone-minutes",
+                "label": "Active Zone Minutes",
+                "records": 3,
+                "latest_observed_date": "2026-07-02",
+                "reason": "Active Zone Minutes are a compact Fitbit load signal for workout decisions.",
+            },
+        ],
+        "clues": [
+            "Readiness is red at 38/100.",
+            "Latest sleep is short at 5.1h.",
+            "HRV is 36% below recent baseline.",
+            "Resting heart rate is 9.5 bpm above baseline.",
+            "Latest available load is 72 Active Zone Minutes.",
+        ],
+        "watchouts": [
+            "Sleep is short while HRV is suppressed or resting heart rate is elevated.",
+            "High zone-minute load can suppress HRV or elevate resting heart rate.",
+            "Avoid stacking another hard conditioning session today.",
+        ],
+        "positives": ["The comparison has enough data to ground the recovery discussion."],
+        "readiness": {
+            "score": 38,
+            "label": "red",
+            "recommendation": "Prioritize recovery, mobility, walking, and sleep.",
+        },
+        "today": {
+            "activity_date": "2026-07-03",
+            "recovery_date": "2026-07-03",
+            "steps": 1600,
+            "sleep_hours": 5.1,
+            "hrv_ms": 36,
+            "resting_heart_rate": 67,
+            "latest_training_load": {"date": "2026-07-02", "active_zone_minutes": 72},
+        },
+        "data_freshness": {"freshness_level": "fresh", "latest_observed_date": "2026-07-03"},
+    },
+    "today-workout": {
+        "status": "ok",
+        "intensity": "easy",
+        "rpe_cap": 6,
+        "recommendation": "Make today recovery-biased: walking, mobility, breath work, and an earlier bedtime. Your soreness check-in is high at 7/10, so bias toward recovery or pain-free technique.",
+        "next_actions": [
+            "Make today recovery-biased: walk, mobility, easy cardio, or rest.",
+            "You are 2 session(s) from the weekly target, but recovery signals make an easy day smarter.",
+            "Protect sleep tonight and reassess after the next sync.",
+        ],
+        "avoid": ["Loading sore areas aggressively", "Another hard conditioning block today"],
+        "activity_date": "2026-07-03",
+        "recovery_date": "2026-07-03",
+        "today": {
+            "steps": 1600,
+            "active_zone_minutes": 0,
+            "sleep": {"asleep_hours": 5.1, "sessions_count": 1},
+        },
+        "data_used": {
+            "latest_sleep_hours": 5.1,
+            "hrv_ms": 36,
+            "resting_heart_rate": 67,
+        },
+        "readiness": {
+            "score": 38,
+            "label": "red",
+            "evidence": [
+                "Latest sleep is short at 5.1h.",
+                "HRV is below recent baseline: 36.0 ms vs 56.5 ms.",
+                "Resting heart rate is elevated: 67 bpm vs 58 bpm baseline.",
+            ],
+        },
+        "goal_context": {
+            "target": "Train four days per week",
+            "days_per_week": 4,
+            "recent_workouts": 2,
+            "remaining_sessions": 2,
+        },
+        "subjective_context": {"energy": 3, "soreness": 7, "stress": 6},
+        "data_freshness": {"freshness_level": "fresh", "latest_observed_date": "2026-07-03"},
+    },
+    "recovery-comparison": {
+        "status": "ok",
+        "comparison_type": "sleep_heart_recovery",
+        "headline": "Latest recovery comparison: sleep 5.1h (-2.2h); HRV 36.0 ms (-36%); RHR 67 bpm (+9.5).",
+        "date_range": {"start": "2026-06-30", "end": "2026-07-03"},
+        "window_days": 7,
+        "latest": {
+            "date": "2026-07-03",
+            "sleep_hours": 5.1,
+            "hrv_ms": 36,
+            "resting_heart_rate": 67,
+            "active_zone_minutes": 0,
+        },
+        "baseline": {
+            "sleep_hours": 7.3,
+            "hrv_ms": 56.5,
+            "resting_heart_rate": 57.5,
+            "active_zone_minutes": 42,
+        },
+        "current_vs_baseline": {
+            "sleep_hours_delta": -2.2,
+            "hrv_percent_delta": -36.3,
+            "resting_heart_rate_delta": 9.5,
+        },
+        "insights": [
+            "Short sleep is lining up with weaker heart recovery signals.",
+            "Recent training load is high at 72 zone minutes.",
+        ],
+        "positives": ["Enough sleep and heart data is available to compare against baseline."],
+        "watchouts": [
+            "Sleep is short while HRV is suppressed or resting heart rate is elevated.",
+            "High zone-minute load can suppress HRV or elevate resting heart rate.",
+        ],
+        "readiness": {"score": 38, "label": "red"},
+        "data_used": {"days_compared": 4},
+        "data_freshness": {"freshness_level": "fresh"},
+    },
+    "heart-safety": {
+        "status": "ok",
+        "clue_type": "health_question_clues",
+        "question": "Should I worry about my high heart rate and dizziness?",
+        "headline": "Use heart, HRV, resting heart rate, sleep, and symptoms carefully; wearable data cannot diagnose.",
+        "intent_hints": ["heart", "recovery"],
+        "relevant_metrics": [
+            {
+                "id": "daily-resting-heart-rate",
+                "label": "Resting heart rate",
+                "records": 3,
+                "latest_observed_date": "2026-07-03",
+                "reason": "Resting heart rate often rises with stress, fatigue, illness, or under-recovery.",
+            },
+            {
+                "id": "heart-rate",
+                "label": "Heart rate",
+                "records": 24,
+                "latest_observed_date": "2026-07-03",
+                "reason": "Heart-rate samples help explain intensity, unusual spikes, and workout effort.",
+            },
+            {
+                "id": "daily-heart-rate-variability",
+                "label": "Daily HRV",
+                "records": 3,
+                "latest_observed_date": "2026-07-03",
+                "reason": "Daily HRV helps spot autonomic recovery changes versus baseline.",
+            },
+        ],
+        "clues": [
+            "Readiness is yellow at 55/100.",
+            "Latest resting heart rate is 92 bpm.",
+            "HRV is below recent baseline.",
+        ],
+        "watchouts": [
+            "The question mentions symptoms or heart concerns that need medical caution; do not diagnose from wearable data and recommend urgent care for severe, new, or worsening symptoms.",
+            "Latest resting heart rate is high at 92 bpm, so avoid hard training advice without caution and context.",
+        ],
+        "safety_flags": [
+            "The question mentions symptoms or heart concerns that need medical caution; do not diagnose from wearable data and recommend urgent care for severe, new, or worsening symptoms."
+        ],
+        "readiness": {"score": 55, "label": "yellow"},
+        "today": {"activity_date": "2026-07-03", "recovery_date": "2026-07-03"},
+        "data_freshness": {"freshness_level": "fresh", "latest_observed_date": "2026-07-03"},
+    },
+}
+
+
+def widget_preview_html(state: str = "health-clues") -> str:
+    preview_state = state if state in WIDGET_PREVIEW_STATES else "health-clues"
+    data = json.dumps(WIDGET_PREVIEW_STATES[preview_state])
+    injection = f"""
+      state.data = {data};
+      render();
+    """
+    return TODAY_WIDGET_HTML.replace("      render();\n      initialize();", injection.rstrip())

@@ -18,7 +18,7 @@ from .auth import AppTokenVerifier, AuthError, AuthService
 from .db import Database
 from .health_store import HealthStore, setup_required
 from .settings import Settings, get_settings
-from .widget import TODAY_WIDGET_HTML, WIDGET_MIME_TYPE, WIDGET_URI
+from .widget import TODAY_WIDGET_HTML, WIDGET_MIME_TYPE, WIDGET_PREVIEW_STATES, WIDGET_URI, widget_preview_html
 
 
 SERVER_INSTRUCTIONS = (
@@ -454,6 +454,19 @@ def create_server(settings_override: Settings | None = None) -> ServerBundle:
             """.strip()
         )
 
+    async def widget_preview(request: Request) -> Response:
+        state = request.query_params.get("state", "health-clues")
+        if state not in WIDGET_PREVIEW_STATES:
+            return JSONResponse(
+                {
+                    "status": "not_found",
+                    "message": "Unknown widget preview state.",
+                    "available_states": sorted(WIDGET_PREVIEW_STATES),
+                },
+                status_code=404,
+            )
+        return HTMLResponse(widget_preview_html(state))
+
     app.add_route("/", home, methods=["GET"])
     app.add_route("/health", health, methods=["GET"])
     app.add_route("/.well-known/oauth-authorization-server", oauth_metadata, methods=["GET"])
@@ -463,6 +476,7 @@ def create_server(settings_override: Settings | None = None) -> ServerBundle:
     app.add_route("/oauth/token", token, methods=["POST"])
     app.add_route("/oauth/callback/google", google_callback, methods=["GET"])
     app.add_route("/docs/setup", setup_doc, methods=["GET"])
+    app.add_route("/docs/widget-preview", widget_preview, methods=["GET"])
 
     return ServerBundle(
         settings=settings,

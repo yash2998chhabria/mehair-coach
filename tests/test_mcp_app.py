@@ -5,7 +5,7 @@ import pytest
 
 from app.main import app, mcp, settings as app_settings
 from app.settings import Settings
-from app.widget import WIDGET_URI
+from app.widget import WIDGET_PREVIEW_STATES, WIDGET_URI
 
 
 @pytest.mark.asyncio
@@ -58,6 +58,35 @@ async def test_http_metadata_routes() -> None:
     assert oauth.json()["authorization_endpoint"].endswith("/oauth/authorize")
     assert protected.status_code == 200
     assert protected.json()["resource"].rstrip("/") == app_settings.base_url
+
+
+@pytest.mark.asyncio
+async def test_widget_preview_route_renders_real_card_state() -> None:
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.get("/docs/widget-preview?state=health-clues")
+        safety = await client.get("/docs/widget-preview?state=heart-safety")
+
+    assert response.status_code == 200
+    assert "text/html" in response.headers["content-type"]
+    assert "I feel cooked today" in response.text
+    assert "state.data =" in response.text
+    assert "initialize();" not in response.text
+    assert "Health Clues" in response.text
+    assert safety.status_code == 200
+    assert "Should I worry about my high heart rate and dizziness?" in safety.text
+    assert "Health Check" in safety.text
+    assert "Safety Context" in safety.text
+
+
+@pytest.mark.asyncio
+async def test_widget_preview_route_lists_available_states_for_unknown_state() -> None:
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.get("/docs/widget-preview?state=missing")
+
+    assert response.status_code == 404
+    assert response.json()["available_states"] == sorted(WIDGET_PREVIEW_STATES)
 
 
 def test_mcp_transport_security_allows_public_base_url_host() -> None:

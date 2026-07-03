@@ -38,6 +38,17 @@ Health check:
 curl http://localhost:8787/health
 ```
 
+Widget preview:
+
+```bash
+open "http://localhost:8787/docs/widget-preview?state=health-clues"
+```
+
+Available preview states are `health-clues`, `today-workout`,
+`recovery-comparison`, and `heart-safety`. These render the same Apps SDK
+iframe HTML with synthetic structured tool results, which makes visual QA
+possible without recreating a ChatGPT connector for every UI change.
+
 MCP Inspector:
 
 ```bash
