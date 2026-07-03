@@ -249,6 +249,13 @@ def test_synthetic_records_calculate_context(tmp_path, monkeypatch) -> None:
     assert overview["daily"][-1]["time_in_hr_zones_minutes"]["fat_burn"] == 20.0
     assert overview["positives"]
     assert overview["next_actions"]
+    brief = overview["daily_brief"]
+    assert brief["training_bias"] == "train-ready"
+    assert brief["confidence"] == "high"
+    assert "Training is available today" in brief["summary"]
+    signal_labels = {item["label"] for item in brief["priority_signals"]}
+    assert {"Readiness", "Sleep", "HRV", "Energy", "Current goal"} <= signal_labels
+    assert any("Run four days per week" in item["detail"] for item in brief["priority_signals"])
 
 
 def test_overview_flags_stale_data_before_time_sensitive_advice(tmp_path, monkeypatch) -> None:
@@ -294,6 +301,9 @@ def test_overview_flags_stale_data_before_time_sensitive_advice(tmp_path, monkey
     assert overview["data_freshness"]["freshness_label"] == "sync recommended"
     assert any("stale" in item.lower() for item in overview["watchouts"])
     assert overview["next_actions"][0] == "Run sync_latest_fitbit_data before time-sensitive workout decisions."
+    assert overview["daily_brief"]["training_bias"] == "sync-first"
+    assert "Sync first" in overview["daily_brief"]["summary"]
+    assert any(item["label"] == "Data freshness" for item in overview["daily_brief"]["priority_signals"])
 
 
 def test_question_clues_choose_recovery_heart_and_load_metrics(tmp_path, monkeypatch) -> None:

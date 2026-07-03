@@ -471,6 +471,20 @@ class HealthStore:
             checkins=checkins,
             freshness=freshness,
         )
+        daily_brief = _daily_coaching_brief(
+            context=context,
+            activity=activity,
+            sleep=sleep,
+            heart=heart,
+            recovery=recovery,
+            workouts=workouts,
+            goal=goal,
+            checkins=checkins,
+            freshness=freshness,
+            positives=positives,
+            watchouts=watchouts,
+            next_actions=next_actions,
+        )
         return {
             "status": "ok",
             "overview_type": "health_overview",
@@ -489,6 +503,7 @@ class HealthStore:
                 "recovery": recovery,
                 "workouts": workouts,
             },
+            "daily_brief": daily_brief,
             "positives": positives,
             "watchouts": watchouts,
             "next_actions": next_actions,
@@ -1707,6 +1722,232 @@ def _overview_coaching(
         watchouts.append("No major recovery red flags were detected in the synced window.")
     next_actions.append("Ask for a specific workout plan before training so the assistant can factor in soreness and constraints.")
     return _dedupe(positives), _dedupe(watchouts), _dedupe(next_actions)
+
+
+def _daily_coaching_brief(
+    *,
+    context: dict[str, Any],
+    activity: dict[str, Any],
+    sleep: dict[str, Any],
+    heart: dict[str, Any],
+    recovery: dict[str, Any],
+    workouts: dict[str, Any],
+    goal: dict[str, Any] | None,
+    checkins: list[dict[str, Any]],
+    freshness: dict[str, Any],
+    positives: list[str],
+    watchouts: list[str],
+    next_actions: list[str],
+) -> dict[str, Any]:
+    readiness = context["readiness"]
+    label = readiness.get("label")
+    score = readiness.get("score")
+    priority_signals: list[dict[str, Any]] = []
+
+    def add_signal(category: str, label_text: str, detail: str, impact: str, status: str) -> None:
+        if detail:
+            priority_signals.append(
+                {
+                    "category": category,
+                    "label": label_text,
+                    "detail": detail,
+                    "impact": impact,
+                    "status": status,
+                }
+            )
+
+    if freshness.get("freshness_level") in {"aging", "stale"}:
+        add_signal(
+            "freshness",
+            "Data freshness",
+            f"{freshness.get('freshness_label') or freshness.get('freshness_level')} from {freshness.get('latest_observed_date')}.",
+            freshness.get("recommendation") or "Sync before time-sensitive coaching.",
+            "watchout",
+        )
+
+    add_signal(
+        "readiness",
+        "Readiness",
+        f"{str(label or 'pending').title()} at {score}/100.",
+        readiness.get("recommendation") or "Use readiness as the starting point, then adjust for symptoms and goals.",
+        "positive" if label == "green" else "watchout" if label == "red" else "context",
+    )
+
+    latest_sleep = sleep.get("latest_asleep_hours")
+    sleep_delta = sleep.get("latest_vs_average_hours")
+    if latest_sleep is not None:
+        if sleep_delta is not None:
+            direction = "above" if sleep_delta >= 0 else "below"
+            detail = f"{latest_sleep:.1f}h, {abs(sleep_delta):.1f}h {direction} recent average."
+        else:
+            detail = f"{latest_sleep:.1f}h latest sleep."
+        add_signal(
+            "sleep",
+            "Sleep",
+            detail,
+            "Short sleep should cap intensity; supportive sleep gives more room to train.",
+            "positive" if latest_sleep >= 7 else "watchout" if latest_sleep < 6 else "context",
+        )
+
+    hrv = heart.get("latest_hrv_ms")
+    avg_hrv = heart.get("average_hrv_ms")
+    if hrv is not None:
+        if avg_hrv:
+            delta = round(((hrv - avg_hrv) / avg_hrv) * 100)
+            detail = f"{hrv:.1f} ms, {abs(delta)}% {'above' if delta >= 0 else 'below'} recent average."
+            status = "positive" if delta >= 5 else "watchout" if delta <= -10 else "context"
+        else:
+            detail = f"{hrv:.1f} ms latest HRV."
+            status = "context"
+        add_signal("heart", "HRV", detail, "HRV helps explain recovery pressure and training readiness.", status)
+
+    resting_hr = heart.get("latest_resting_heart_rate")
+    avg_resting_hr = heart.get("average_resting_heart_rate")
+    if resting_hr is not None:
+        if avg_resting_hr:
+            delta = round(resting_hr - avg_resting_hr, 1)
+            detail = f"{resting_hr} bpm, {abs(delta):.1f} bpm {'above' if delta >= 0 else 'below'} recent average."
+            status = "watchout" if delta > 5 else "positive"
+        else:
+            detail = f"{resting_hr} bpm latest resting heart rate."
+            status = "context"
+        add_signal(
+            "heart",
+            "Resting HR",
+            detail,
+            "Elevated resting HR can point to stress, illness, fatigue, or under-recovery.",
+            status,
+        )
+
+    latest_load = context.get("today", {}).get("latest_training_load") or activity.get("highest_load_day") or {}
+    load_minutes = latest_load.get("active_zone_minutes")
+    if load_minutes is not None:
+        add_signal(
+            "activity",
+            "Training load",
+            f"{load_minutes} Active Zone Minutes on {latest_load.get('date') or 'latest load day'}.",
+            "High recent load should reduce extra intensity; low load can support easy volume.",
+            "watchout" if load_minutes > 45 else "context",
+        )
+
+    energy = _rating_from_checkins(checkins, "energy")
+    soreness = _rating_from_checkins(checkins, "soreness")
+    stress = _rating_from_checkins(checkins, "stress")
+    if energy is not None:
+        add_signal(
+            "checkin",
+            "Energy",
+            f"{energy}/10 latest check-in.",
+            "Self-reported energy should confirm or soften the wearable-based plan.",
+            "positive" if energy >= 7 else "watchout" if energy <= 4 else "context",
+        )
+    if soreness is not None:
+        add_signal(
+            "checkin",
+            "Soreness",
+            f"{soreness}/10 latest check-in.",
+            "Soreness should shape exercise choice and loading, especially for specific body areas.",
+            "watchout" if soreness >= 5 else "positive",
+        )
+    if stress is not None:
+        add_signal(
+            "checkin",
+            "Stress",
+            f"{stress}/10 latest check-in.",
+            "High stress should keep the session predictable and away from all-out work.",
+            "watchout" if stress >= 7 else "context",
+        )
+
+    goal_payload = (goal or {}).get("goal") or {}
+    days_per_week = goal_payload.get("days_per_week")
+    if days_per_week is not None:
+        try:
+            target_sessions = max(0, int(days_per_week))
+            workout_count = int(workouts.get("workout_count") or 0)
+            remaining = max(0, target_sessions - workout_count)
+            add_signal(
+                "goal",
+                "Goal progress",
+                f"{workout_count}/{target_sessions} workout sessions logged; {remaining} remaining.",
+                "Use the goal as pressure only after recovery and safety signals are considered.",
+                "positive" if remaining == 0 else "context",
+            )
+        except (TypeError, ValueError):
+            pass
+    elif goal_payload.get("target"):
+        add_signal(
+            "goal",
+            "Current goal",
+            str(goal_payload["target"]),
+            "Keep recommendations aligned with this goal.",
+            "context",
+        )
+
+    if recovery.get("latest_spo2") is not None:
+        add_signal(
+            "recovery",
+            "SpO2",
+            f"{recovery['latest_spo2']:.1f}% latest average.",
+            "Use alongside respiratory and heart signals, not as a standalone diagnosis.",
+            "context",
+        )
+
+    if freshness.get("needs_sync_before_time_sensitive_advice"):
+        training_bias = "sync-first"
+        summary = "Sync first before a time-sensitive training decision; use the stored overview only as background."
+    elif label == "green":
+        training_bias = "train-ready"
+        summary = "Training is available today if warm-up movement and symptoms agree."
+    elif label == "yellow":
+        training_bias = "controlled"
+        summary = "A controlled session is the smart default: useful work without chasing max effort."
+    else:
+        training_bias = "recovery-first"
+        summary = "Make today recovery-first unless there is a strong non-negotiable reason to train hard."
+
+    if watchouts:
+        summary = f"{summary} Main constraint: {watchouts[0]}"
+    elif positives:
+        summary = f"{summary} Main support: {positives[0]}"
+
+    prompt_suggestions = [
+        "Plan today's workout using this brief.",
+        "Explain the top recovery signal in plain English.",
+        "Compare sleep, HRV, resting heart rate, and load.",
+    ]
+    if not goal_payload:
+        prompt_suggestions.append("Set a weekly fitness goal.")
+    if freshness.get("needs_sync_before_time_sensitive_advice"):
+        prompt_suggestions.insert(0, "Sync latest Fitbit data.")
+    if soreness is not None and soreness >= 5:
+        prompt_suggestions.append("Plan around my sore areas.")
+
+    section_count = sum(
+        1
+        for section in (activity, sleep, heart, recovery, workouts)
+        if section.get("status") == "ok"
+    )
+    if freshness.get("freshness_level") == "stale" or section_count < 2:
+        confidence = "low"
+    elif freshness.get("freshness_level") == "aging" or section_count < 4:
+        confidence = "moderate"
+    else:
+        confidence = "high"
+
+    return {
+        "summary": summary,
+        "training_bias": training_bias,
+        "today_plan": _dedupe(next_actions)[:5],
+        "priority_signals": priority_signals[:9],
+        "prompt_suggestions": _dedupe(prompt_suggestions)[:5],
+        "confidence": confidence,
+        "data_used": {
+            "activity_date": context.get("activity_date"),
+            "recovery_date": context.get("recovery_date"),
+            "freshness_level": freshness.get("freshness_level"),
+            "sections_with_data": section_count,
+        },
+    }
 
 
 def _overview_headline(

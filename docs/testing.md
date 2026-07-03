@@ -19,6 +19,8 @@ uses the right signals for real questions:
 - under-recovered/tired day: short sleep, suppressed HRV, elevated resting HR,
   high recent zone minutes, low energy, and soreness should produce an easy day
   with specific evidence, goal progress, and check-in context.
+- all-data overview: the returned daily brief should include training bias,
+  priority signals, a short plan, confidence, and useful follow-up prompts.
 - green training day: strong sleep, HRV above baseline, stable resting HR, low
   soreness, strong energy, and goal context should keep harder training
   available.
@@ -51,7 +53,7 @@ Widget preview:
 open "http://localhost:8787/docs/widget-preview?state=health-clues"
 ```
 
-Available preview states are `health-clues`, `today-workout`,
+Available preview states are `health-overview`, `health-clues`, `today-workout`,
 `recovery-comparison`, and `heart-safety`. These render the same Apps SDK
 iframe HTML with synthetic structured tool results, which makes visual QA
 possible without recreating a ChatGPT connector for every UI change.

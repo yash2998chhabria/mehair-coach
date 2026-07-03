@@ -65,6 +65,7 @@ async def test_widget_preview_route_renders_real_card_state() -> None:
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
         response = await client.get("/docs/widget-preview?state=health-clues")
+        overview = await client.get("/docs/widget-preview?state=health-overview")
         safety = await client.get("/docs/widget-preview?state=heart-safety")
         today_workout = await client.get("/docs/widget-preview?state=today-workout")
 
@@ -76,6 +77,11 @@ async def test_widget_preview_route_renders_real_card_state() -> None:
     assert "Health Clues" in response.text
     assert "Latest energy check-in is 3/10." in response.text
     assert "Goal progress in this window: 1/4 workout sessions logged." in response.text
+    assert overview.status_code == 200
+    assert "Health Overview" in overview.text
+    assert "recovery-first" in overview.text
+    assert "Priority Signals" in overview.text
+    assert "1/4 workout sessions logged; 3 remaining." in overview.text
     assert safety.status_code == 200
     assert "Should I worry about my high heart rate and dizziness?" in safety.text
     assert "Health Check" in safety.text

@@ -515,6 +515,10 @@ async def test_private_beta_oauth_mcp_sync_and_coaching_flow(tmp_path, monkeypat
             assert "food" not in {item["id"] for item in overview["data_used"]["synced_metrics"]}
             assert overview["positives"]
             assert overview["next_actions"]
+            assert overview["daily_brief"]["training_bias"] in {"train-ready", "controlled", "recovery-first"}
+            assert overview["daily_brief"]["today_plan"]
+            brief_signal_labels = {item["label"] for item in overview["daily_brief"]["priority_signals"]}
+            assert {"Readiness", "Sleep", "Goal progress"} <= brief_signal_labels
 
             comparison = tool_content(
                 await mcp_request(

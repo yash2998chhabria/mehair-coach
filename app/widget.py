@@ -450,6 +450,7 @@ TODAY_WIDGET_HTML = """
       function healthOverviewModel(data) {
         const readiness = data.readiness || {};
         const label = readiness.label || "pending";
+        const brief = data.daily_brief || {};
         const sections = data.sections || {};
         const activity = sections.activity || {};
         const sleep = sections.sleep || {};
@@ -463,7 +464,12 @@ TODAY_WIDGET_HTML = """
         const sleepHours = sleep.latest_asleep_hours ?? data.today?.sleep?.asleep_hours ?? data.today?.sleep?.duration_hours;
         const hrv = heart.latest_hrv_ms ?? data.today?.hrv_ms;
         const rhr = heart.latest_resting_heart_rate ?? data.today?.resting_heart_rate;
-        const primaryActions = (data.next_actions || []).slice(0, 4);
+        const primaryActions = (brief.today_plan || data.next_actions || []).slice(0, 4);
+        const prioritySignals = (brief.priority_signals || []).map((item) => {
+          const label = item.label || item.category || "Signal";
+          const detail = item.detail || item.impact || "";
+          return detail ? `${label}: ${detail}` : label;
+        });
         return {
           accent: readinessAccent(label),
           title: "Health Overview",
@@ -471,14 +477,14 @@ TODAY_WIDGET_HTML = """
           date: range || data.data_freshness?.latest_observed_date || "",
           chips: [
             label,
-            `${data.window_days || 14} days`,
+            brief.training_bias ? titleCase(brief.training_bias) : "",
             `${dataUsed.synced_metric_count || 0} metrics`,
             freshnessChip(freshness),
           ].filter(Boolean),
           score: finiteNumber(readiness.score, 0),
           primaryLabel: "Readiness",
-          headline: data.headline || readiness.recommendation || "All synced health data summarized.",
-          focusTitle: "Next Actions",
+          headline: brief.summary || data.headline || readiness.recommendation || "All synced health data summarized.",
+          focusTitle: "Today Plan",
           focus: primaryActions,
           metrics: [
             ["Steps", intText(activity.totals?.steps ?? data.today?.steps ?? 0), "window"],
@@ -488,8 +494,8 @@ TODAY_WIDGET_HTML = """
             ["Resting HR", rhr ? `${num(rhr, 1)} bpm` : null, heart.average_resting_heart_rate ? `avg ${num(heart.average_resting_heart_rate, 1)}` : ""],
             ["Workouts", intText(workouts.workout_count ?? 0), recovery.latest_spo2 ? `SpO2 ${num(recovery.latest_spo2, 1)}%` : ""],
           ],
-          evidenceTitle: "Positives",
-          evidence: data.positives || [],
+          evidenceTitle: prioritySignals.length ? "Priority Signals" : "Positives",
+          evidence: prioritySignals.length ? prioritySignals : data.positives || [],
           secondaryTitle: "Watchouts",
           secondary: data.watchouts || [],
         };
@@ -993,6 +999,111 @@ TODAY_WIDGET_HTML = """
 
 
 WIDGET_PREVIEW_STATES: dict[str, dict] = {
+    "health-overview": {
+        "status": "ok",
+        "overview_type": "health_overview",
+        "window_days": 7,
+        "date_range": {"start": "2026-06-27", "end": "2026-07-03"},
+        "headline": "Red readiness at 38/100; 5.1h latest sleep; 72 zone minutes; 36.0 ms HRV.",
+        "daily_brief": {
+            "summary": "Make today recovery-first unless there is a strong non-negotiable reason to train hard. Main constraint: Latest sleep is short at 5.1h.",
+            "training_bias": "recovery-first",
+            "today_plan": [
+                "Bias toward recovery, mobility, walking, and earlier sleep.",
+                "Do not add another max-effort conditioning block today.",
+                "Choose exercises that avoid sore areas unless warm-up pain stays under 3/10.",
+                "Keep the plan aligned with your goal: Train four days per week.",
+            ],
+            "priority_signals": [
+                {
+                    "category": "readiness",
+                    "label": "Readiness",
+                    "detail": "Red at 38/100.",
+                    "impact": "Use readiness as the starting point, then adjust for symptoms and goals.",
+                    "status": "watchout",
+                },
+                {
+                    "category": "sleep",
+                    "label": "Sleep",
+                    "detail": "5.1h, 2.2h below recent average.",
+                    "impact": "Short sleep should cap intensity.",
+                    "status": "watchout",
+                },
+                {
+                    "category": "heart",
+                    "label": "HRV",
+                    "detail": "36.0 ms, 36% below recent average.",
+                    "impact": "HRV helps explain recovery pressure.",
+                    "status": "watchout",
+                },
+                {
+                    "category": "activity",
+                    "label": "Training load",
+                    "detail": "72 Active Zone Minutes on 2026-07-02.",
+                    "impact": "High recent load should reduce extra intensity.",
+                    "status": "watchout",
+                },
+                {
+                    "category": "goal",
+                    "label": "Goal progress",
+                    "detail": "1/4 workout sessions logged; 3 remaining.",
+                    "impact": "Use the goal as pressure only after recovery signals.",
+                    "status": "context",
+                },
+            ],
+            "prompt_suggestions": [
+                "Plan today's workout using this brief.",
+                "Compare sleep, HRV, resting heart rate, and load.",
+                "Plan around my sore areas.",
+            ],
+            "confidence": "high",
+        },
+        "readiness": {
+            "score": 38,
+            "label": "red",
+            "recommendation": "Prioritize recovery, mobility, walking, and sleep.",
+        },
+        "today": {
+            "steps": 1600,
+            "active_zone_minutes": 0,
+            "sleep": {"asleep_hours": 5.1},
+            "hrv_ms": 36,
+            "resting_heart_rate": 67,
+        },
+        "sections": {
+            "activity": {
+                "status": "ok",
+                "totals": {"steps": 41200, "active_zone_minutes": 72},
+            },
+            "sleep": {
+                "status": "ok",
+                "latest_asleep_hours": 5.1,
+                "latest_vs_average_hours": -2.2,
+                "days_with_sleep": 7,
+            },
+            "heart": {
+                "status": "ok",
+                "latest_hrv_ms": 36,
+                "average_hrv_ms": 56.5,
+                "latest_resting_heart_rate": 67,
+                "average_resting_heart_rate": 57.5,
+            },
+            "recovery": {"status": "ok", "latest_spo2": 98.1},
+            "workouts": {"status": "ok", "workout_count": 1},
+        },
+        "positives": ["Enough synced data is present to produce a personalized overview."],
+        "watchouts": [
+            "Latest sleep is short at 5.1h.",
+            "HRV is running below the recent average.",
+            "Recent training load is high: 72 zone minutes on 2026-07-02.",
+        ],
+        "next_actions": [
+            "Bias toward recovery, mobility, walking, and earlier sleep.",
+            "Do not add another max-effort conditioning block today.",
+        ],
+        "data_used": {"synced_metric_count": 9},
+        "data_freshness": {"freshness_level": "fresh", "latest_observed_date": "2026-07-03"},
+    },
     "health-clues": {
         "status": "ok",
         "clue_type": "health_question_clues",

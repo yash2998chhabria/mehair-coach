@@ -13,7 +13,7 @@ The project starts empty. It does not import any existing Fitbit export and it d
 - Lists all device-first health metrics the app can sync, with per-user availability.
 - Lets ChatGPT query specific synced metrics over bounded date windows.
 - Summarizes readiness, sleep, activity load, heart trends, and workout history.
-- Produces an all-data health overview with positives, watchouts, and next actions.
+- Produces an all-data health overview with a daily coaching brief, positives, watchouts, and next actions.
 - Lets ChatGPT decide which Fitbit metrics, goals, check-ins, and workout-history clues matter for vague questions like “why am I tired?” or “how hard should I train today?”
 - Compares sleep, HRV, resting heart rate, overnight recovery context, and zone-minute load against recent baseline.
 - Flags whether synced data is fresh, aging, or stale before time-sensitive coaching.
@@ -68,7 +68,7 @@ flowchart LR
 - `sync_latest_fitbit_data` pulls the latest available Google Health/Fitbit records.
 - `get_data_freshness` reports last observed date, last sync time, and whether data is fresh, aging, or stale.
 - `get_today_context` returns the latest daily activity, sleep, heart, readiness, and evidence.
-- `get_health_overview` returns an all-data overview across readiness, activity, sleep, heart, recovery, workouts, goals, check-ins, freshness, coverage, positives, watchouts, and next actions.
+- `get_health_overview` returns an all-data overview across readiness, activity, sleep, heart, recovery, workouts, goals, check-ins, freshness, coverage, daily brief, positives, watchouts, and next actions.
 - `get_recovery_readiness` returns the readiness score and evidence.
 - `get_health_question_clues` maps a natural-language health or workout question to likely intents, useful synced metrics, visible clues, watchouts, and follow-up tools.
 - `get_recovery_signal_comparison` compares sleep, HRV, resting heart rate, overnight recovery signals, and activity load against recent baseline.
