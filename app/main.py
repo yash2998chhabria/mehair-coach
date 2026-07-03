@@ -223,7 +223,12 @@ def create_server(settings_override: Settings | None = None) -> ServerBundle:
         user_id = current_user_id()
         if not user_id:
             return setup_required()
-        return workout_recommendation(health_store.latest_context(user_id))
+        return workout_recommendation(
+            context=health_store.latest_context(user_id),
+            goal=health_store.latest_goal(user_id),
+            checkins=health_store.recent_checkins(user_id),
+            workout_history=health_store.workout_history(user_id, 7),
+        )
 
     @mcp.tool(
         title="Plan workout with health context",
@@ -434,36 +439,111 @@ def create_server(settings_override: Settings | None = None) -> ServerBundle:
     )
 
 
-def workout_recommendation(context: dict[str, Any]) -> dict[str, Any]:
+def workout_recommendation(
+    context: dict[str, Any],
+    goal: dict[str, Any] | None = None,
+    checkins: list[dict[str, Any]] | None = None,
+    workout_history: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     if context.get("status") != "ok":
         return context
     readiness = context["readiness"]
     label = readiness.get("label")
     today = context.get("today", {})
     sleep = today.get("sleep", {})
+    freshness = context.get("data_freshness", {})
+    soreness_rating = _latest_rating(checkins or [], "soreness")
+    energy_rating = _latest_rating(checkins or [], "energy")
+    stress_rating = _latest_rating(checkins or [], "stress")
+    workout_summary = (workout_history or {}).get("summary", {}) if (workout_history or {}).get("status") == "ok" else {}
+    workout_count = int(workout_summary.get("workout_count") or 0)
+    goal_payload = (goal or {}).get("goal") or {}
+    goal_status = _goal_status(goal_payload, workout_count)
+
     if label == "green":
         plan = "Train normally: strength, intervals, or a full session are reasonable if your body agrees."
         intensity = "moderate-to-hard"
+        rpe_cap = 8
     elif label == "yellow":
         plan = "Keep it controlled: zone 2 cardio, technique work, or submax strength."
         intensity = "moderate"
+        rpe_cap = 7
     else:
         plan = "Make today recovery-biased: walking, mobility, breath work, and an earlier bedtime."
         intensity = "easy"
+        rpe_cap = 6
+
+    next_actions = []
+    avoid = []
+    if freshness.get("needs_sync_before_time_sensitive_advice"):
+        next_actions.append("Sync latest Fitbit data before making a time-sensitive hard training decision.")
+        plan = f"{freshness.get('recommendation', 'Sync latest Fitbit data first')} Based on stored data only: {plan}"
     if today.get("active_zone_minutes", 0) > 45:
         plan += " You already have a high zone-minute load today, so avoid stacking another hard effort."
+        avoid.append("Another hard conditioning block today")
+        rpe_cap = min(rpe_cap, 7)
     if sleep.get("asleep_hours") and sleep["asleep_hours"] < 5:
         plan += " Keep impact low because the latest sleep block was short."
+        avoid.append("High-impact or max-effort work on short sleep")
+        rpe_cap = min(rpe_cap, 6)
+    if soreness_rating and soreness_rating >= 7:
+        plan += f" Your soreness check-in is high at {soreness_rating}/10, so bias toward recovery or pain-free technique."
+        intensity = "easy"
+        rpe_cap = min(rpe_cap, 6)
+        avoid.append("Loading sore areas aggressively")
+    elif soreness_rating and soreness_rating >= 5:
+        plan += f" Your soreness check-in is moderate at {soreness_rating}/10, so keep 2-3 reps in reserve."
+        intensity = "moderate" if intensity == "moderate-to-hard" else intensity
+        rpe_cap = min(rpe_cap, 7)
+    if energy_rating and energy_rating <= 4:
+        plan += f" Energy is low at {energy_rating}/10, so use the first 10 minutes as a readiness check."
+        rpe_cap = min(rpe_cap, 6)
+    if stress_rating and stress_rating >= 7:
+        plan += f" Stress is high at {stress_rating}/10, so keep the session predictable and avoid all-out work."
+        rpe_cap = min(rpe_cap, 7)
+
+    if goal_status.get("remaining_sessions") is not None:
+        if goal_status["remaining_sessions"] > 0 and intensity != "easy":
+            next_actions.append(
+                f"Count today toward your weekly goal with a controlled session; {goal_status['remaining_sessions']} session(s) remain."
+            )
+        elif goal_status["remaining_sessions"] > 0:
+            next_actions.append(
+                f"You are {goal_status['remaining_sessions']} session(s) from the weekly target, but recovery signals make an easy day smarter."
+            )
+        else:
+            next_actions.append("Weekly workout target is already covered; prioritize quality and recovery.")
+
+    if intensity == "moderate-to-hard":
+        primary_action = "Train normally, but stop before form or breathing feels unusual."
+    elif intensity == "moderate":
+        primary_action = "Do a controlled session: zone 2, technique, or submax strength."
+    else:
+        primary_action = "Make today recovery-biased: walk, mobility, easy cardio, or rest."
+    next_actions.insert(1 if freshness.get("needs_sync_before_time_sensitive_advice") else 0, primary_action)
+
     return {
         "status": "ok",
         "intensity": intensity,
+        "rpe_cap": rpe_cap,
         "recommendation": plan,
+        "next_actions": _dedupe(next_actions),
+        "avoid": _dedupe(avoid),
         "latest_date": context.get("latest_date"),
         "activity_date": context.get("activity_date"),
         "recovery_date": context.get("recovery_date"),
         "today": today,
         "why": readiness.get("evidence", []),
         "evidence": readiness.get("evidence", []),
+        "goal_context": goal_status,
+        "subjective_context": {
+            "energy": energy_rating,
+            "soreness": soreness_rating,
+            "stress": stress_rating,
+            "latest_checkins": checkins or [],
+        },
+        "workout_history_summary": workout_summary or None,
+        "data_freshness": freshness,
         "data_used": {
             "activity_date": context.get("activity_date"),
             "recovery_date": context.get("recovery_date"),
@@ -473,6 +553,12 @@ def workout_recommendation(context: dict[str, Any]) -> dict[str, Any]:
             "latest_sleep_hours": sleep.get("asleep_hours") or sleep.get("duration_hours"),
             "resting_heart_rate": today.get("resting_heart_rate"),
             "hrv_ms": today.get("hrv_ms"),
+            "energy_checkin": energy_rating,
+            "soreness_checkin": soreness_rating,
+            "stress_checkin": stress_rating,
+            "goal": goal,
+            "recent_workouts": workout_count,
+            "freshness_level": freshness.get("freshness_level"),
         },
         "readiness": readiness,
         "context": context,
@@ -591,6 +677,27 @@ def _base_intensity(label: str) -> str:
     if label == "yellow":
         return "moderate"
     return "easy"
+
+
+def _goal_status(goal_payload: dict[str, Any], workout_count: int) -> dict[str, Any]:
+    days_per_week = goal_payload.get("days_per_week")
+    remaining = None
+    if days_per_week is not None:
+        try:
+            target = max(0, int(days_per_week))
+            remaining = max(0, target - workout_count)
+        except (TypeError, ValueError):
+            target = None
+    else:
+        target = None
+    return {
+        "goal_type": goal_payload.get("goal_type"),
+        "target": goal_payload.get("target"),
+        "days_per_week": target,
+        "recent_workouts": workout_count,
+        "remaining_sessions": remaining,
+        "notes": goal_payload.get("notes"),
+    }
 
 
 def _activity_guidance(planned: str, rpe_cap: int, intensity: str) -> tuple[list[str], list[str], list[str], list[str]]:

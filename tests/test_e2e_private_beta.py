@@ -541,6 +541,22 @@ async def test_private_beta_oauth_mcp_sync_and_coaching_flow(tmp_path, monkeypat
             assert any("Aggressive bench arch" in item for item in plan["avoid"])
             assert "medical advice" in plan["safety_note"]
 
+            personalized_recommendation = tool_content(
+                await mcp_request(
+                    client,
+                    access_token,
+                    "tools/call",
+                    {"name": "recommend_workout_today", "arguments": {}},
+                    12,
+                )
+            )
+            assert personalized_recommendation["status"] == "ok"
+            assert personalized_recommendation["intensity"] == "moderate"
+            assert personalized_recommendation["rpe_cap"] == 7
+            assert personalized_recommendation["subjective_context"]["soreness"] == 6
+            assert personalized_recommendation["goal_context"]["remaining_sessions"] == 3
+            assert "soreness check-in is moderate" in personalized_recommendation["recommendation"]
+
             refresh = await client.post(
                 "/oauth/token",
                 data={

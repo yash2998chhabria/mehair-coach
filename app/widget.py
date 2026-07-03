@@ -428,6 +428,7 @@ TODAY_WIDGET_HTML = """
       function toViewModel(data) {
         if (data?.overview_type === "health_overview" && data?.sections) return healthOverviewModel(data);
         if (data?.planned_activity && Array.isArray(data.session_guidance)) return workoutPlanModel(data);
+        if (data?.recommendation && Array.isArray(data.next_actions) && data?.goal_context) return todayWorkoutModel(data);
         if (data?.latest && Array.isArray(data.days) && (data.latest.stages_minutes || data.latest.sessions_count != null)) {
           return sleepModel(data);
         }
@@ -484,6 +485,51 @@ TODAY_WIDGET_HTML = """
           evidence: data.positives || [],
           secondaryTitle: "Watchouts",
           secondary: data.watchouts || [],
+        };
+      }
+
+      function todayWorkoutModel(data) {
+        const readiness = data.readiness || {};
+        const label = readiness.label || data.data_used?.readiness_label || "pending";
+        const today = data.today || {};
+        const sleep = today.sleep || {};
+        const goal = data.goal_context || {};
+        const subjective = data.subjective_context || {};
+        const freshness = data.data_freshness || {};
+        const sleepHours = data.data_used?.latest_sleep_hours ?? sleep.asleep_hours ?? sleep.duration_hours;
+        const goalDetail = goal.remaining_sessions != null
+          ? `${goal.remaining_sessions} goal sessions left`
+          : goal.target || "";
+        return {
+          accent: readinessAccent(label),
+          title: "Today's Workout",
+          eyebrow: "Coach Recommendation",
+          date: data.activity_date && data.recovery_date && data.activity_date !== data.recovery_date
+            ? `Activity ${data.activity_date}; recovery ${data.recovery_date}`
+            : data.activity_date || data.latest_date || "",
+          chips: [
+            data.intensity,
+            data.rpe_cap != null ? `RPE ${data.rpe_cap}` : "",
+            label,
+            freshnessChip(freshness),
+          ].filter(Boolean),
+          score: finiteNumber(readiness.score, 0),
+          primaryLabel: "Readiness",
+          headline: data.recommendation || readiness.recommendation || "Workout guidance ready.",
+          focusTitle: "Do Today",
+          focus: data.next_actions || [],
+          metrics: [
+            ["Steps", intText(today.steps ?? data.data_used?.steps_today ?? 0), "today"],
+            ["Zone min", intText(today.active_zone_minutes ?? data.data_used?.active_zone_minutes_today ?? 0), "today"],
+            ["Sleep", sleepHours ? `${num(sleepHours, 1)}h` : null],
+            ["HRV", data.data_used?.hrv_ms ? `${num(data.data_used.hrv_ms, 1)} ms` : null],
+            ["Soreness", subjective.soreness != null ? `${subjective.soreness}/10` : null, subjective.energy != null ? `energy ${subjective.energy}/10` : ""],
+            ["Goal", goal.remaining_sessions != null ? intText(goal.remaining_sessions) : "No goal", goalDetail],
+          ],
+          evidenceTitle: "Why",
+          evidence: data.evidence || data.why || [],
+          secondaryTitle: "Avoid",
+          secondary: data.avoid || [],
         };
       }
 

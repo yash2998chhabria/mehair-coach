@@ -67,7 +67,7 @@ flowchart LR
 - `get_today_context` returns the latest daily activity, sleep, heart, readiness, and evidence.
 - `get_health_overview` returns an all-data overview across readiness, activity, sleep, heart, recovery, workouts, goals, check-ins, freshness, coverage, positives, watchouts, and next actions.
 - `get_recovery_readiness` returns the readiness score and evidence.
-- `recommend_workout_today` recommends the day’s training intensity.
+- `recommend_workout_today` recommends the day’s training intensity using freshness, readiness, activity load, goals, recent workouts, and check-ins.
 - `plan_workout_with_health_context` plans a specific workout, sport session, or muscle-group day from synced data and user constraints.
 - `get_sleep_analysis` summarizes recent sleep.
 - `get_activity_load` summarizes recent activity.
