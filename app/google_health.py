@@ -12,34 +12,72 @@ class DataTypeSpec:
     id: str
     kind: str
     operation: str = "list"
+    label: str = ""
+    category: str = "Other"
+    description: str = ""
+
+    def catalog_entry(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "label": self.label or self.id.replace("-", " ").title(),
+            "category": self.category,
+            "record_type": self.kind,
+            "operation": self.operation,
+            "description": self.description,
+            "synced_by_default": True,
+        }
+
+
+def metric(
+    data_type: str,
+    kind: str,
+    label: str,
+    category: str,
+    description: str,
+    operation: str = "list",
+) -> DataTypeSpec:
+    return DataTypeSpec(
+        id=data_type,
+        kind=kind,
+        operation=operation,
+        label=label,
+        category=category,
+        description=description,
+    )
 
 
 SYNC_DATA_TYPES: list[DataTypeSpec] = [
-    DataTypeSpec("steps", "interval"),
-    DataTypeSpec("heart-rate", "sample"),
-    DataTypeSpec("sleep", "session"),
-    DataTypeSpec("exercise", "session"),
-    DataTypeSpec("active-minutes", "interval"),
-    DataTypeSpec("active-zone-minutes", "interval"),
-    DataTypeSpec("active-energy-burned", "interval"),
-    DataTypeSpec("activity-level", "interval"),
-    DataTypeSpec("distance", "interval"),
-    DataTypeSpec("heart-rate-variability", "sample"),
-    DataTypeSpec("oxygen-saturation", "sample"),
-    DataTypeSpec("respiratory-rate-sleep-summary", "sample"),
-    DataTypeSpec("sedentary-period", "interval"),
-    DataTypeSpec("swim-lengths-data", "interval"),
-    DataTypeSpec("time-in-heart-rate-zone", "interval"),
-    DataTypeSpec("daily-heart-rate-variability", "daily"),
-    DataTypeSpec("daily-resting-heart-rate", "daily"),
-    DataTypeSpec("daily-oxygen-saturation", "daily"),
-    DataTypeSpec("daily-respiratory-rate", "daily"),
-    DataTypeSpec("daily-sleep-temperature-derivations", "daily"),
-    DataTypeSpec("daily-vo2-max", "daily"),
-    DataTypeSpec("calories-in-heart-rate-zone", "interval", "dailyRollUp"),
-    DataTypeSpec("total-calories", "interval", "dailyRollUp"),
-    DataTypeSpec("floors", "interval", "dailyRollUp"),
+    metric("steps", "interval", "Steps", "Activity", "Step counts over time."),
+    metric("active-minutes", "interval", "Active minutes", "Activity", "Minutes by activity intensity."),
+    metric("active-zone-minutes", "interval", "Active Zone Minutes", "Activity", "Fitbit zone-minute load by heart-rate zone."),
+    metric("activity-level", "interval", "Activity level", "Activity", "Sedentary, light, moderate, or vigorous movement intervals."),
+    metric("distance", "interval", "Distance", "Activity", "Movement distance in millimeters."),
+    metric("floors", "interval", "Floors", "Activity", "Daily floor/elevation count rollups.", "dailyRollUp"),
+    metric("active-energy-burned", "interval", "Active energy", "Activity", "Active calories burned."),
+    metric("total-calories", "interval", "Total calories", "Activity", "Daily total calorie expenditure.", "dailyRollUp"),
+    metric("sedentary-period", "interval", "Sedentary periods", "Activity", "Detected sedentary windows."),
+    metric("calories-in-heart-rate-zone", "interval", "Calories in heart-rate zones", "Activity", "Daily calories split by heart-rate zone.", "dailyRollUp"),
+    metric("heart-rate", "sample", "Heart rate", "Heart", "Heart-rate samples."),
+    metric("time-in-heart-rate-zone", "interval", "Time in heart-rate zones", "Heart", "Time spent in each heart-rate zone."),
+    metric("heart-rate-variability", "sample", "HRV samples", "Heart", "Heart-rate variability samples."),
+    metric("daily-heart-rate-variability", "daily", "Daily HRV", "Heart", "Daily HRV summary."),
+    metric("daily-resting-heart-rate", "daily", "Resting heart rate", "Heart", "Daily resting heart rate."),
+    metric("sleep", "session", "Sleep", "Sleep", "Sleep sessions, stages, and summary minutes."),
+    metric("oxygen-saturation", "sample", "Oxygen saturation samples", "Recovery", "SpO2 samples."),
+    metric("daily-oxygen-saturation", "daily", "Daily oxygen saturation", "Recovery", "Daily SpO2 summary."),
+    metric("respiratory-rate-sleep-summary", "sample", "Respiratory sleep summary", "Recovery", "Respiratory-rate sleep summaries."),
+    metric("daily-respiratory-rate", "daily", "Daily respiratory rate", "Recovery", "Daily respiratory-rate summary."),
+    metric("daily-sleep-temperature-derivations", "daily", "Sleep temperature", "Recovery", "Nightly sleep-temperature derivations."),
+    metric("exercise", "session", "Exercise sessions", "Workouts", "Workout sessions and metrics."),
+    metric("swim-lengths-data", "interval", "Swim lengths", "Workouts", "Swim length intervals."),
+    metric("daily-vo2-max", "daily", "Daily VO2 max", "Capacity", "Daily VO2 max estimate."),
 ]
+
+SYNC_DATA_TYPE_IDS = {spec.id for spec in SYNC_DATA_TYPES}
+
+
+def metric_catalog() -> list[dict[str, Any]]:
+    return [spec.catalog_entry() for spec in SYNC_DATA_TYPES]
 
 
 class GoogleHealthClient:

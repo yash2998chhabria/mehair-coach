@@ -351,6 +351,8 @@ async def test_private_beta_oauth_mcp_sync_and_coaching_flow(tmp_path, monkeypat
             tool_names = {item["name"] for item in tools["result"]["tools"]}
             assert "sync_latest_fitbit_data" in tool_names
             assert "get_today_context" in tool_names
+            assert "list_available_health_metrics" in tool_names
+            assert "query_health_metrics" in tool_names
 
             before_sync = tool_content(
                 await mcp_request(
@@ -374,7 +376,38 @@ async def test_private_beta_oauth_mcp_sync_and_coaching_flow(tmp_path, monkeypat
             )
             assert sync["status"] == "ok"
             assert sync["records_upserted"] >= 10
+            assert sync["context"]["today"]["steps"] == 9200
+            assert sync["readiness"]["label"] == "green"
             assert "food" not in fake_health.requested_specs
+
+            catalog = tool_content(
+                await mcp_request(
+                    client,
+                    access_token,
+                    "tools/call",
+                    {"name": "list_available_health_metrics", "arguments": {}},
+                    41,
+                )
+            )
+            assert catalog["supported_metric_count"] >= 20
+            assert any(item["id"] == "heart-rate" for item in catalog["metrics"])
+            assert "food" in catalog["excluded_categories"]
+
+            queried = tool_content(
+                await mcp_request(
+                    client,
+                    access_token,
+                    "tools/call",
+                    {
+                        "name": "query_health_metrics",
+                        "arguments": {"metrics": ["steps", "sleep"], "days": 1},
+                    },
+                    42,
+                )
+            )
+            assert queried["status"] == "ok"
+            assert queried["metrics"]["steps"]["daily"][-1]["steps"] == 9200
+            assert queried["metrics"]["sleep"]["daily"][-1]["sleep"]["duration_hours"] == 7.5
 
             today = tool_content(
                 await mcp_request(
@@ -402,6 +435,8 @@ async def test_private_beta_oauth_mcp_sync_and_coaching_flow(tmp_path, monkeypat
             )
             assert recommendation["status"] == "ok"
             assert recommendation["intensity"] == "moderate-to-hard"
+            assert recommendation["today"]["steps"] == 9200
+            assert recommendation["activity_date"] == today["activity_date"]
             assert "medical advice" in recommendation["safety_note"]
 
             sleep = tool_content(

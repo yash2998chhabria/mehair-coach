@@ -10,6 +10,8 @@ The project starts empty. It does not import any existing Fitbit export and it d
 - Authenticates each ChatGPT connector user with Google OAuth.
 - Stores Google refresh/access tokens encrypted at rest.
 - Syncs the latest Google Health data that came from Fitbit or other connected sources.
+- Lists all device-first health metrics the app can sync, with per-user availability.
+- Lets ChatGPT query specific synced metrics over bounded date windows.
 - Summarizes readiness, sleep, activity load, heart trends, and workout history.
 - Stores local goals and subjective check-ins for better coaching prompts.
 - Returns clear setup and empty-state responses when a user has not connected or synced yet.
@@ -37,6 +39,8 @@ The sync tool queries read-only Google Health data categories that are useful fo
 
 Food and nutrition are intentionally excluded because the first version is device-first coaching, and the user may not log food data.
 
+The app exposes this in two layers: high-level coaching tools for normal prompts, plus a metric catalog and metric query tool so ChatGPT can inspect specific signals when a question needs more detail.
+
 ## Architecture
 
 ```mermaid
@@ -53,6 +57,8 @@ flowchart LR
 ## MCP Tools
 
 - `connect_google_health_status` checks whether the current ChatGPT user is connected.
+- `list_available_health_metrics` lists every device-first metric this beta can sync and query, including local record counts.
+- `query_health_metrics` queries selected synced metrics over a bounded date range from the local store.
 - `sync_latest_fitbit_data` pulls the latest available Google Health/Fitbit records.
 - `get_data_freshness` reports last observed and last synced dates.
 - `get_today_context` returns the latest daily activity, sleep, heart, readiness, and evidence.
@@ -171,6 +177,10 @@ npx @modelcontextprotocol/inspector@latest --server-url http://localhost:8787/mc
 ```
 
 The current automated tests cover OAuth metadata, encrypted token storage, setup/empty states, synthetic health calculations, MCP tool registration, widget registration, HTTP metadata routes, and a local private-beta E2E flow that simulates ChatGPT plus Google Health without creating live credentials.
+
+### ChatGPT Connector Cache
+
+During private-beta iteration, ChatGPT can cache a connector's tool descriptors and iframe resource URI. If you change `WIDGET_URI`, tool metadata, or resource templates and ChatGPT still renders an older `ui://...` card, remove and recreate the developer-mode connector or reconnect it so ChatGPT fetches the latest descriptors.
 
 ## Security Notes
 

@@ -15,6 +15,8 @@ async def test_mcp_tool_list_matches_private_beta_plan() -> None:
 
     assert names == {
         "connect_google_health_status",
+        "list_available_health_metrics",
+        "query_health_metrics",
         "sync_latest_fitbit_data",
         "get_data_freshness",
         "get_today_context",

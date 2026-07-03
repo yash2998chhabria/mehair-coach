@@ -102,6 +102,40 @@ def create_server(settings_override: Settings | None = None) -> ServerBundle:
         return health_store.connection_status(current_user_id())
 
     @mcp.tool(
+        title="List available health metrics",
+        description="List every device-first Google Health/Fitbit metric this app can sync and query, with per-user record counts when available.",
+        annotations=READ_ONLY,
+    )
+    def list_available_health_metrics() -> dict[str, Any]:
+        return health_store.available_metrics(current_user_id())
+
+    @mcp.tool(
+        title="Query health metrics",
+        description="Query one or more synced Google Health/Fitbit metrics from the local store over a bounded date range.",
+        annotations=READ_ONLY,
+    )
+    def query_health_metrics(
+        metrics: list[str] | None = None,
+        days: int = 7,
+        start_date: str | None = None,
+        end_date: str | None = None,
+        include_records: bool = False,
+        limit_per_metric: int = 25,
+    ) -> dict[str, Any]:
+        user_id = current_user_id()
+        if not user_id:
+            return setup_required()
+        return health_store.query_metrics(
+            user_id,
+            metrics=metrics,
+            days=max(1, min(days, 30)),
+            start_date=start_date,
+            end_date=end_date,
+            include_records=include_records,
+            limit_per_metric=max(1, min(limit_per_metric, 200)),
+        )
+
+    @mcp.tool(
         title="Sync latest Fitbit data",
         description="Pull the latest available cloud-synced Fitbit data from Google Health into the local user store.",
         annotations=SYNC,
@@ -152,7 +186,10 @@ def create_server(settings_override: Settings | None = None) -> ServerBundle:
         return {
             "status": "ok",
             "latest_date": context["latest_date"],
+            "activity_date": context["activity_date"],
+            "recovery_date": context["recovery_date"],
             "readiness": context["readiness"],
+            "today": context["today"],
             "evidence": context["evidence"],
         }
 
@@ -350,6 +387,7 @@ def workout_recommendation(context: dict[str, Any]) -> dict[str, Any]:
     readiness = context["readiness"]
     label = readiness.get("label")
     today = context.get("today", {})
+    sleep = today.get("sleep", {})
     if label == "green":
         plan = "Train normally: strength, intervals, or a full session are reasonable if your body agrees."
         intensity = "moderate-to-hard"
@@ -361,10 +399,28 @@ def workout_recommendation(context: dict[str, Any]) -> dict[str, Any]:
         intensity = "easy"
     if today.get("active_zone_minutes", 0) > 45:
         plan += " You already have a high zone-minute load today, so avoid stacking another hard effort."
+    if sleep.get("asleep_hours") and sleep["asleep_hours"] < 5:
+        plan += " Keep impact low because the latest sleep block was short."
     return {
         "status": "ok",
         "intensity": intensity,
         "recommendation": plan,
+        "latest_date": context.get("latest_date"),
+        "activity_date": context.get("activity_date"),
+        "recovery_date": context.get("recovery_date"),
+        "today": today,
+        "why": readiness.get("evidence", []),
+        "evidence": readiness.get("evidence", []),
+        "data_used": {
+            "activity_date": context.get("activity_date"),
+            "recovery_date": context.get("recovery_date"),
+            "steps_today": today.get("steps", 0),
+            "active_minutes_today": today.get("active_minutes", 0),
+            "active_zone_minutes_today": today.get("active_zone_minutes", 0),
+            "latest_sleep_hours": sleep.get("asleep_hours") or sleep.get("duration_hours"),
+            "resting_heart_rate": today.get("resting_heart_rate"),
+            "hrv_ms": today.get("hrv_ms"),
+        },
         "readiness": readiness,
         "context": context,
         "safety_note": "This is fitness coaching context, not medical advice.",
