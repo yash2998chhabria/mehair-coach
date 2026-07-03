@@ -1,5 +1,6 @@
 from functools import lru_cache
 from pathlib import Path
+from urllib.parse import urlparse
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -35,6 +36,27 @@ class Settings(BaseSettings):
         if not self.database_url.startswith("sqlite:///"):
             raise ValueError("Only sqlite:/// DATABASE_URL values are supported in v1.")
         return Path(self.database_url.removeprefix("sqlite:///"))
+
+    @property
+    def mcp_allowed_hosts(self) -> list[str]:
+        host = urlparse(self.base_url).netloc
+        return [
+            "127.0.0.1:*",
+            "localhost:*",
+            "[::1]:*",
+            *([host] if host else []),
+        ]
+
+    @property
+    def mcp_allowed_origins(self) -> list[str]:
+        return [
+            "http://127.0.0.1:*",
+            "http://localhost:*",
+            "http://[::1]:*",
+            self.base_url,
+            "https://chatgpt.com",
+            "https://chat.openai.com",
+        ]
 
     @property
     def google_scopes(self) -> list[str]:

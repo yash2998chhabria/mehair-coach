@@ -3,7 +3,8 @@ from __future__ import annotations
 import httpx
 import pytest
 
-from app.main import app, mcp
+from app.main import app, mcp, settings as app_settings
+from app.settings import Settings
 from app.widget import WIDGET_URI
 
 
@@ -50,4 +51,11 @@ async def test_http_metadata_routes() -> None:
     assert oauth.status_code == 200
     assert oauth.json()["authorization_endpoint"].endswith("/oauth/authorize")
     assert protected.status_code == 200
-    assert protected.json()["resource"].rstrip("/") == "http://localhost:8787"
+    assert protected.json()["resource"].rstrip("/") == app_settings.base_url
+
+
+def test_mcp_transport_security_allows_public_base_url_host() -> None:
+    settings = Settings(public_base_url="https://example-tunnel.trycloudflare.com")
+
+    assert "example-tunnel.trycloudflare.com" in settings.mcp_allowed_hosts
+    assert "https://chatgpt.com" in settings.mcp_allowed_origins

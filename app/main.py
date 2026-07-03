@@ -7,6 +7,7 @@ import uvicorn
 from mcp.server.auth.middleware.auth_context import get_access_token
 from mcp.server.auth.settings import AuthSettings
 from mcp.server.fastmcp import FastMCP
+from mcp.server.transport_security import TransportSecuritySettings
 from mcp.types import ToolAnnotations
 from starlette.applications import Starlette
 from starlette.middleware.cors import CORSMiddleware
@@ -61,6 +62,11 @@ def create_server(settings_override: Settings | None = None) -> ServerBundle:
             resource_server_url=settings.base_url,
             service_documentation_url=f"{settings.base_url}/docs/setup",
             required_scopes=[settings.app_scope],
+        ),
+        transport_security=TransportSecuritySettings(
+            enable_dns_rebinding_protection=True,
+            allowed_hosts=settings.mcp_allowed_hosts,
+            allowed_origins=settings.mcp_allowed_origins,
         ),
         streamable_http_path="/mcp",
         stateless_http=True,
