@@ -126,6 +126,7 @@ Fill in `.env`:
 ```bash
 PUBLIC_BASE_URL=https://your-public-url.example
 DATABASE_URL=sqlite:///./data/mehair-coach.sqlite3
+LIBSQL_AUTH_TOKEN=
 TOKEN_ENCRYPTION_KEY=...
 GOOGLE_CLIENT_ID=...
 GOOGLE_CLIENT_SECRET=...
@@ -152,16 +153,25 @@ https://your-public-url.example/mcp
 
 For local ChatGPT testing, expose the server with an HTTPS tunnel and use that tunnel URL as `PUBLIC_BASE_URL`.
 
-## Remote Hosting
+## Free Remote Hosting
 
-The repo includes `render.yaml` for a Render web service:
+GitHub hosts the public source repo, but GitHub Pages cannot run this MCP because it is a live Python server with OAuth callbacks.
+
+The simplest free hosted setup is:
+
+- GitHub for the repo.
+- Render Free for the Python web service.
+- Turso Free for the SQLite-compatible hosted database.
+
+The repo includes `render.yaml` for the Render service:
 
 - Python runtime pinned to 3.12.12.
 - `uv sync --frozen --no-dev` build.
 - `uv run --no-sync python -m app.main` start.
 - `/health` health check.
-- Persistent SQLite storage at `/var/data/mehair-coach.sqlite3`.
-- Secret env vars for `TOKEN_ENCRYPTION_KEY`, `GOOGLE_CLIENT_ID`, and `GOOGLE_CLIENT_SECRET`.
+- Free web instance with no persistent disk.
+- Hosted persistence through `DATABASE_URL=libsql://...` and `LIBSQL_AUTH_TOKEN`.
+- Secret env vars for `TOKEN_ENCRYPTION_KEY`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `DATABASE_URL`, and `LIBSQL_AUTH_TOKEN`.
 
 After Render gives the service URL, add this redirect URI to the Google OAuth client:
 

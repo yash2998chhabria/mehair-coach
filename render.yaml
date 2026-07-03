@@ -4,22 +4,20 @@ services:
     runtime: python
     branch: main
     region: oregon
-    plan: starter
+    plan: free
     buildCommand: uv sync --frozen --no-dev
     startCommand: uv run --no-sync python -m app.main
     healthCheckPath: /health
     autoDeploy: true
-    disk:
-      name: mehair-coach-data
-      mountPath: /var/data
-      sizeGB: 1
     envVars:
       - key: UV_VERSION
         value: 0.10.8
       - key: PYTHON_VERSION
         value: 3.12.12
       - key: DATABASE_URL
-        value: sqlite:////var/data/mehair-coach.sqlite3
+        sync: false
+      - key: LIBSQL_AUTH_TOKEN
+        sync: false
       - key: TOKEN_ENCRYPTION_KEY
         sync: false
       - key: GOOGLE_CLIENT_ID

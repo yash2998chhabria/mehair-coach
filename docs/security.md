@@ -8,7 +8,7 @@ Mehair Coach handles personal health data, so the default posture is private bet
 - No personal exports or demo health records are imported.
 - Each ChatGPT connector user authorizes Google separately.
 - Google tokens are encrypted before storage.
-- Synced health data is stored in local SQLite.
+- Synced health data is stored in the configured database: local SQLite for development, or hosted Turso/libSQL for the free remote deployment.
 
 ## Git Hygiene
 
@@ -16,6 +16,7 @@ Never commit:
 
 - `.env`
 - SQLite databases
+- Turso/libSQL database tokens
 - Google OAuth client secrets
 - refresh tokens or access tokens
 - ngrok config

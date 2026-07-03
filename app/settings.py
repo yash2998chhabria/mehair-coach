@@ -20,6 +20,7 @@ class Settings(BaseSettings):
     public_base_url: str = LOCAL_BASE_URL
     render_external_url: str = ""
     database_url: str = "sqlite:///./data/mehair-coach.sqlite3"
+    libsql_auth_token: str = ""
     token_encryption_key: str = ""
     google_client_id: str = ""
     google_client_secret: str = ""
@@ -50,7 +51,7 @@ class Settings(BaseSettings):
     @property
     def sqlite_path(self) -> Path:
         if not self.database_url.startswith("sqlite:///"):
-            raise ValueError("Only sqlite:/// DATABASE_URL values are supported in v1.")
+            raise ValueError("sqlite_path is only available when DATABASE_URL starts with sqlite:///")
         return Path(self.database_url.removeprefix("sqlite:///"))
 
     @property

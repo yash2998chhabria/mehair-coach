@@ -23,13 +23,13 @@ Create `.env` from `.env.example` and set:
 - `GOOGLE_REDIRECT_URI`: same origin plus `/oauth/callback/google`.
 - `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET`: Google Web OAuth client credentials.
 - `TOKEN_ENCRYPTION_KEY`: generated Fernet key.
-- `DATABASE_URL`: default local SQLite URL is fine for private beta.
+- `DATABASE_URL`: local SQLite for development, or `libsql://...` for hosted Turso/libSQL.
+- `LIBSQL_AUTH_TOKEN`: required when `DATABASE_URL` points to Turso/libSQL.
 
-For Render, `render.yaml` stores SQLite on the mounted persistent disk at
-`/var/data/mehair-coach.sqlite3`. Render also provides `RENDER_EXTERNAL_URL`,
-so the app can derive its public OAuth issuer and callback URL automatically.
-After Render creates the service, add this exact redirect URI to the Google Web
-OAuth client:
+For Render, `render.yaml` uses the free web tier and expects hosted persistence
+through Turso/libSQL. Render also provides `RENDER_EXTERNAL_URL`, so the app can
+derive its public OAuth issuer and callback URL automatically. After Render
+creates the service, add this exact redirect URI to the Google Web OAuth client:
 
 ```text
 https://<your-render-service>.onrender.com/oauth/callback/google
@@ -41,7 +41,11 @@ Create a Web OAuth client and add the exact `GOOGLE_REDIRECT_URI`. Keep the OAut
 
 Use read-only Google Health scopes. This project intentionally excludes nutrition scopes.
 
-## Remote Hosting
+## Free Remote Hosting
+
+GitHub hosts the repo, but GitHub Pages cannot run this app because the MCP is a
+live Python web server with OAuth callbacks. The simplest free hosted setup is
+GitHub plus Render Free plus Turso Free.
 
 The repo includes a Render Blueprint at `render.yaml`:
 
@@ -50,13 +54,13 @@ The repo includes a Render Blueprint at `render.yaml`:
 - `uv sync --frozen --no-dev` build.
 - `uv run --no-sync python -m app.main` start.
 - `/health` health check.
-- Persistent disk mounted at `/var/data` for encrypted OAuth tokens and synced
-  health records.
-- Secret placeholders for `TOKEN_ENCRYPTION_KEY`, `GOOGLE_CLIENT_ID`, and
-  `GOOGLE_CLIENT_SECRET`.
+- Free web instance with no persistent disk.
+- Hosted SQLite-compatible persistence through Turso/libSQL.
+- Secret placeholders for `DATABASE_URL`, `LIBSQL_AUTH_TOKEN`,
+  `TOKEN_ENCRYPTION_KEY`, `GOOGLE_CLIENT_ID`, and `GOOGLE_CLIENT_SECRET`.
 
-Persistent disks require a paid Render web service. Create the Blueprint from
-the GitHub repo, enter the three secret values in the Render dashboard, wait for
+Create a Turso database, generate a database token, create the Render Blueprint
+from the GitHub repo, enter the secret values in the Render dashboard, wait for
 the first deploy, then add the Render callback URL to Google Cloud before
 connecting the ChatGPT developer-mode connector.
 

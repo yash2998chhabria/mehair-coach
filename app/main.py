@@ -77,7 +77,7 @@ class ServerBundle:
 
 def create_server(settings_override: Settings | None = None) -> ServerBundle:
     settings = settings_override or get_settings()
-    db = Database(settings.sqlite_path)
+    db = Database.from_url(settings.database_url, settings.libsql_auth_token)
     db.init()
     auth_service = AuthService(db, settings)
     health_store = HealthStore(db, auth_service, settings)
