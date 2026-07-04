@@ -493,6 +493,53 @@ def test_eval_natural_prompt_mix_is_not_biased_to_off_day_language(tmp_path, mon
         assert "feel cooked" not in joined
 
 
+def test_eval_question_clues_include_human_decision_frame_for_life_constraints(tmp_path, monkeypatch) -> None:
+    freeze_now(monkeypatch)
+    db, store = make_store(tmp_path)
+    user_id = create_user(db, "life_constraints")
+
+    for day, sleep, hrv, resting, azm, steps in [
+        ("2026-06-30", 7.4, 50, 60, 18, 7600),
+        ("2026-07-01", 7.8, 52, 59, 20, 8300),
+        ("2026-07-02", 7.3, 49, 61, 28, 9100),
+        ("2026-07-03", 8.1, 58, 57, 14, 5400),
+    ]:
+        seed_day(
+            store,
+            user_id,
+            day,
+            sleep_hours=sleep,
+            hrv_ms=hrv,
+            resting_hr=resting,
+            active_zone_minutes=azm,
+            steps=steps,
+        )
+    store.save_goal(user_id, {"goal_type": "fitness", "target": "Lift three days per week", "days_per_week": 3})
+    store.save_checkin(user_id, {"energy": 8, "soreness": 2, "stress": 3, "notes": "Normal day"})
+
+    clues = store.health_question_clues(
+        user_id,
+        "I feel normal and want an upper-body lift, but I have a long walk and dinner later and do not want to feel drained.",
+        days=7,
+    )
+
+    joined = json.dumps(clues).lower()
+    frame = clues["decision_frame"]
+    context_cues = {item["cue"] for item in frame["user_context_cues"]}
+    role_signals = {item["signal"] for item in frame["signal_roles"]}
+
+    assert clues["status"] == "ok"
+    assert "workout_decision" in clues["intent_hints"]
+    assert "reserve_energy_or_future_event" in context_cues
+    assert "load_stacking" in context_cues
+    assert {"readiness", "sleep", "heart_recovery", "training_load", "personal_context"} <= role_signals
+    assert any("rpe cap" in item.lower() for item in frame["output_contract"])
+    assert any("azm =" in item.lower() for item in frame["plain_language_labels"])
+    assert any("green readiness" in item.lower() or "green" in item.lower() for item in frame["do_not_do"])
+    assert "i feel a little off" not in joined
+    assert "feel cooked" not in joined
+
+
 def test_eval_stale_data_for_time_sensitive_workout_pushes_sync_first(tmp_path, monkeypatch) -> None:
     freeze_now(monkeypatch)
     db, store = make_store(tmp_path)

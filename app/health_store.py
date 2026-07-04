@@ -1472,6 +1472,13 @@ class HealthStore:
             "available_metric_ids": [item["id"] for item in relevant_metrics if item["records"] > 0],
             "missing_metric_ids": [item["id"] for item in relevant_metrics if item["records"] == 0],
             "query_suggestions": _metric_query_suggestions(intents, relevant_metrics, safe_days),
+            "decision_frame": _decision_frame_for_question(
+                question=question_text,
+                intents=intents,
+                context=context,
+                overview=overview,
+                comparison=comparison,
+            ),
             "clues": _dedupe(clues),
             "positives": _dedupe(positives),
             "watchouts": _dedupe(watchouts),
@@ -2298,6 +2305,286 @@ def _answer_rubric_for_intents(intents: list[str]) -> list[str]:
     if "goal" in intents:
         rubric.append("Tie the recommendation back to the user's stored goal without overriding recovery or safety signals.")
     return _dedupe(rubric)
+
+
+def _decision_frame_for_question(
+    question: str,
+    intents: list[str],
+    context: dict[str, Any],
+    overview: dict[str, Any],
+    comparison: dict[str, Any],
+) -> dict[str, Any]:
+    freshness = context.get("data_freshness", {})
+    return {
+        "primary_decision": _primary_decision_for_intents(intents),
+        "model_role": (
+            "Use this as a reasoning scaffold, not a script. Match the user's actual situation, "
+            "then turn the data into one practical coaching call."
+        ),
+        "user_context_cues": _question_context_cues(question),
+        "signal_roles": _signal_roles_for_intents(intents, overview, comparison),
+        "output_contract": _output_contract_for_intents(intents, freshness),
+        "plain_language_labels": [
+            "Readiness = quick recovery score from sleep, heart, and load signals; green supports normal training, not max effort by itself.",
+            "RPE = how hard it feels from 1 easy to 10 max; use it as the effort cap.",
+            "AZM = Active Zone Minutes, Fitbit's harder-effort minutes from elevated heart-rate zones.",
+            "HRV = recovery stress signal; compare it to the user's usual before treating it as meaningful.",
+            "Resting HR = heart stress at rest; higher than usual can point to stress, illness, fatigue, or poor recovery.",
+        ],
+        "do_not_do": [
+            "Do not list stats without saying how each stat changes today's decision.",
+            "Do not let a green readiness score override symptoms, pain, poor warm-up, or a user-stated need to preserve energy.",
+            "Do not treat steps as automatically good or bad; explain the date/window and whether they add useful load context.",
+            "Do not pretend missing or low-confidence baselines are strong evidence.",
+        ],
+    }
+
+
+def _primary_decision_for_intents(intents: list[str]) -> str:
+    if "symptom_safety" in intents:
+        return "safety-first movement decision"
+    if "active_workout" in intents:
+        return "in-session continue, hold, downshift, or stop decision"
+    if "daily_plan" in intents:
+        return "today plan and useful movement decision"
+    if "workout_decision" in intents:
+        return "workout intensity, session type, and effort-cap decision"
+    if any(intent in intents for intent in ("recovery", "sleep", "heart")):
+        return "recovery explanation and training-readiness decision"
+    if "activity_load" in intents:
+        return "recent load and movement-volume interpretation"
+    if "goal" in intents:
+        return "goal-progress and consistency decision"
+    return "general health and fitness context decision"
+
+
+def _question_context_cues(question: str) -> list[dict[str, str]]:
+    text = question.lower()
+    cues: list[dict[str, str]] = []
+    minutes = _minutes_from_question(text)
+    if minutes is not None:
+        cues.append(
+            {
+                "cue": "time_budget",
+                "value": f"{minutes} minutes",
+                "how_to_use": "Make the recommendation fit the available time and avoid turning a short window into an all-out session.",
+            }
+        )
+    if any(
+        term in text
+        for term in (
+            "later",
+            "tonight",
+            "tomorrow",
+            "dinner",
+            "meeting",
+            "work",
+            "travel",
+            "plans",
+            "long walk",
+            "walk later",
+            "basketball",
+            "pickleball",
+            "soccer",
+            "match",
+            "game",
+            "practice",
+            "preserve",
+            "save energy",
+            "drained",
+            "wiped",
+        )
+    ):
+        cues.append(
+            {
+                "cue": "reserve_energy_or_future_event",
+                "value": "user mentioned a later obligation, future activity, or desire not to be drained",
+                "how_to_use": "Protect the rest of the day by lowering volume, avoiding finishers, and leaving reps or effort in reserve.",
+            }
+        )
+    if any(
+        term in text
+        for term in (
+            "walked",
+            "steps",
+            "long walk",
+            "run",
+            "hike",
+            "legs",
+            "leg day",
+            "lower body",
+            "basketball",
+            "soccer",
+            "squash",
+            "tennis",
+        )
+    ):
+        cues.append(
+            {
+                "cue": "load_stacking",
+                "value": "question mentions movement volume, legs, running, walking, or sport",
+                "how_to_use": "Count this as load context before adding hard conditioning or lower-body stress.",
+            }
+        )
+    if any(term in text for term in ("push", "hard", "interval", "sprint", "heavy", "pr", "max", "intense")):
+        cues.append(
+            {
+                "cue": "higher_intensity_interest",
+                "value": "user is considering hard training",
+                "how_to_use": "Require stronger agreement from sleep, heart, load, freshness, and warm-up before endorsing high intensity.",
+            }
+        )
+    if any(term in text for term in ("pain", "dizzy", "dizziness", "chest", "sick", "fever", "symptom", "breathing")):
+        cues.append(
+            {
+                "cue": "safety_or_symptom_context",
+                "value": "question includes pain, symptoms, breathing, dizziness, illness, or heart concern",
+                "how_to_use": "Use safety-first language, avoid diagnosis, and name stop or clinical-care triggers.",
+            }
+        )
+    if not cues:
+        cues.append(
+            {
+                "cue": "no_special_constraint_detected",
+                "value": "no time, future-event, symptom, or load-stacking cue was detected",
+                "how_to_use": "Default to a data-guided normal plan and do not assume the user feels off.",
+            }
+        )
+    return cues
+
+
+def _minutes_from_question(text: str) -> int | None:
+    matches = re.findall(
+        r"\b(?:only\s+have|have|got|with|for|about|around|approximately|under)?\s*(\d{1,3})\s*(?:min|mins|minute|minutes)\b",
+        text,
+    )
+    if not matches:
+        return None
+    return max(5, min(int(matches[0]), 180))
+
+
+def _signal_roles_for_intents(
+    intents: list[str],
+    overview: dict[str, Any],
+    comparison: dict[str, Any],
+) -> list[dict[str, Any]]:
+    roles: list[dict[str, Any]] = [
+        {
+            "signal": "readiness",
+            "metric_ids": ["sleep", "daily-heart-rate-variability", "daily-resting-heart-rate", "active-zone-minutes"],
+            "role": "starting point for training room",
+            "how_to_use": "Green supports a normal session; yellow or red should lower intensity. Never use it as permission for max effort by itself.",
+        },
+        {
+            "signal": "data_freshness",
+            "metric_ids": [],
+            "role": "confidence in time-sensitive decisions",
+            "how_to_use": "Fresh is fine for normal coaching. Aging is usable for controlled choices. Stale should trigger sync before hard or time-sensitive advice.",
+        },
+    ]
+    if "workout_decision" in intents or "daily_plan" in intents:
+        roles.extend(
+            [
+                {
+                    "signal": "sleep",
+                    "metric_ids": ["sleep"],
+                    "role": "recovery capacity",
+                    "how_to_use": "Strong sleep gives more room to train; short or restless sleep should lower volume or RPE.",
+                },
+                {
+                    "signal": "heart_recovery",
+                    "metric_ids": ["daily-heart-rate-variability", "daily-resting-heart-rate"],
+                    "role": "stress and recovery cross-check",
+                    "how_to_use": "Use HRV and resting HR together, and mention low-confidence baselines when sample size is small.",
+                },
+                {
+                    "signal": "training_load",
+                    "metric_ids": ["active-zone-minutes", "time-in-heart-rate-zone", "exercise", "steps"],
+                    "role": "load already accumulated",
+                    "how_to_use": "High AZM, hard workouts, or lots of steps should make the next session more controlled.",
+                },
+                {
+                    "signal": "personal_context",
+                    "metric_ids": [],
+                    "role": "goals, check-ins, and constraints",
+                    "how_to_use": "Use stated energy, soreness, stress, goals, and future plans to tune the plan even when wearable data looks green.",
+                },
+            ]
+        )
+    if "active_workout" in intents:
+        roles.append(
+            {
+                "signal": "live_session_inputs",
+                "metric_ids": ["heart-rate", "time-in-heart-rate-zone"],
+                "role": "in-session safety and pacing",
+                "how_to_use": "Combine current HR, RPE, pain, symptoms, elapsed time, and planned session purpose to choose continue, hold, downshift, or stop.",
+            }
+        )
+    if any(intent in intents for intent in ("recovery", "sleep", "heart")):
+        roles.append(
+            {
+                "signal": "recovery_comparison",
+                "metric_ids": ["sleep", "daily-heart-rate-variability", "daily-resting-heart-rate", "daily-respiratory-rate", "daily-oxygen-saturation"],
+                "role": "pattern explanation",
+                "how_to_use": "Explain which recovery signals agree, which conflict, and whether the baseline has enough samples.",
+                "available": comparison.get("status") == "ok",
+            }
+        )
+    if "goal" in intents:
+        goal_present = bool(
+            ((overview.get("personal_context") or {}).get("goal") or {}).get("goal")
+        ) if overview.get("status") == "ok" else False
+        roles.append(
+            {
+                "signal": "goal_progress",
+                "metric_ids": ["exercise", "active-zone-minutes"],
+                "role": "consistency target",
+                "how_to_use": "Use the goal to choose the smallest useful session that preserves recovery when needed.",
+                "available": goal_present,
+            }
+        )
+    if "symptom_safety" in intents:
+        roles.insert(
+            0,
+            {
+                "signal": "symptoms_and_red_flags",
+                "metric_ids": ["daily-resting-heart-rate", "heart-rate", "sleep", "daily-respiratory-rate", "daily-oxygen-saturation"],
+                "role": "safety override",
+                "how_to_use": "Symptoms, chest tightness, dizziness, severe shortness of breath, faintness, fever, or worsening illness override training optimization.",
+            },
+        )
+    return roles
+
+
+def _output_contract_for_intents(intents: list[str], freshness: dict[str, Any]) -> list[str]:
+    contract = [
+        "Start with a one-sentence decision in plain language.",
+        "Name the data used and why each signal changes the recommendation.",
+        "Explain labels the first time they appear: Readiness, RPE, AZM, HRV, Resting HR.",
+    ]
+    if "active_workout" in intents:
+        contract.extend(
+            [
+                "Give continue/hold/back-off/stop guidance for the next 3-10 minutes.",
+                "Name exactly what would make you stop the session.",
+            ]
+        )
+    if "workout_decision" in intents or "daily_plan" in intents:
+        contract.extend(
+            [
+                "Convert the data into session type, duration, intensity, RPE cap, and what to avoid.",
+                "Use future plans and time limits to preserve energy when the user asks for that.",
+            ]
+        )
+    if any(intent in intents for intent in ("recovery", "sleep", "heart")):
+        contract.append("Say which recovery signals agree or disagree, and whether baselines are low confidence.")
+    if "activity_load" in intents:
+        contract.append("When using steps or load, include the window/date and whether it matters for legs, fatigue, or intensity.")
+    if "symptom_safety" in intents:
+        contract.append("Use medical-caution language for severe, new, or worsening symptoms; do not diagnose.")
+    if freshness.get("needs_sync_before_time_sensitive_advice"):
+        contract.insert(0, "Ask to sync before a hard, risky, or time-sensitive training decision.")
+    return _dedupe(contract)
 
 
 def _question_clue_takeaways(
