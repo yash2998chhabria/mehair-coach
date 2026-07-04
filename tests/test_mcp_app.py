@@ -220,8 +220,8 @@ async def test_widget_resource_is_registered() -> None:
 
     assert str(resources[0].uri) == WIDGET_URI
     assert resources[0].mimeType == "text/html;profile=mcp-app"
-    assert WIDGET_URI == "ui://mehair/today-v29.html"
-    assert "ui://mehair/today-v28.html" in LEGACY_WIDGET_URIS
+    assert WIDGET_URI == "ui://mehair/today-v30.html"
+    assert "ui://mehair/today-v29.html" in LEGACY_WIDGET_URIS
     assert "Preparing card" in html
     assert 'appInfo: { name: "mehair coach", version: "0.8.0" }' in html
     assert "mehair-coach-widget" not in html
@@ -251,6 +251,9 @@ async def test_widget_resource_is_registered() -> None:
     assert 'text.includes("work")' not in html
     assert "function renderLabelKey(labels)" in html
     assert "function inferredLabelKey(model)" in html
+    assert 'LABEL_KEY_PRIORITY = ["Readiness", "RPE", "AZM", "HRV", "Resting HR", "SpO2"' in html
+    assert "function prioritizedLabelKey(labels)" in html
+    assert "prioritizedLabelKey(labels).slice(0, 6)" in html
     assert "label-key" in html
     assert "Metric labels, translated" in html
     assert "score-state::before" in html

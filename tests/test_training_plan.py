@@ -2087,13 +2087,19 @@ def test_workout_plan_separates_low_spo2_from_whole_readiness_score() -> None:
     assert "component supports" in attribution["model_guidance"]
     assert "readiness score itself as a separate reason" in plan["training_decision"]["model_guidance"]
     assert "source_boundaries" in plan["training_decision"]
-    assert "wearable evidence" in plan["training_decision"]["source_boundaries"]["wearable_evidence"]
+    boundaries = plan["training_decision"]["source_boundaries"]
+    assert "wearable evidence" in boundaries["wearable_evidence"]
+    assert "goals/check-ins" not in boundaries["wearable_evidence"]
+    assert "locally_logged_context" in boundaries
+    assert "locally logged user context" in boundaries["locally_logged_context"]
+    assert "do not describe energy, soreness, stress, goals, or notes as Fitbit" in boundaries[
+        "locally_logged_context"
+    ]
     assert "user-stated or conversation context" in plan["training_decision"]["source_boundaries"][
         "user_or_conversation_context"
     ]
-    assert "Do not imply Fitbit measured an injury" in plan["training_decision"]["source_boundaries"][
-        "answer_rule"
-    ]
+    assert "Do not imply Fitbit measured an injury" in boundaries["answer_rule"]
+    assert "energy level" in boundaries["answer_rule"]
     assert "source_boundaries" in plan["training_decision"]["model_guidance"]
     assert any("Readiness attribution" in item for item in plan["limiting_factors"])
     assert any("caution signals can cap intensity" in item for item in plan["limiting_factors"])

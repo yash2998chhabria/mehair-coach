@@ -3229,18 +3229,23 @@ def _training_decision_frame(
             "wearable_evidence": (
                 "wearable evidence means only synced Fitbit/Google Health signals returned by this "
                 "tool, such as sleep, HRV, resting heart rate, SpO2, respiratory rate, sleep "
-                "temperature, activity, AZM, steps, VO2 max, workouts, freshness, and "
-                "goals/check-ins stored by mehair coach."
+                "temperature, activity, AZM, steps, VO2 max, workouts, and freshness."
+            ),
+            "locally_logged_context": (
+                "Goals and check-ins stored by mehair coach are locally logged user context. Use them "
+                "when useful, but do not describe energy, soreness, stress, goals, or notes as Fitbit-"
+                "measured signals."
             ),
             "user_or_conversation_context": (
                 "Current prompt details, prior chat memory, injuries, preferences, sport history, "
                 "symptoms, soreness, schedule constraints, and goals are user-stated or conversation "
-                "context unless this tool result explicitly marks them as synced or locally logged "
-                "mehair coach data."
+                "context unless this tool result explicitly marks them as synced wearable data or "
+                "locally logged mehair coach data."
             ),
             "answer_rule": (
-                "When using both, name the source in plain language. Do not imply Fitbit measured an "
-                "injury, symptom, soreness, preference, or life constraint."
+                "When using multiple source types, name the source in plain language. Do not imply Fitbit "
+                "measured an injury, symptom, soreness, energy level, stress level, goal, preference, or "
+                "life constraint."
             ),
         },
         "do_now": next_actions[:5],

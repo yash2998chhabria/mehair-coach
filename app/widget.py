@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 
 
-WIDGET_URI = "ui://mehair/today-v29.html"
+WIDGET_URI = "ui://mehair/today-v30.html"
 LEGACY_WIDGET_URIS = (
     "ui://mehair/today-v1.html",
     "ui://mehair/today-v2.html",
@@ -33,6 +33,7 @@ LEGACY_WIDGET_URIS = (
     "ui://mehair/today-v26.html",
     "ui://mehair/today-v27.html",
     "ui://mehair/today-v28.html",
+    "ui://mehair/today-v29.html",
 )
 WIDGET_RESOURCE_URIS = (WIDGET_URI, *LEGACY_WIDGET_URIS)
 WIDGET_MIME_TYPE = "text/html;profile=mcp-app"
@@ -1708,8 +1709,28 @@ TODAY_WIDGET_HTML = """
         return "Minimum useful dose: enough work to feel better, not a workout to recover from.";
       }
 
+      const LABEL_KEY_PRIORITY = ["Readiness", "RPE", "AZM", "HRV", "Resting HR", "SpO2", "Respiratory rate", "HR", "VO2 max", "Sleep temperature"];
+
+      function prioritizedLabelKey(labels) {
+        const seen = new Set();
+        return (labels || [])
+          .filter((item) => item && item.label && item.meaning)
+          .filter((item) => {
+            if (seen.has(item.label)) return false;
+            seen.add(item.label);
+            return true;
+          })
+          .sort((a, b) => {
+            const aIndex = LABEL_KEY_PRIORITY.indexOf(a.label);
+            const bIndex = LABEL_KEY_PRIORITY.indexOf(b.label);
+            const aRank = aIndex === -1 ? 999 : aIndex;
+            const bRank = bIndex === -1 ? 999 : bIndex;
+            return aRank - bRank;
+          });
+      }
+
       function renderLabelKey(labels) {
-        const usable = (labels || []).filter((item) => item && item.label && item.meaning).slice(0, 6);
+        const usable = prioritizedLabelKey(labels).slice(0, 6);
         if (!usable.length) return "";
         return `
           <div class="label-key" aria-label="Metric label explanations">
