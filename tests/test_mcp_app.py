@@ -139,10 +139,10 @@ async def test_widget_resource_is_registered() -> None:
 
     assert str(resources[0].uri) == WIDGET_URI
     assert resources[0].mimeType == "text/html;profile=mcp-app"
-    assert WIDGET_URI == "ui://mehair/today-v23.html"
-    assert "ui://mehair/today-v22.html" in LEGACY_WIDGET_URIS
+    assert WIDGET_URI == "ui://mehair/today-v24.html"
+    assert "ui://mehair/today-v23.html" in LEGACY_WIDGET_URIS
     assert "Preparing card" in html
-    assert 'appInfo: { name: "mehair coach", version: "0.7.4" }' in html
+    assert 'appInfo: { name: "mehair coach", version: "0.7.5" }' in html
     assert "mehair-coach-widget" not in html
     assert 'renderEmpty("Preparing the health card from the latest tool result.", "waiting")' in html
     assert "function hasCardData(data)" in html
@@ -153,6 +153,9 @@ async def test_widget_resource_is_registered() -> None:
     assert "using Fitbit data through" in html
     assert "data-window" in html
     assert "--sync-dot" in html
+    assert "function todayWorkoutTitle(data, reserveEnergy, deadlineMinutes)" in html
+    assert "Minimum Useful Movement" in html
+    assert "Before Class Movement" in html
     assert "function renderLabelKey(labels)" in html
     assert "function inferredLabelKey(model)" in html
     assert "label-key" in html

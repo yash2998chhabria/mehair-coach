@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 
 
-WIDGET_URI = "ui://mehair/today-v23.html"
+WIDGET_URI = "ui://mehair/today-v24.html"
 LEGACY_WIDGET_URIS = (
     "ui://mehair/today-v1.html",
     "ui://mehair/today-v2.html",
@@ -27,6 +27,7 @@ LEGACY_WIDGET_URIS = (
     "ui://mehair/today-v20.html",
     "ui://mehair/today-v21.html",
     "ui://mehair/today-v22.html",
+    "ui://mehair/today-v23.html",
 )
 WIDGET_RESOURCE_URIS = (WIDGET_URI, *LEGACY_WIDGET_URIS)
 WIDGET_MIME_TYPE = "text/html;profile=mcp-app"
@@ -732,7 +733,7 @@ TODAY_WIDGET_HTML = """
       async function initialize() {
         try {
           await rpcRequest("ui/initialize", {
-            appInfo: { name: "mehair coach", version: "0.7.4" },
+            appInfo: { name: "mehair coach", version: "0.7.5" },
             appCapabilities: {},
             protocolVersion: "2026-01-26",
           });
@@ -1042,21 +1043,24 @@ TODAY_WIDGET_HTML = """
         const sleep = today.sleep || {};
         const goal = data.goal_context || {};
         const subjective = data.subjective_context || {};
+        const dataUsed = data.data_used || {};
         const freshness = data.data_freshness || {};
         const coach = data.coach_response || {};
         const signalSnapshot = data.available_signal_snapshot || {};
-        const sleepHours = data.data_used?.latest_sleep_hours ?? sleep.asleep_hours ?? sleep.duration_hours;
+        const sleepHours = dataUsed.latest_sleep_hours ?? sleep.asleep_hours ?? sleep.duration_hours;
+        const deadlineMinutes = firstFinite(dataUsed.deadline_movement_minutes, subjective.deadline_movement_minutes);
+        const reserveEnergy = Boolean(dataUsed.reserve_energy_obligation || subjective.reserve_energy_obligation || deadlineMinutes != null);
         const goalDetail = goal.remaining_sessions != null
           ? `${goal.remaining_sessions} goal sessions left`
           : goal.target || "";
-        const activityWindow = data.activity_date || data.data_used?.activity_date || data.latest_date || "today";
+        const activityWindow = data.activity_date || dataUsed.activity_date || data.latest_date || "today";
         const activityWindowLabel = activityWindow === "today" ? "today so far" : `${activityWindow} so far`;
-        const stepsValue = today.steps ?? data.data_used?.steps_today;
-        const azmValue = today.active_zone_minutes ?? data.data_used?.active_zone_minutes_today;
+        const stepsValue = today.steps ?? dataUsed.steps_today;
+        const azmValue = today.active_zone_minutes ?? dataUsed.active_zone_minutes_today;
         return {
           accent: readinessAccent(band),
           stateLabel: band,
-          title: "Today's Workout",
+          title: todayWorkoutTitle(data, reserveEnergy, deadlineMinutes),
           eyebrow: "mehair coach",
           date: data.activity_date && data.recovery_date && data.activity_date !== data.recovery_date
             ? `Activity ${data.activity_date}; recovery ${data.recovery_date}`
@@ -1070,14 +1074,14 @@ TODAY_WIDGET_HTML = """
           score,
           primaryLabel: "Readiness",
           headline: coach.short_answer || workoutHeadline(data),
-          focusTitle: coach.session_blueprint ? "Next Session" : "What To Do",
+          focusTitle: reserveEnergy ? "Minimum Dose" : coach.session_blueprint ? "Next Session" : "What To Do",
           focus: coach.session_blueprint || coach.what_to_do || data.next_actions || [],
           labels: coach.labels_explained || defaultLabelKey(["Readiness", "RPE", "HRV", "Resting HR", "AZM"]),
           metrics: [
             ["Steps", stepsValue != null ? `${intText(stepsValue)} steps` : null, activityWindowLabel, "Movement load in this window; mostly useful for leg fatigue."],
             ["AZM", azmValue != null ? `${intText(azmValue)} min` : null, activityWindowLabel, "AZM = Fitbit hard-work minutes in this window."],
             ["Sleep", sleepHours != null ? `${num(sleepHours, 1)}h` : null],
-            ["HRV", data.data_used?.hrv_ms != null ? `${num(data.data_used.hrv_ms, 1)} ms` : null],
+            ["HRV", dataUsed.hrv_ms != null ? `${num(dataUsed.hrv_ms, 1)} ms` : null],
             ["Soreness", subjective.soreness != null ? `${subjective.soreness}/10` : null, subjective.energy != null ? `energy ${subjective.energy}/10` : ""],
             ["Goal", goal.remaining_sessions != null ? intText(goal.remaining_sessions) : "No goal", goalDetail],
           ],
@@ -1087,6 +1091,17 @@ TODAY_WIDGET_HTML = """
           secondaryTitle: coach.stop_if ? "Stop If" : "Avoid",
           secondary: coach.stop_if || coach.avoid || data.avoid || [],
         };
+      }
+
+      function todayWorkoutTitle(data, reserveEnergy, deadlineMinutes) {
+        if (reserveEnergy || deadlineMinutes != null) {
+          const text = String(data.subjective_context?.current_feeling || data.data_used?.current_feeling || "").toLowerCase();
+          if (text.includes("class") || text.includes("school") || text.includes("lecture")) return "Before Class Movement";
+          if (text.includes("meeting") || text.includes("call") || text.includes("work")) return "Before Work Movement";
+          return "Minimum Useful Movement";
+        }
+        if (String(data.intensity || "").includes("easy")) return "Recovery Workout";
+        return "Today's Workout";
       }
 
       function prioritizeWorkoutEvidence(items) {

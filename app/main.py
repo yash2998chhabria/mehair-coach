@@ -1333,6 +1333,7 @@ def workout_recommendation(
         current_feeling=current_feeling_text,
         time_limit_minutes=time_limit_minutes,
         reserve_energy_obligation=reserve_energy_obligation,
+        high_movement_context=stated_high_movement or high_step_load,
     )
     training_decision = _training_decision_frame(
         intensity=intensity,
@@ -2647,27 +2648,24 @@ def _today_workout_coach_response(
     current_feeling: str | None = None,
     time_limit_minutes: int | None = None,
     reserve_energy_obligation: bool = False,
+    high_movement_context: bool = False,
 ) -> dict[str, Any]:
     evidence_text = " ".join(evidence).lower()
     has_stale_data = "data freshness is stale" in evidence_text or "sync latest fitbit data" in evidence_text
-    has_high_movement = (
-        "high-step movement context" in evidence_text
-        or "high walking or step volume" in evidence_text
-        or "step volume" in evidence_text
-    )
+    has_high_movement = high_movement_context
     if has_stale_data:
         short_answer = "Sync latest Fitbit data before a time-sensitive hard workout decision. If you train before syncing, keep it controlled."
     elif illness_flags:
         short_answer = "Skip hard training today. If symptoms are mild and improving, keep it to a short easy walk or mobility."
     elif intensity == "easy":
         short_answer = "Make today recovery-biased: useful movement is fine, but keep it easy and finish with energy in reserve."
+    elif reserve_energy_obligation:
+        short_answer = "Do the smallest useful dose today: move enough to feel better, then leave energy for what comes next."
     elif has_high_movement:
         short_answer = (
             "Train, but keep lower-body work and hard conditioning controlled because the movement-load "
             "window already adds leg stress."
         )
-    elif reserve_energy_obligation:
-        short_answer = "Do the smallest useful dose today: move enough to feel better, then leave energy for what comes next."
     elif intensity == "moderate":
         short_answer = "Do a focused controlled session today: useful work, not all-out intensity."
     else:

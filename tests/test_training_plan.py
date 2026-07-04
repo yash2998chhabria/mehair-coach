@@ -1738,9 +1738,12 @@ def test_today_recommendation_before_class_uses_minimum_effective_dose() -> None
     assert recommendation["data_used"]["reserve_energy_obligation"] is True
     assert recommendation["data_used"]["deadline_movement_minutes"] == 20
     assert recommendation["data_used"]["time_limit_minutes"] == 20
+    assert recommendation["data_used"]["stated_high_movement"] is False
     assert "smallest useful dose" in joined
     assert "20 minutes" in joined
     assert "switch contexts" in joined
+    assert "movement-load window already adds leg stress" not in joined
+    assert "lower-body work" not in joined
     assert any("next obligation" in item for item in recommendation["avoid"])
     assert not any("moderate-to-hard" in item.lower() for item in coach["what_to_do"])
 
