@@ -5248,7 +5248,7 @@ def _overview_coaching(
         next_actions.append("Keep training controlled: technique, zone 2, or submax strength.")
     else:
         watchouts.append(f"Readiness is red at {readiness.get('score')}/100.")
-        next_actions.append("Bias toward recovery, mobility, walking, and earlier sleep.")
+        next_actions.append("Bias toward recovery, mobility, low-impact movement, and earlier sleep.")
 
     latest_sleep = sleep.get("latest_asleep_hours")
     if latest_sleep is not None:
@@ -5589,7 +5589,7 @@ def _daily_coaching_brief(
         "What are the main reasons behind today's plan?",
     ]
     if training_bias in {"controlled", "recovery-first"}:
-        prompt_suggestions.append("I feel off but still want to move. What is the safest useful option?")
+        prompt_suggestions.append("I still want to move. What is the safest useful option?")
     if not checkins or energy is None or soreness is None or stress is None:
         prompt_suggestions.append("Log how my energy, soreness, and stress feel right now.")
     if not goal_payload:
@@ -6768,7 +6768,7 @@ def readiness_from_day(day: dict[str, Any], daily: dict[str, dict[str, Any]] | N
         recommendation = "Choose moderate cardio, technique, or strength without max efforts."
     else:
         label = "red"
-        recommendation = "Prioritize recovery, mobility, walking, and sleep."
+        recommendation = "Prioritize recovery, mobility, low-impact movement, and sleep."
     return {
         "score": score,
         "label": label,

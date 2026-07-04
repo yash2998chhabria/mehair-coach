@@ -186,6 +186,8 @@ def test_server_instructions_keep_normal_latest_questions_fast() -> None:
     assert "do not say the workout card UI is unavailable" in SERVER_INSTRUCTIONS
     assert "decision, do now, why the data matters" in SERVER_INSTRUCTIONS
     assert "do not default to 'I feel off'" in SERVER_INSTRUCTIONS
+    assert "Do not translate generic low-dose coaching words" in SERVER_INSTRUCTIONS
+    assert "unless the user asked for that activity" in SERVER_INSTRUCTIONS
     assert "Use already-synced local data for normal current/latest/today questions" in SERVER_INSTRUCTIONS
     assert "data in the user's private mehair coach store" in SERVER_INSTRUCTIONS
     assert "not data already visible in the conversation" in SERVER_INSTRUCTIONS

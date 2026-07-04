@@ -84,6 +84,11 @@ SERVER_INSTRUCTIONS = (
     "Match the user's actual situation: do not default to 'I feel off', fatigue, soreness, or recovery "
     "framing unless the user says it or the synced/check-in signals support it. For neutral or positive "
     "questions, give normal training permission with clear guardrails and the data that would change the call. "
+    "Do not translate generic low-dose coaching words like easy movement, useful movement, mobility, "
+    "or recovery movement into walking, jogging, running, hiking, or step goals unless the user asked "
+    "for that activity or the tool result is explicitly discussing walking/step load. For generic "
+    "low-dose advice, use mobility reset, low-impact cardio option, breathing check, or light "
+    "technique block. "
     "If connection or synced data is missing, call status/freshness tools and explain setup; "
     "never invent health data. Use already-synced local data for normal current/latest/today questions, "
     "because every overview includes freshness metadata. Already-synced local data means data in the "
@@ -1726,7 +1731,7 @@ def workout_recommendation(
         if reserve_energy_obligation:
             primary_action = "Do enough useful movement to feel better, then stop before it feels like a workout you have to recover from."
         else:
-            primary_action = "Do one controlled main block: easy zone 2 if no plan, or submax planned training with reps in reserve."
+            primary_action = "Do one controlled main block: a low-dose option if no plan, or submax planned training with reps in reserve."
     else:
         primary_action = "Make today recovery-biased: mobility, easy low-impact cardio, or rest."
     if oxygen_constraint:
@@ -2068,7 +2073,7 @@ def workout_plan_for_activity(
     )
     if reserve_energy_obligation and _generic_workout_text(planned_activity):
         exercise_blocks = []
-        substitutions.append("Generic workout -> easy zone 2, mobility, or light technique that does not need recovery.")
+        substitutions.append("Generic workout -> mobility, low-impact cardio, or light technique that does not need recovery.")
     if deadline_movement_minutes is not None:
         session.append(
             f"Keep the movement dose around {deadline_movement_minutes} minutes, then stop with time to cool down, hydrate, and switch contexts."
@@ -2088,9 +2093,9 @@ def workout_plan_for_activity(
         avoid.append("Chasing PRs, extra finishers, or high-volume work when your body feels below normal")
     if stated_high_movement or high_step_load:
         focus.insert(0, "Account for today's walking or step volume as leg load before choosing the workout.")
-        session.insert(0, "If legs feel heavy in the warm-up, bias toward upper-body, technique, mobility, or easy zone 2.")
+        session.insert(0, "If legs feel heavy in the warm-up, bias toward upper-body, technique, mobility, or low-impact easy cardio.")
         avoid.append("Stacking hard lower-body work, HIIT, or long conditioning on top of a high-step day")
-        substitutions.append("Leg-heavy lift or intervals -> upper-body lift, technique work, mobility, or easy zone 2.")
+        substitutions.append("Leg-heavy lift or intervals -> upper-body lift, technique work, mobility, or low-impact easy cardio.")
     if localized_soreness_away_from_target:
         focus.insert(0, "Train the planned upper-body work, but keep sore legs out of the job.")
         session.insert(0, "Use seated, machine, or chest-supported options so leg soreness can recover while you still train.")
@@ -2954,26 +2959,26 @@ def _today_session_blueprint(
         if time_limit_minutes is not None:
             usable_minutes = max(10, min(time_limit_minutes - 10, 30))
             return [
-                "Start with 3-5 minutes easy movement and check breathing.",
-                f"Do {usable_minutes} minutes of easy zone 2, mobility, or light technique at RPE <= {rpe_cap}/10.",
+                "Start with 3-5 minutes of easy mobility plus a breathing check.",
+                f"Do {usable_minutes} minutes of one low-dose option: mobility, low-impact cardio, or light technique at RPE <= {rpe_cap}/10.",
                 "Stop while breathing is calm; leave time to cool down, hydrate, and switch contexts.",
             ]
         return [
-            "Start with 5 minutes easy movement and check breathing.",
-            f"Do 15-25 minutes easy zone 2, mobility, or light technique at RPE <= {rpe_cap}/10.",
+            "Start with 5 minutes of easy mobility plus a breathing check.",
+            f"Do 15-25 minutes of one low-dose option: mobility, low-impact cardio, or light technique at RPE <= {rpe_cap}/10.",
             "Stop while you still feel clear and ready for the rest of the day.",
         ]
 
     if intensity == "easy":
         if time_limit_minutes is not None and time_limit_minutes <= 25:
             blueprint = [
-                "Start with 3-5 minutes easy mobility, easy cycling, or low-impact movement.",
+                "Start with 3-5 minutes easy mobility, low-impact cardio, or light technique.",
                 f"Then use the remaining minutes for easy movement at RPE <= {rpe_cap}/10; stop before it feels like work.",
                 "Finish with energy in reserve.",
             ]
         else:
             blueprint = [
-                "Start with 10 minutes easy mobility, easy cycling, or low-impact movement to see how your body responds.",
+                "Start with 10 minutes easy mobility, low-impact cardio, or light technique to see how your body responds.",
                 f"Then do 10-25 minutes easy movement at RPE <= {rpe_cap}/10; stop before it feels like work.",
                 "Finish with energy in reserve.",
             ]
@@ -2981,21 +2986,21 @@ def _today_session_blueprint(
         if time_limit_minutes is not None and time_limit_minutes <= 25:
             blueprint = [
                 "Start with a 3-5 minute gradual warm-up.",
-                f"Default main block: 12-18 minutes easy zone 2 cardio at RPE <= {rpe_cap}/10.",
+                f"Default main block: 12-18 minutes of mobility, low-impact cardio, or light technique at RPE <= {rpe_cap}/10.",
                 "Swap only if you already had a planned lift: keep it submax and stop 2-3 reps before failure.",
                 "Use the final 2-3 minutes to cool down; leave one more set or interval in reserve.",
             ]
         elif time_limit_minutes is not None and time_limit_minutes <= 35:
             blueprint = [
                 "Start with a 5-8 minute gradual warm-up.",
-                f"Default main block: 18-25 minutes easy zone 2 cardio at RPE <= {rpe_cap}/10.",
+                f"Default main block: 18-25 minutes of mobility, low-impact cardio, or light technique at RPE <= {rpe_cap}/10.",
                 "Swap only if you already had a planned lift: keep it submax and stop 2-3 reps before failure.",
                 "Cool down briefly and leave 2-3 reps or one more interval in reserve.",
             ]
         else:
             blueprint = [
                 "Start with a 10-15 minute gradual warm-up.",
-                f"Default main block: 20-30 minutes easy zone 2 cardio at RPE <= {rpe_cap}/10, then 5-8 minutes mobility or core.",
+                f"Default main block: 20-30 minutes of low-impact cardio, mobility, light technique, or core at RPE <= {rpe_cap}/10.",
                 "Swap only if you already had a planned lift: keep it submax and stop 2-3 reps before failure.",
                 "Cool down for 5 minutes and leave 2-3 reps or one more interval in reserve.",
             ]
@@ -3003,7 +3008,7 @@ def _today_session_blueprint(
         if time_limit_minutes is not None and time_limit_minutes <= 25:
             blueprint = [
                 "Start with a 3-5 minute warm-up and check breathing, form, and pain.",
-                f"Default main block: 12-18 minutes of your planned training at RPE <= {rpe_cap}/10; if no plan, do easy zone 2 plus 2 short pickups.",
+                f"Default main block: 12-18 minutes of your planned training at RPE <= {rpe_cap}/10; if no plan, do low-impact cardio plus 2 short pickups.",
                 "Skip max attempts; finish before form or breathing changes.",
             ]
         elif time_limit_minutes is not None and time_limit_minutes <= 35:
@@ -3255,7 +3260,7 @@ def _today_workout_coach_response(
             "metric labels in one short why section. Match the current user-stated situation exactly. "
             "Do not default to walking, hiking, or running language unless the user brought up that "
             "activity; for generic low-dose advice, say easy movement, mobility, low-impact cardio, "
-            "or light technique instead. "
+            "or light technique instead. Do not paraphrase generic movement into an easy walk. "
             "Separate source types: Fitbit/Google Health signals are wearable evidence; goals, "
             "injuries, preferences, and prior details are user-stated or conversation context unless "
             "a tool result explicitly marks them as synced data."
@@ -3750,7 +3755,7 @@ def _workout_plan_coach_response(
             "moved the score versus what only caps intensity."
             " Do not default to walking, hiking, or running language unless the user brought up that "
             "activity; for generic low-dose advice, say easy movement, mobility, low-impact cardio, "
-            "or light technique instead."
+            "or light technique instead. Do not paraphrase generic movement into an easy walk."
             + (
                 " This result supersedes any older visible card in the thread: because the user has a "
                 "near-term obligation, do not present this as a normal RPE 8 workout, and do not suggest "
@@ -3856,7 +3861,7 @@ def _today_realistic_followups(subjective_limiter: bool, illness_flags: list[str
         "How should I adjust if my heart rate or breathing feels unusual?",
     ]
     if subjective_limiter:
-        prompts.append("If I still feel off after the warm-up, what should I switch to?")
+        prompts.append("If the warm-up feels bad, what should I switch to?")
     if illness_flags:
         prompts.insert(0, "What easy movement is okay while I have symptoms?")
     return _dedupe(prompts)[:5]

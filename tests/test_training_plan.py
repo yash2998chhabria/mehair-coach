@@ -17,7 +17,7 @@ def test_planned_chest_day_downshifts_for_red_readiness_and_back_soreness() -> N
         "readiness": {
             "score": 42,
             "label": "red",
-            "recommendation": "Prioritize recovery, mobility, walking, and sleep.",
+            "recommendation": "Prioritize recovery, mobility, low-impact movement, and sleep.",
             "evidence": [
                 "Latest sleep is moderate at 6.1h.",
                 "HRV is below recent baseline: 31.3 ms vs 90.5 ms.",
@@ -349,7 +349,7 @@ def test_workout_plan_uses_overview_section_recovery_values() -> None:
         "readiness": {
             "score": 44,
             "label": "red",
-            "recommendation": "Prioritize recovery, mobility, walking, and sleep.",
+            "recommendation": "Prioritize recovery, mobility, low-impact movement, and sleep.",
             "evidence": ["Recent training load is high: 63 zone minutes on 2026-07-02."],
         },
         "today": {
@@ -387,7 +387,7 @@ def test_specific_lift_plan_uses_stated_energy_pain_and_tomorrow_sport() -> None
         "readiness": {
             "score": 44,
             "label": "red",
-            "recommendation": "Prioritize recovery, mobility, walking, and sleep.",
+            "recommendation": "Prioritize recovery, mobility, low-impact movement, and sleep.",
             "evidence": [
                 "Latest sleep is moderate at 6.1h.",
                 "HRV is below recent baseline: 31.3 ms vs 60.9 ms.",
@@ -550,7 +550,7 @@ def test_later_today_basketball_preserves_game_without_off_day_language() -> Non
         "readiness": {
             "score": 44,
             "label": "red",
-            "recommendation": "Prioritize recovery, mobility, walking, and sleep.",
+            "recommendation": "Prioritize recovery, mobility, low-impact movement, and sleep.",
             "evidence": [
                 "Latest sleep is strong at 9.4h.",
                 "HRV is above recent baseline: 92.1 ms vs 61.7 ms.",
@@ -659,7 +659,7 @@ def test_game_day_not_tired_language_is_not_body_feel_limiter() -> None:
         "readiness": {
             "score": 44,
             "label": "red",
-            "recommendation": "Prioritize recovery, mobility, walking, and sleep.",
+            "recommendation": "Prioritize recovery, mobility, low-impact movement, and sleep.",
             "evidence": ["Latest sleep is strong at 9.4h."],
             "score_breakdown": {
                 "base": 50,
@@ -1330,7 +1330,7 @@ def test_today_recommendation_keeps_sync_first_when_data_is_stale() -> None:
         "Sync latest Fitbit data before making a time-sensitive hard training decision."
     )
     assert recommendation["next_actions"][1] == (
-        "Do one controlled main block: easy zone 2 if no plan, or submax planned training with reps in reserve."
+        "Do one controlled main block: a low-dose option if no plan, or submax planned training with reps in reserve."
     )
     assert recommendation["data_used"]["freshness_level"] == "stale"
     assert any("No recent subjective check-in" in item for item in recommendation["context_gaps"])
@@ -1646,7 +1646,7 @@ def test_lift_heavy_request_is_not_misread_as_heavy_body_feel() -> None:
         "readiness": {
             "score": 42,
             "label": "red",
-            "recommendation": "Prioritize recovery, mobility, walking, and sleep.",
+            "recommendation": "Prioritize recovery, mobility, low-impact movement, and sleep.",
             "evidence": [
                 "Latest sleep is short at 5.7h.",
                 "HRV is below recent baseline: 38 ms vs 62 ms.",
@@ -1970,7 +1970,7 @@ def test_today_recommendation_returns_human_coach_response_without_losing_labels
         for item in recommendation["model_signal_context"]["answer_contract"]
     )
     assert any("I only have 30 minutes" in item for item in recommendation["coach_response"]["realistic_follow_ups"])
-    assert any("If I still feel off" in item for item in recommendation["coach_response"]["realistic_follow_ups"])
+    assert any("If the warm-up feels bad" in item for item in recommendation["coach_response"]["realistic_follow_ups"])
 
     plan = workout_plan_for_activity(
         context=context,
@@ -2114,6 +2114,17 @@ def test_workout_plan_separates_low_spo2_from_whole_readiness_score() -> None:
     assert plan["training_decision"]["readiness_attribution"]["cautions"] == attribution["cautions"]
     assert "readiness_attribution" in plan["coach_response"]["answer_style"]
     assert "Separate source types" in plan["coach_response"]["answer_style"]
+    plan_visible_text = " ".join(
+        [
+            plan["summary"],
+            *plan["focus"],
+            *plan["warmup"],
+            *plan["session_guidance"],
+            *plan["coach_response"]["session_blueprint"],
+            *plan["coach_response"]["what_to_do"],
+        ]
+    ).lower()
+    assert "walk" not in plan_visible_text
 
     recommendation = workout_recommendation(
         context=context,
@@ -2126,6 +2137,15 @@ def test_workout_plan_separates_low_spo2_from_whole_readiness_score() -> None:
     assert any("very low for wearable oxygen" in item for item in recommendation["evidence"])
     assert any("Re-check oxygen" in item for item in recommendation["next_actions"])
     assert any("Running, intervals, heavy lifting" in item for item in recommendation["avoid"])
+    recommendation_visible_text = " ".join(
+        [
+            recommendation["recommendation"],
+            *recommendation["next_actions"],
+            *recommendation["coach_response"]["session_blueprint"],
+            *recommendation["coach_response"]["what_to_do"],
+        ]
+    ).lower()
+    assert "walk" not in recommendation_visible_text
 
 
 def test_today_recommendation_for_normal_green_day_does_not_assume_off_day() -> None:

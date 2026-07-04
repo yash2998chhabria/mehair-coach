@@ -2291,7 +2291,7 @@ WIDGET_PREVIEW_STATES: dict[str, dict] = {
             "summary": "Make today recovery-first unless there is a strong non-negotiable reason to train hard. Main constraint: Latest sleep is short at 5.1h.",
             "training_bias": "recovery-first",
             "today_plan": [
-                "Bias toward recovery, mobility, walking, and earlier sleep.",
+                "Bias toward recovery, mobility, low-impact movement, and earlier sleep.",
                 "Do not add another max-effort conditioning block today.",
                 "Choose exercises that avoid sore areas unless warm-up pain stays under 3/10.",
                 "Keep the plan aligned with your goal: Train four days per week.",
@@ -2347,7 +2347,7 @@ WIDGET_PREVIEW_STATES: dict[str, dict] = {
         "readiness": {
             "score": 38,
             "label": "red",
-            "recommendation": "Prioritize recovery, mobility, walking, and sleep.",
+            "recommendation": "Prioritize recovery, mobility, low-impact movement, and sleep.",
         },
         "today": {
             "steps": 1600,
@@ -2387,7 +2387,7 @@ WIDGET_PREVIEW_STATES: dict[str, dict] = {
             "Recent training load is high: 72 zone minutes on 2026-07-02.",
         ],
         "next_actions": [
-            "Bias toward recovery, mobility, walking, and earlier sleep.",
+            "Bias toward recovery, mobility, low-impact movement, and earlier sleep.",
             "Do not add another max-effort conditioning block today.",
         ],
         "available_signal_snapshot": {
@@ -2579,7 +2579,7 @@ WIDGET_PREVIEW_STATES: dict[str, dict] = {
         "readiness": {
             "score": 38,
             "label": "red",
-            "recommendation": "Prioritize recovery, mobility, walking, and sleep.",
+            "recommendation": "Prioritize recovery, mobility, low-impact movement, and sleep.",
         },
         "today": {
             "activity_date": "2026-07-03",
@@ -2602,9 +2602,9 @@ WIDGET_PREVIEW_STATES: dict[str, dict] = {
         "status": "ok",
         "intensity": "easy",
         "rpe_cap": 6,
-        "recommendation": "Make today recovery-biased: walking, mobility, breath work, and an earlier bedtime. Your soreness check-in is high at 7/10, so bias toward recovery or pain-free technique.",
+        "recommendation": "Make today recovery-biased: mobility, low-impact movement, breath work, and an earlier bedtime. Your soreness check-in is high at 7/10, so bias toward recovery or pain-free technique.",
         "next_actions": [
-            "Make today recovery-biased: walk, mobility, easy cardio, or rest.",
+            "Make today recovery-biased: mobility, low-impact cardio, easy technique, or rest.",
             "You are 2 session(s) from the weekly target, but recovery signals make an easy day smarter.",
             "Protect sleep tonight and reassess after the next sync.",
         ],
@@ -2652,12 +2652,12 @@ WIDGET_PREVIEW_STATES: dict[str, dict] = {
             "short_answer": "Make today recovery-biased: useful movement is fine, but do not chase fitness today.",
             "data_story": "The useful read: sleep is limiting recovery; HRV is lower than usual; Resting HR is elevated.",
             "session_blueprint": [
-                "Start with 10 minutes easy walking, cycling, or mobility to see if you feel better.",
+                "Start with 10 minutes easy mobility, low-impact cardio, or light technique to see if you feel better.",
                 "Then do 10-25 minutes easy movement at RPE <= 6/10; stop before it feels like work.",
                 "Finish while you feel better than when you started.",
             ],
             "what_to_do": [
-                "Make today recovery-biased: walk, mobility, easy cardio, or rest.",
+                "Make today recovery-biased: mobility, low-impact cardio, easy technique, or rest.",
                 "Keep RPE (how hard it feels) at or below 6/10, which means comfortable.",
                 "You are 2 session(s) from the weekly target, but recovery signals make an easy day smarter.",
                 "Protect sleep tonight and reassess after the next sync.",
