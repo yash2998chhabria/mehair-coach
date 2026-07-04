@@ -1111,7 +1111,8 @@ class HealthStore:
 
         stored_rows = self.db.all(
             """
-            SELECT data_type, COUNT(*) AS records, MAX(observed_date) AS latest_observed
+            SELECT data_type, COUNT(*) AS records, MAX(observed_date) AS latest_observed,
+                   MAX(synced_at) AS last_sync
             FROM raw_health_records
             WHERE user_id = ?
             GROUP BY data_type
@@ -1120,6 +1121,8 @@ class HealthStore:
         )
         stored_types = {row["data_type"] for row in stored_rows}
         latest_observed = max((row["latest_observed"] for row in stored_rows if row["latest_observed"]), default=None)
+        last_sync = max((row["last_sync"] for row in stored_rows if row["last_sync"]), default=None)
+        total_stored_records = sum(int(row["records"] or 0) for row in stored_rows)
         if not latest_observed:
             return empty_data()
 
@@ -1203,6 +1206,13 @@ class HealthStore:
         return {
             "status": "ok",
             "source": "local_synced_google_health_store",
+            "data_freshness": {
+                "status": "ok",
+                "records": total_stored_records,
+                "latest_observed_date": latest_observed,
+                "last_sync": last_sync,
+                **freshness_details(latest_observed, last_sync),
+            },
             "start_date": resolved_start,
             "end_date": resolved_end,
             "requested_metrics": requested_metrics,
@@ -1387,6 +1397,11 @@ class HealthStore:
         average_hours = round(sum(asleep_values) / len(asleep_values), 2) if asleep_values else None
         return {
             "status": "ok",
+            "data_freshness": context["data_freshness"],
+            "date_range": {
+                "start": sleep_days[0]["date"],
+                "end": sleep_days[-1]["date"],
+            },
             "days": sleep_days,
             "latest": latest,
             "summary": {
@@ -1402,38 +1417,78 @@ class HealthStore:
         _, summary, context = self._records_summary_context(user_id)
         if context.get("status") != "ok":
             return context
+        raw_days = sorted(summary["daily"].items())
+        activity_days = [
+            (day, values)
+            for day, values in raw_days
+            if any(
+                values.get(key) is not None
+                for key in ("steps", "active_zone_minutes", "active_minutes", "distance_mm")
+            )
+            or values.get("activity_levels_minutes")
+            or values.get("time_in_hr_zones_minutes")
+        ][-days:]
+        if not activity_days:
+            return empty_data("No activity records have synced yet.")
         days_out = []
-        for day, values in sorted(summary["daily"].items())[-days:]:
+        for day, values in activity_days:
+            distance_mm = values.get("distance_mm")
             days_out.append(
                 {
                     "date": day,
-                    "steps": values.get("steps", 0),
-                    "active_zone_minutes": values.get("active_zone_minutes", 0),
-                    "active_minutes": values.get("active_minutes", 0),
-                    "distance_km": round(values.get("distance_mm", 0) / 1_000_000, 2),
+                    "steps": values.get("steps"),
+                    "active_zone_minutes": values.get("active_zone_minutes"),
+                    "active_minutes": values.get("active_minutes"),
+                    "distance_km": round(distance_mm / 1_000_000, 2) if distance_mm is not None else None,
                 }
             )
         totals = {
-            "steps": sum(day["steps"] for day in days_out),
-            "active_zone_minutes": sum(day["active_zone_minutes"] for day in days_out),
-            "active_minutes": sum(day["active_minutes"] for day in days_out),
+            "steps": sum(day["steps"] or 0 for day in days_out),
+            "active_zone_minutes": sum(day["active_zone_minutes"] or 0 for day in days_out),
+            "active_minutes": sum(day["active_minutes"] or 0 for day in days_out),
         }
-        highest_load = max(days_out, key=lambda day: day["active_zone_minutes"], default=None)
-        return {"status": "ok", "days": days_out, "totals": totals, "highest_load_day": highest_load}
+        highest_load = max(days_out, key=lambda day: day["active_zone_minutes"] or 0, default=None)
+        return {
+            "status": "ok",
+            "data_freshness": context["data_freshness"],
+            "date_range": {
+                "start": days_out[0]["date"] if days_out else None,
+                "end": days_out[-1]["date"] if days_out else None,
+            },
+            "days": days_out,
+            "coverage": {
+                "days_requested": days,
+                "days_with_activity": len(days_out),
+                "missing_days_in_summary": max(0, min(days, len(raw_days)) - len(days_out)),
+            },
+            "totals": totals,
+            "highest_load_day": highest_load,
+        }
 
     def heart_trends(self, user_id: str, days: int = 7) -> dict[str, Any]:
         _, summary, context = self._records_summary_context(user_id)
         if context.get("status") != "ok":
             return context
+        raw_days = sorted(summary["daily"].items())
+        heart_days = [
+            (day, values)
+            for day, values in raw_days
+            if values.get("heart")
+            or values.get("resting_heart_rate") is not None
+            or values.get("hrv_ms") is not None
+            or values.get("hrv_sample_ms") is not None
+        ][-days:]
+        if not heart_days:
+            return empty_data("No heart trend records have synced yet.")
         days_out = []
-        for day, values in sorted(summary["daily"].items())[-days:]:
+        for day, values in heart_days:
             heart = values.get("heart", {})
             days_out.append(
                 {
                     "date": day,
                     "avg_bpm": heart.get("avg_bpm"),
                     "resting_bpm": values.get("resting_heart_rate"),
-                    "hrv_ms": values.get("hrv_ms"),
+                    "hrv_ms": values.get("hrv_ms") or (values.get("hrv_sample_ms") or {}).get("avg_ms"),
                 }
             )
         latest = days_out[-1] if days_out else None
@@ -1441,8 +1496,18 @@ class HealthStore:
         rhr_values = [day["resting_bpm"] for day in days_out if day.get("resting_bpm") is not None]
         return {
             "status": "ok",
+            "data_freshness": context["data_freshness"],
+            "date_range": {
+                "start": days_out[0]["date"] if days_out else None,
+                "end": days_out[-1]["date"] if days_out else None,
+            },
             "days": days_out,
             "latest": latest,
+            "coverage": {
+                "days_requested": days,
+                "days_with_heart_data": len(days_out),
+                "missing_days_in_summary": max(0, min(days, len(raw_days)) - len(days_out)),
+            },
             "summary": {
                 "average_hrv_ms": round(sum(hrv_values) / len(hrv_values), 1) if hrv_values else None,
                 "average_resting_bpm": round(sum(rhr_values) / len(rhr_values), 1) if rhr_values else None,
@@ -1641,11 +1706,26 @@ class HealthStore:
         }
 
     def workout_history(self, user_id: str, days: int = 14) -> dict[str, Any]:
+        freshness = self.freshness(user_id)
         cutoff = (utc_now() - timedelta(days=days)).date().isoformat()
+        rows = self.db.all(
+            """
+            SELECT data_type, observed_date, payload_json
+            FROM raw_health_records
+            WHERE user_id = ?
+              AND data_type = 'exercise'
+              AND observed_date >= ?
+            ORDER BY observed_date DESC, id DESC
+            """,
+            (user_id, cutoff),
+        )
         records = [
-            item
-            for item in self.records_for_user(user_id)
-            if item["data_type"] == "exercise" and (item["observed_date"] or "") >= cutoff
+            {
+                "data_type": row["data_type"],
+                "observed_date": row["observed_date"],
+                "payload": loads(row["payload_json"], {}),
+            }
+            for row in rows
         ]
         if not records:
             return empty_data("No workout records have synced yet.")
@@ -1682,6 +1762,11 @@ class HealthStore:
         )
         return {
             "status": "ok",
+            "data_freshness": freshness,
+            "date_range": {
+                "start": min((item["date"] for item in workouts if item.get("date")), default=None),
+                "end": max((item["date"] for item in workouts if item.get("date")), default=None),
+            },
             "workouts": workouts,
             "summary": {
                 "workout_count": len(workouts),

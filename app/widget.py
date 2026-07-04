@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 
 
-WIDGET_URI = "ui://mehair/today-v20.html"
+WIDGET_URI = "ui://mehair/today-v21.html"
 LEGACY_WIDGET_URIS = (
     "ui://mehair/today-v1.html",
     "ui://mehair/today-v2.html",
@@ -24,6 +24,7 @@ LEGACY_WIDGET_URIS = (
     "ui://mehair/today-v17.html",
     "ui://mehair/today-v18.html",
     "ui://mehair/today-v19.html",
+    "ui://mehair/today-v20.html",
 )
 WIDGET_RESOURCE_URIS = (WIDGET_URI, *LEGACY_WIDGET_URIS)
 WIDGET_MIME_TYPE = "text/html;profile=mcp-app"
@@ -156,6 +157,50 @@ TODAY_WIDGET_HTML = """
         flex-wrap: wrap;
         gap: 6px;
         padding: 0 14px 12px;
+      }
+
+      .data-window {
+        display: grid;
+        grid-template-columns: auto minmax(0, 1fr);
+        gap: 8px 10px;
+        align-items: center;
+        border-top: 1px solid #f7deea;
+        border-bottom: 1px solid #f7deea;
+        background: linear-gradient(90deg, #fff0f7, #fffafd);
+        padding: 9px 14px;
+      }
+
+      .data-window b {
+        display: inline-flex;
+        align-items: center;
+        min-height: 24px;
+        border: 1px solid #f0a9c9;
+        border-radius: 999px;
+        background: #fff;
+        color: var(--brand-ink);
+        font-size: 11px;
+        font-weight: 840;
+        line-height: 1.1;
+        padding: 5px 8px;
+      }
+
+      .data-window b::before {
+        content: "";
+        flex: 0 0 auto;
+        width: 7px;
+        height: 7px;
+        margin-right: 6px;
+        border-radius: 999px;
+        background: var(--sync-dot, var(--brand));
+        box-shadow: 0 0 0 2px var(--sync-soft, var(--brand-soft));
+      }
+
+      .data-window span {
+        min-width: 0;
+        color: #444d55;
+        font-size: 12px;
+        font-weight: 680;
+        line-height: 1.3;
       }
 
       .chip {
@@ -576,6 +621,7 @@ TODAY_WIDGET_HTML = """
         body { padding: 8px; }
         .mast { grid-template-columns: 1fr; gap: 8px; }
         .stamp { min-width: 0; text-align: left; }
+        .data-window { grid-template-columns: 1fr; }
         .hero { grid-template-columns: 1fr; }
         .score-card { justify-self: center; }
         .gauge { justify-self: center; min-height: 136px; }
@@ -659,7 +705,7 @@ TODAY_WIDGET_HTML = """
       async function initialize() {
         try {
           await rpcRequest("ui/initialize", {
-            appInfo: { name: "mehair-coach-widget", version: "0.7.1" },
+            appInfo: { name: "mehair-coach-widget", version: "0.7.2" },
             appCapabilities: {},
             protocolVersion: "2026-01-26",
           });
@@ -680,7 +726,7 @@ TODAY_WIDGET_HTML = """
           renderEmpty(data.message || "No synced Fitbit data yet.", data.status || "setup");
           return;
         }
-        renderModel(toViewModel(data));
+        renderModel(withDataWindow(toViewModel(data), data));
       }
 
       function renderEmpty(message, status) {
@@ -1085,6 +1131,7 @@ TODAY_WIDGET_HTML = """
         const readiness = data.readiness || {};
         const label = readiness.label || data.data_used?.readiness_label || "pending";
         const dataUsed = data.data_used || {};
+        const freshness = data.data_freshness || {};
         const score = finiteNumber(readiness.score ?? dataUsed.readiness_score, 0);
         const band = readinessBand(score, label);
         const coach = data.coach_response || {};
@@ -1099,7 +1146,7 @@ TODAY_WIDGET_HTML = """
           title: workoutTitle(data.planned_activity, data.recommended_intensity),
           eyebrow: "mehair coach",
           date: data.planned_date ? `Planned for ${data.planned_date}` : "Next planned session",
-          chips: [intensityChip(data.recommended_intensity), rpeChip(data.rpe_cap), readinessChip(label, score)].filter(Boolean),
+          chips: [intensityChip(data.recommended_intensity), rpeChip(data.rpe_cap), readinessChip(label, score), freshnessChip(freshness)].filter(Boolean),
           score,
           primaryLabel: "Readiness",
           headline: coach.short_answer || workoutHeadline(data),
@@ -1169,6 +1216,7 @@ TODAY_WIDGET_HTML = """
 
       function sleepModel(data) {
         const latest = data.latest || {};
+        const freshness = data.data_freshness || {};
         const stages = latest.stages_minutes || {};
         const asleep = latest.asleep_hours ?? latest.duration_hours;
         const sessions = latest.sessions_count || 1;
@@ -1182,7 +1230,7 @@ TODAY_WIDGET_HTML = """
           title: "Sleep",
           eyebrow: "mehair coach",
           date: latest.date ? `Latest sleep from ${latest.date}` : "Latest synced sleep",
-          chips: [`${sessions} session${sessions === 1 ? "" : "s"}`],
+          chips: [`${sessions} session${sessions === 1 ? "" : "s"}`, freshnessChip(freshness)].filter(Boolean),
           score: asleep ? Math.min(100, Math.round((asleep / 8) * 100)) : 0,
           primaryLabel: "Sleep target",
           headline: sessions > 1 ? "Split sleep was combined for coaching." : "Sleep session captured.",
@@ -1203,6 +1251,7 @@ TODAY_WIDGET_HTML = """
 
       function activityModel(data) {
         const totals = data.totals || {};
+        const freshness = data.data_freshness || {};
         const highest = data.highest_load_day || {};
         const days = data.days || [];
         return {
@@ -1210,7 +1259,7 @@ TODAY_WIDGET_HTML = """
           title: "Activity Load",
           eyebrow: "mehair coach",
           date: rangeText(days),
-          chips: [`${days.length || 0} days`],
+          chips: [`${days.length || 0} days`, freshnessChip(freshness)].filter(Boolean),
           score: clamp(Math.round((Number(totals.active_zone_minutes || highest.active_zone_minutes || 0) / 150) * 100), 0, 100),
           primaryLabel: "Load",
           headline: `${intText(totals.steps ?? 0)} steps across the queried window.`,
@@ -1231,6 +1280,7 @@ TODAY_WIDGET_HTML = """
 
       function heartModel(data) {
         const days = data.days || [];
+        const freshness = data.data_freshness || {};
         const latest = data.latest || days[days.length - 1] || {};
         const summary = data.summary || {};
         const score = latest.hrv_ms && summary.average_hrv_ms
@@ -1241,7 +1291,7 @@ TODAY_WIDGET_HTML = """
           title: "Heart Trends",
           eyebrow: "mehair coach",
           date: latest.date || rangeText(days),
-          chips: ["heart", days.length ? `${days.length} days` : ""].filter(Boolean),
+          chips: ["heart", days.length ? `${days.length} days` : "", freshnessChip(freshness)].filter(Boolean),
           score,
           primaryLabel: latest.hrv_ms != null ? "HRV vs avg" : "Heart",
           headline: "Recent HRV and resting heart-rate context.",
@@ -1268,13 +1318,14 @@ TODAY_WIDGET_HTML = """
 
       function metricQueryModel(data) {
         const metrics = data.metrics || {};
+        const freshness = data.data_freshness || {};
         const entries = Object.entries(metrics);
         return {
           accent: "#4b6f8f",
           title: "Returned Health Data",
           eyebrow: "mehair coach",
           date: data.start_date && data.end_date ? `${data.start_date} to ${data.end_date}` : "",
-          chips: [`${data.requested_metrics.length} metrics`, data.source || ""].filter(Boolean),
+          chips: [`${data.requested_metrics.length} metrics`, data.source || "", freshnessChip(freshness)].filter(Boolean),
           score: clamp(Number(data.record_count || 0), 0, 100),
           primaryLabel: "Records",
           headline: "Synced local health metrics returned for this window.",
@@ -1293,18 +1344,139 @@ TODAY_WIDGET_HTML = """
         };
       }
 
+      function withDataWindow(model, data) {
+        return { ...model, dataWindow: dataWindowFromPayload(data || {}, model || {}) };
+      }
+
+      function dataWindowFromPayload(data, model) {
+        const freshness = data.data_freshness || data.freshness || data.context?.data_freshness || {};
+        const level = normalizedFreshnessLevel(freshness);
+        const pullAge = pullAgeText(freshness);
+        const latestDay = explicitLatestDateFromPayload(data) || explicitLatestDateFromModel(model);
+        const pull = pullAge
+          ? `Latest Fitbit data pull was ${pullAge}`
+          : "Fitbit timing unavailable for this card";
+        const latest = latestDay
+          ? `using Fitbit data through ${latestDay}`
+          : model.date
+            ? `card window: ${model.date}`
+            : "";
+        return {
+          level,
+          levelLabel: level === "fresh" ? "Fresh data" : level === "aging" ? "Aging data" : level === "stale" ? "Stale data" : "Fitbit timing",
+          pull,
+          latest,
+        };
+      }
+
+      function pullAgeText(freshness) {
+        const minutes = firstFinite(freshness?.sync_age_minutes, freshness?.age_minutes);
+        if (minutes != null) return ageMinutesText(minutes);
+        if (freshness?.last_sync) return `at ${formatDateTime(freshness.last_sync)}`;
+        if (freshness?.freshness_label) return freshness.freshness_label;
+        return freshnessChip(freshness || {});
+      }
+
+      function ageMinutesText(value) {
+        const minutes = Math.max(0, Math.round(Number(value)));
+        if (minutes < 1) return "just now";
+        if (minutes < 60) return `${minutes} min ago`;
+        const hours = Math.round(minutes / 60);
+        if (hours < 24) return `${hours}h ago`;
+        return `${Math.round(hours / 24)}d ago`;
+      }
+
+      function normalizedFreshnessLevel(freshness) {
+        const explicit = String(freshness?.freshness_level || "").toLowerCase();
+        if (["fresh", "aging", "stale"].includes(explicit)) return explicit;
+        const minutes = firstFinite(freshness?.sync_age_minutes, freshness?.age_minutes);
+        if (minutes != null) {
+          if (minutes <= 15) return "fresh";
+          if (minutes <= 60) return "aging";
+          return "stale";
+        }
+        const label = String(freshness?.freshness_label || "").toLowerCase();
+        if (label.includes("fresh")) return "fresh";
+        if (label.includes("aging")) return "aging";
+        if (label.includes("stale") || label.includes("recommended")) return "stale";
+        return "unknown";
+      }
+
+      function explicitLatestDateFromPayload(data) {
+        return latestIsoDate([
+          data?.date_range?.end,
+          data?.end_date,
+          data?.latest?.date,
+          data?.today?.activity_date,
+          data?.today?.recovery_date,
+          data?.activity_date,
+          data?.recovery_date,
+          data?.latest_date,
+          data?.data_used?.activity_date,
+          data?.data_used?.recovery_date,
+          data?.data_used?.latest_training_load?.date,
+          data?.today?.latest_training_load?.date,
+          data?.data_freshness?.latest_observed_date,
+          data?.freshness?.latest_observed_date,
+          data?.context?.data_freshness?.latest_observed_date,
+        ]);
+      }
+
+      function explicitLatestDateFromModel(model) {
+        return latestIsoDate([model?.date]);
+      }
+
+      function latestIsoDate(values) {
+        const dates = [];
+        for (const value of values || []) {
+          const match = String(value || "").match(/\\d{4}-\\d{2}-\\d{2}/);
+          if (match) dates.push(match[0]);
+        }
+        dates.sort();
+        return dates[dates.length - 1] || "";
+      }
+
+      function formatDateTime(value) {
+        const parsed = new Date(value);
+        if (Number.isNaN(parsed.getTime())) return String(value);
+        return parsed.toLocaleString(undefined, {
+          month: "short",
+          day: "numeric",
+          hour: "numeric",
+          minute: "2-digit",
+        });
+      }
+
+      function firstFinite(...values) {
+        for (const value of values) {
+          const number = Number(value);
+          if (Number.isFinite(number)) return number;
+        }
+        return null;
+      }
+
+      function freshnessColor(level) {
+        if (level === "fresh") return "#2f7a5f";
+        if (level === "aging") return "#9b741c";
+        if (level === "stale") return "#a94f43";
+        return "#d63384";
+      }
+
       function renderModel(model) {
         const accent = model.accent || "#d63384";
         const score = clamp(Math.round(Number(model.score || 0)), 0, 100);
         const isReadinessScore = String(model.primaryLabel || "").toLowerCase().includes("readiness");
         const band = isReadinessScore ? readinessBand(score, model.stateLabel || "") : "";
         const bandColor = isReadinessScore ? readinessBandColor(band) : accent;
+        const syncColor = freshnessColor(model.dataWindow?.level);
         root.style.setProperty("--accent", "#d63384");
         root.style.setProperty("--accent-soft", "#fff0f7");
         root.style.setProperty("--state", "#d63384");
         root.style.setProperty("--state-soft", "#fff0f7");
         root.style.setProperty("--band-color", bandColor);
         root.style.setProperty("--band-soft", softFor(bandColor));
+        root.style.setProperty("--sync-dot", syncColor);
+        root.style.setProperty("--sync-soft", softFor(syncColor));
         root.style.setProperty("--score", String(score));
         const primaryFocus = listItems(model.focus, "Health context synced.");
         const secondaryTitle = model.secondaryTitle || "Evidence";
@@ -1324,6 +1496,7 @@ TODAY_WIDGET_HTML = """
           <div class="status-row">
             ${(model.chips || ["health"]).slice(0, 4).map((item, index) => `<span class="chip ${index === 0 ? "accent" : ""}">${escapeHtml(item)}</span>`).join("")}
           </div>
+          ${renderDataWindow(model.dataWindow)}
           <div class="hero">
             <div class="score-card">
               <div class="gauge" aria-label="${escapeHtml(model.primaryLabel || "score")} ${score}">
@@ -1358,6 +1531,13 @@ TODAY_WIDGET_HTML = """
             </div>
           </div>
         `;
+      }
+
+      function renderDataWindow(dataWindow) {
+        if (!dataWindow || (!dataWindow.pull && !dataWindow.latest)) return "";
+        const label = dataWindow.levelLabel || "Fitbit timing";
+        const text = [dataWindow.pull, dataWindow.latest].filter(Boolean).join(" · ");
+        return `<div class="data-window" aria-label="Fitbit data timing"><b>${escapeHtml(label)}</b><span>${escapeHtml(text)}</span></div>`;
       }
 
       function renderLabelKey(labels) {
@@ -2020,7 +2200,13 @@ WIDGET_PREVIEW_STATES: dict[str, dict] = {
             ],
         },
         "data_used": {"synced_metric_count": 9},
-        "data_freshness": {"freshness_level": "fresh", "latest_observed_date": "2026-07-03"},
+        "data_freshness": {
+            "freshness_level": "fresh",
+            "freshness_label": "fresh <15 min",
+            "latest_observed_date": "2026-07-03",
+            "sync_age_minutes": 7,
+            "last_sync": "2026-07-03T11:53:00+00:00",
+        },
     },
     "health-clues": {
         "status": "ok",
@@ -2158,7 +2344,13 @@ WIDGET_PREVIEW_STATES: dict[str, dict] = {
             "resting_heart_rate": 67,
             "latest_training_load": {"date": "2026-07-02", "active_zone_minutes": 72},
         },
-        "data_freshness": {"freshness_level": "fresh", "latest_observed_date": "2026-07-03"},
+        "data_freshness": {
+            "freshness_level": "fresh",
+            "freshness_label": "fresh <15 min",
+            "latest_observed_date": "2026-07-03",
+            "sync_age_minutes": 7,
+            "last_sync": "2026-07-03T11:53:00+00:00",
+        },
     },
     "today-workout": {
         "status": "ok",
@@ -2242,7 +2434,13 @@ WIDGET_PREVIEW_STATES: dict[str, dict] = {
             ],
             "avoid": ["Loading sore areas aggressively", "Another hard conditioning block today"],
         },
-        "data_freshness": {"freshness_level": "fresh", "latest_observed_date": "2026-07-03"},
+        "data_freshness": {
+            "freshness_level": "fresh",
+            "freshness_label": "fresh <15 min",
+            "latest_observed_date": "2026-07-03",
+            "sync_age_minutes": 7,
+            "last_sync": "2026-07-03T11:53:00+00:00",
+        },
     },
     "workout-plan": {
         "status": "ok",
@@ -2349,6 +2547,13 @@ WIDGET_PREVIEW_STATES: dict[str, dict] = {
             ],
             "avoid": ["Heavy deadlifts", "Heavy bent-over rows", "Aggressive bench arch if low back feels sensitive"],
         },
+        "data_freshness": {
+            "freshness_level": "fresh",
+            "freshness_label": "fresh <15 min",
+            "latest_observed_date": "2026-07-03",
+            "sync_age_minutes": 9,
+            "last_sync": "2026-07-03T11:51:00+00:00",
+        },
     },
     "active-workout": {
         "status": "ok",
@@ -2418,6 +2623,13 @@ WIDGET_PREVIEW_STATES: dict[str, dict] = {
                 "Stop if pain rises above 3/10 or changes your form.",
             ],
         },
+        "data_freshness": {
+            "freshness_level": "fresh",
+            "freshness_label": "fresh <15 min",
+            "latest_observed_date": "2026-07-03",
+            "sync_age_minutes": 11,
+            "last_sync": "2026-07-03T11:49:00+00:00",
+        },
         "safety_note": "This is in-session fitness guidance, not medical diagnosis or emergency care.",
     },
     "active-workout-hold": {
@@ -2444,7 +2656,13 @@ WIDGET_PREVIEW_STATES: dict[str, dict] = {
             "Latest synced load before/during this decision: 23 Active Zone Minutes on 2026-07-03 (AZM, Fitbit hard-work minutes).",
         ],
         "readiness": {"score": 78, "label": "green"},
-        "data_freshness": {"freshness_label": "aging", "age_minutes": 18},
+        "data_freshness": {
+            "freshness_level": "aging",
+            "freshness_label": "aging 15-60 min",
+            "latest_observed_date": "2026-07-03",
+            "age_minutes": 18,
+            "last_sync": "2026-07-03T11:42:00+00:00",
+        },
         "live_inputs": {
             "current_heart_rate_bpm": 150,
             "current_rpe": 7,
@@ -2553,7 +2771,13 @@ WIDGET_PREVIEW_STATES: dict[str, dict] = {
             ],
         },
         "data_used": {"days_compared": 4},
-        "data_freshness": {"freshness_level": "fresh"},
+        "data_freshness": {
+            "freshness_level": "fresh",
+            "freshness_label": "fresh <15 min",
+            "latest_observed_date": "2026-07-03",
+            "sync_age_minutes": 8,
+            "last_sync": "2026-07-03T11:52:00+00:00",
+        },
     },
     "heart-safety": {
         "status": "ok",
@@ -2598,7 +2822,13 @@ WIDGET_PREVIEW_STATES: dict[str, dict] = {
         ],
         "readiness": {"score": 55, "label": "yellow"},
         "today": {"activity_date": "2026-07-03", "recovery_date": "2026-07-03"},
-        "data_freshness": {"freshness_level": "fresh", "latest_observed_date": "2026-07-03"},
+        "data_freshness": {
+            "freshness_level": "fresh",
+            "freshness_label": "fresh <15 min",
+            "latest_observed_date": "2026-07-03",
+            "sync_age_minutes": 6,
+            "last_sync": "2026-07-03T11:54:00+00:00",
+        },
     },
 }
 

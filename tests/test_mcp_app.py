@@ -130,12 +130,17 @@ async def test_widget_resource_is_registered() -> None:
 
     assert str(resources[0].uri) == WIDGET_URI
     assert resources[0].mimeType == "text/html;profile=mcp-app"
-    assert WIDGET_URI == "ui://mehair/today-v20.html"
-    assert "ui://mehair/today-v19.html" in LEGACY_WIDGET_URIS
+    assert WIDGET_URI == "ui://mehair/today-v21.html"
+    assert "ui://mehair/today-v20.html" in LEGACY_WIDGET_URIS
     assert "Preparing card" in html
-    assert 'appInfo: { name: "mehair-coach-widget", version: "0.7.1" }' in html
+    assert 'appInfo: { name: "mehair-coach-widget", version: "0.7.2" }' in html
     assert 'renderEmpty("Preparing the health card from the latest tool result.", "waiting")' in html
     assert "function hasCardData(data)" in html
+    assert "function withDataWindow(model, data)" in html
+    assert "Latest Fitbit data pull was" in html
+    assert "using Fitbit data through" in html
+    assert "data-window" in html
+    assert "--sync-dot" in html
     assert "function renderLabelKey(labels)" in html
     assert "label-key" in html
     assert "score-state::before" in html
@@ -189,6 +194,21 @@ async def test_widget_preview_route_renders_real_card_state() -> None:
         active_workout_hold = await client.get("/docs/widget-preview?state=active-workout-hold")
         recovery_comparison = await client.get("/docs/widget-preview?state=recovery-comparison")
 
+    for preview in [
+        response,
+        overview,
+        safety,
+        today_workout,
+        workout_plan,
+        active_workout,
+        active_workout_hold,
+        recovery_comparison,
+    ]:
+        assert preview.status_code == 200
+        assert "data-window" in preview.text
+        assert "Latest Fitbit data pull was" in preview.text
+        assert "using Fitbit data through" in preview.text
+
     assert response.status_code == 200
     assert "text/html" in response.headers["content-type"]
     assert "I feel cooked today" in response.text
@@ -213,6 +233,10 @@ async def test_widget_preview_route_renders_real_card_state() -> None:
     assert "AZM = Fitbit hard-work minutes" in overview.text
     assert "Signals checked" in overview.text
     assert "Other signals checked for this answer" in overview.text
+    assert "Fitbit data timing" in overview.text
+    assert "Fresh data" in overview.text
+    assert "Latest Fitbit data pull was" in overview.text
+    assert "using Fitbit data through" in overview.text
     assert "signal-strip" in overview.text
     assert "green 75+" in overview.text
     assert "yellow 55-74" in overview.text

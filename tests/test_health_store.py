@@ -524,10 +524,19 @@ def test_synthetic_records_calculate_context(tmp_path, monkeypatch) -> None:
 
     assert sleep["latest"]["duration_hours"] == 8.0
     assert sleep["summary"]["average_asleep_hours"] == 8.0
+    assert sleep["data_freshness"]["latest_observed_date"] == "2026-07-03"
+    assert sleep["data_freshness"]["last_sync"]
+    assert sleep["date_range"]["end"] == "2026-07-03"
     assert activity["days"][-1]["steps"] == 8500
     assert activity["totals"]["steps"] == 8500
+    assert activity["coverage"]["days_with_activity"] == 1
+    assert activity["data_freshness"]["latest_observed_date"] == "2026-07-03"
+    assert activity["date_range"]["end"] == "2026-07-03"
     assert heart["days"][-1]["avg_bpm"] == 80.0
     assert heart["summary"]["average_hrv_ms"] == 45.2
+    assert heart["coverage"]["days_with_heart_data"] == 1
+    assert heart["data_freshness"]["latest_observed_date"] == "2026-07-03"
+    assert heart["date_range"]["end"] == "2026-07-03"
 
     catalog = store.available_metrics(user_id)
     steps_metric = next(item for item in catalog["metrics"] if item["id"] == "steps")
@@ -548,6 +557,8 @@ def test_synthetic_records_calculate_context(tmp_path, monkeypatch) -> None:
     assert metrics["metrics"]["steps"]["daily"][-1]["steps"] == 8500
     assert metrics["metrics"]["sleep"]["daily"][-1]["sleep"]["duration_hours"] == 8.0
     assert metrics["missing_metrics"] == []
+    assert metrics["data_freshness"]["latest_observed_date"] == "2026-07-03"
+    assert metrics["data_freshness"]["last_sync"]
 
     richer_metrics = store.query_metrics(
         user_id,
