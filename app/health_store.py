@@ -54,8 +54,17 @@ INTENT_METRICS = {
         "daily-heart-rate-variability",
         "daily-resting-heart-rate",
         "active-zone-minutes",
+        "time-in-heart-rate-zone",
+        "activity-level",
+        "active-minutes",
         "steps",
+        "distance",
         "exercise",
+        "daily-respiratory-rate",
+        "respiratory-rate-sleep-summary",
+        "daily-oxygen-saturation",
+        "daily-sleep-temperature-derivations",
+        "daily-vo2-max",
     ],
     "workout_decision": [
         "exercise",
@@ -118,8 +127,28 @@ INTENT_METRICS = {
         "total-calories",
         "exercise",
     ],
-    "subjective": ["sleep", "exercise", "active-zone-minutes", "daily-heart-rate-variability"],
-    "goal": ["exercise", "active-zone-minutes", "steps", "sleep"],
+    "subjective": [
+        "sleep",
+        "exercise",
+        "active-zone-minutes",
+        "daily-heart-rate-variability",
+        "daily-resting-heart-rate",
+        "daily-respiratory-rate",
+        "daily-oxygen-saturation",
+        "daily-sleep-temperature-derivations",
+    ],
+    "goal": [
+        "exercise",
+        "active-zone-minutes",
+        "time-in-heart-rate-zone",
+        "active-minutes",
+        "steps",
+        "distance",
+        "sleep",
+        "daily-heart-rate-variability",
+        "daily-resting-heart-rate",
+        "daily-vo2-max",
+    ],
     "symptom_safety": [
         "daily-resting-heart-rate",
         "heart-rate",
@@ -2685,6 +2714,88 @@ def _question_intents(question: str) -> list[str]:
     def has(*words: str) -> bool:
         return any(word in text for word in words)
 
+    future_window_context = has(
+        "next 2 days",
+        "next two days",
+        "next 3 days",
+        "next three days",
+        "next few days",
+        "tomorrow",
+        "this week",
+        "weekend",
+        "coming days",
+        "next session",
+        "one evening",
+    ) or bool(re.search(r"\b(next|coming)\s+\d+\s+(day|days|week|weeks)\b", text))
+    improvement_goal_context = has(
+        "get fitter",
+        "getting fitter",
+        "build fitness",
+        "improve fitness",
+        "better shape",
+        "cardio better",
+        "increase endurance",
+        "maintain my body",
+        "stay consistent",
+        "consistent",
+        "not wrecked",
+        "without feeling wrecked",
+        "not feel wrecked",
+        "not overdo",
+        "overdo it",
+        "too drained",
+        "feel drained",
+        "leave energy",
+        "preserve energy",
+        "stay fresh",
+    )
+    broad_data_context = has(
+        "what data",
+        "which data",
+        "data points",
+        "all data",
+        "all my data",
+        "all signals",
+        "all metrics",
+        "available data",
+        "available metrics",
+        "whole picture",
+        "full picture",
+        "other stats",
+        "other signals",
+        "appropriate data",
+        "necessary data",
+        "everything",
+    )
+    exercise_context = has(
+        "workout",
+        "work out",
+        "working out",
+        "how hard",
+        "train",
+        "training",
+        "exercise",
+        "lift",
+        "run",
+        "cardio",
+        "interval",
+        "intervals",
+        "push",
+        "harder",
+        "squash",
+        "sport",
+        "legs",
+        "chest",
+        "back",
+        "shoulder",
+        "gym",
+        "easy miles",
+        "quality session",
+        "hard session",
+        "send it",
+        "green light",
+    )
+
     asks_for_today_plan = any(
         phrase in text
         for phrase in (
@@ -2726,28 +2837,10 @@ def _question_intents(question: str) -> list[str]:
             ]
         )
 
-    if has(
-        "workout",
-        "work out",
-        "working out",
-        "how hard",
-        "train",
-        "training",
-        "exercise",
-        "lift",
-        "run",
-        "cardio",
-        "interval",
-        "intervals",
-        "push",
-        "harder",
-        "squash",
-        "sport",
-        "legs",
-        "chest",
-        "back",
-        "shoulder",
-    ):
+    if future_window_context or improvement_goal_context:
+        intents.extend(["daily_plan", "general_overview", "workout_decision", "recovery", "activity_load", "heart", "sleep", "goal"])
+
+    if exercise_context:
         intents.extend(["workout_decision", "recovery", "activity_load", "heart", "sleep", "subjective", "goal"])
     live_workout_context = has(
         "during workout",
@@ -2778,10 +2871,10 @@ def _question_intents(question: str) -> list[str]:
     if has("heart", "hrv", "bpm", "pulse", "resting", "cardio"):
         intents.extend(["heart", "recovery", "activity_load"])
     if has("oxygen", "spo2", "sp02", "breathing", "breath", "respiratory", "temperature", "temp"):
-        intents.extend(["recovery", "sleep", "heart"])
+        intents.extend(["recovery", "sleep", "heart", "workout_decision"])
     if has("vo2", "capacity", "endurance", "aerobic", "cardio fitness"):
-        intents.extend(["general_overview", "activity_load", "heart"])
-    if has("all data", "all my data", "all signals", "all metrics", "everything", "full picture", "other stats", "other signals"):
+        intents.extend(["general_overview", "activity_load", "heart", "goal"])
+    if broad_data_context:
         intents.extend(["general_overview", "recovery", "heart", "sleep", "activity_load"])
     if has("sore", "soreness", "pain", "injury", "ache", "stress", "energy", "feel"):
         intents.extend(["subjective", "recovery", "activity_load", "sleep"])
@@ -2802,7 +2895,7 @@ def _question_intents(question: str) -> list[str]:
     if has("step", "steps", "calorie", "calories", "zone", "active", "load", "distance", "walk"):
         intents.extend(["activity_load", "workout_decision"])
     if has("goal", "goals", "progress", "week", "weekly"):
-        intents.extend(["goal", "workout_decision", "activity_load"])
+        intents.extend(["goal", "workout_decision", "activity_load", "daily_plan"])
 
     if not intents:
         intents = ["general_overview", "recovery", "heart", "sleep", "activity_load"]

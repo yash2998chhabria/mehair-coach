@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 
 
-WIDGET_URI = "ui://mehair/today-v18.html"
+WIDGET_URI = "ui://mehair/today-v19.html"
 LEGACY_WIDGET_URIS = (
     "ui://mehair/today-v1.html",
     "ui://mehair/today-v2.html",
@@ -22,6 +22,7 @@ LEGACY_WIDGET_URIS = (
     "ui://mehair/today-v15.html",
     "ui://mehair/today-v16.html",
     "ui://mehair/today-v17.html",
+    "ui://mehair/today-v18.html",
 )
 WIDGET_RESOURCE_URIS = (WIDGET_URI, *LEGACY_WIDGET_URIS)
 WIDGET_MIME_TYPE = "text/html;profile=mcp-app"
@@ -50,8 +51,11 @@ TODAY_WIDGET_HTML = """
         --tile: #fffafd;
         --accent: #d63384;
         --accent-soft: #fff0f7;
+        --band-color: #d63384;
+        --band-soft: #fff0f7;
         --warn: #9b741c;
         --danger: #a94f43;
+        --ok: #2f7a5f;
         --info: #386f8f;
         font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
           "Segoe UI", sans-serif;
@@ -158,7 +162,7 @@ TODAY_WIDGET_HTML = """
         align-items: center;
         min-height: 24px;
         max-width: 100%;
-        border: 1px solid #d9e1dc;
+        border: 1px solid #f1d5e3;
         border-radius: 999px;
         background: #fffafd;
         color: #313940;
@@ -241,16 +245,27 @@ TODAY_WIDGET_HTML = """
         display: inline-flex;
         align-items: center;
         justify-content: center;
+        gap: 6px;
         min-height: 23px;
-        border: 1px solid var(--state);
+        border: 1px solid #f0a9c9;
         border-radius: 999px;
-        background: var(--state-soft);
-        color: var(--state);
+        background: var(--brand-soft);
+        color: var(--brand-ink);
         font-size: 11px;
         font-weight: 820;
         line-height: 1.1;
         padding: 4px 8px;
         text-align: center;
+      }
+
+      .score-state::before {
+        content: "";
+        flex: 0 0 auto;
+        width: 7px;
+        height: 7px;
+        border-radius: 999px;
+        background: var(--band-color);
+        box-shadow: 0 0 0 2px var(--band-soft);
       }
 
       .band-legend {
@@ -266,11 +281,29 @@ TODAY_WIDGET_HTML = """
       }
 
       .band-legend span {
+        --dot: var(--brand);
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 4px;
         border: 1px solid #f0d5e1;
         border-radius: 999px;
         background: #fffafd;
         padding: 4px 3px;
       }
+
+      .band-legend span::before {
+        content: "";
+        flex: 0 0 auto;
+        width: 6px;
+        height: 6px;
+        border-radius: 999px;
+        background: var(--dot);
+      }
+
+      .band-legend .band-green { --dot: var(--ok); }
+      .band-legend .band-yellow { --dot: var(--warn); }
+      .band-legend .band-red { --dot: var(--danger); }
 
       .plan-box {
         display: grid;
@@ -625,7 +658,7 @@ TODAY_WIDGET_HTML = """
       async function initialize() {
         try {
           await rpcRequest("ui/initialize", {
-            appInfo: { name: "mehair-coach-widget", version: "0.6.0" },
+            appInfo: { name: "mehair-coach-widget", version: "0.7.0" },
             appCapabilities: {},
             protocolVersion: "2026-01-26",
           });
@@ -654,6 +687,8 @@ TODAY_WIDGET_HTML = """
         root.style.setProperty("--accent-soft", "#fff0f7");
         root.style.setProperty("--state", "#d63384");
         root.style.setProperty("--state-soft", "#fff0f7");
+        root.style.setProperty("--band-color", "#d63384");
+        root.style.setProperty("--band-soft", "#fff0f7");
         const title = status === "empty"
           ? "No synced data yet"
           : status === "waiting"
@@ -1113,7 +1148,7 @@ TODAY_WIDGET_HTML = """
           score: readinessScore,
           primaryLabel: "Readiness",
           headline: coach.short_answer || data.headline || "Use live symptoms and effort to adjust the session.",
-          focusTitle: "Do Now",
+          focusTitle: activeWorkoutFocusTitle(data, coach, safety),
           focus: activeWorkoutFocus(data, coach, safety),
           labels: coach.labels_explained || defaultLabelKey(["HR", "RPE", "Readiness", "AZM"]),
           metrics: [
@@ -1259,18 +1294,22 @@ TODAY_WIDGET_HTML = """
 
       function renderModel(model) {
         const accent = model.accent || "#d63384";
+        const score = clamp(Math.round(Number(model.score || 0)), 0, 100);
+        const isReadinessScore = String(model.primaryLabel || "").toLowerCase().includes("readiness");
+        const band = isReadinessScore ? readinessBand(score, model.stateLabel || "") : "";
+        const bandColor = isReadinessScore ? readinessBandColor(band) : accent;
         root.style.setProperty("--accent", "#d63384");
         root.style.setProperty("--accent-soft", "#fff0f7");
-        root.style.setProperty("--state", accent);
-        root.style.setProperty("--state-soft", softFor(accent));
-        const score = clamp(Math.round(Number(model.score || 0)), 0, 100);
+        root.style.setProperty("--state", "#d63384");
+        root.style.setProperty("--state-soft", "#fff0f7");
+        root.style.setProperty("--band-color", bandColor);
+        root.style.setProperty("--band-soft", softFor(bandColor));
         root.style.setProperty("--score", String(score));
         const primaryFocus = listItems(model.focus, "Health context synced.");
         const secondaryTitle = model.secondaryTitle || "Evidence";
         const secondary = model.secondary || model.evidence || [];
         const blocks = renderBlocks(model.blocks);
         const scoreContext = scoreNote(model.primaryLabel, score);
-        const isReadinessScore = String(model.primaryLabel || "").toLowerCase().includes("readiness");
         const stateLabel = isReadinessScore ? readinessStateLabel(model.stateLabel || readinessBand(score, "")) : "";
         root.innerHTML = `
           <div class="mast">
@@ -1294,7 +1333,7 @@ TODAY_WIDGET_HTML = """
               </div>
               ${stateLabel ? `<span class="score-state">${escapeHtml(stateLabel)}</span>` : ""}
               ${scoreContext ? `<p class="score-note">${escapeHtml(scoreContext)}</p>` : ""}
-              ${isReadinessScore ? `<div class="band-legend" aria-label="Readiness bands"><span>&lt;55 red</span><span>55-74 yellow</span><span>75+ green</span></div>` : ""}
+              ${isReadinessScore ? `<div class="band-legend" aria-label="Readiness thresholds"><span class="band-green">green 75+</span><span class="band-yellow">yellow 55-74</span><span class="band-red">red &lt;55</span></div>` : ""}
             </div>
             <div class="plan-box">
               <h2>${escapeHtml(model.focusTitle || "Coach Take")}</h2>
@@ -1395,6 +1434,15 @@ TODAY_WIDGET_HTML = """
             latest_date: item.latest_date || item.window || "",
             why_it_matters: item.why_it_matters || "",
           }));
+      }
+
+      function activeWorkoutFocusTitle(data, coach, safety) {
+        const decision = String(data.decision || "").toLowerCase();
+        const hasActions = (coach.what_to_do || data.immediate_actions || []).filter(Boolean).length > 0;
+        if (safety.length || decision.includes("stop")) return "Stop Hard Work Now";
+        if (decision.includes("downshift") || decision.includes("modify")) return "Adjust This Block";
+        if (decision.includes("continue")) return "Hold This Effort";
+        return hasActions ? "Next Action" : "Coach Take";
       }
 
       function activeWorkoutFocus(data, coach, safety) {
@@ -1539,20 +1587,20 @@ TODAY_WIDGET_HTML = """
         const number = Number(score);
         const lower = String(label || "").toLowerCase();
         if (Number.isFinite(number) && number > 0) {
-          if (number >= 75) return "green today; yellow is 55-74, red is below 55";
-          if (number >= 55) return "yellow today; good enough for controlled work, not a max-effort signal";
-          return "red today; make recovery the main workout";
+          if (number >= 75) return "green today (75+); yellow is 55-74, red is <55";
+          if (number >= 55) return "yellow today (55-74); green is 75+, red is <55";
+          return "red today (<55); make recovery the main workout";
         }
-        if (lower === "green") return "green usually means 75+; still obey pain, symptoms, and RPE";
-        if (lower === "yellow") return "yellow means controlled work; avoid max efforts";
-        if (lower === "red") return "red means recovery first";
+        if (lower === "green") return "green means 75+; still obey pain, symptoms, and RPE";
+        if (lower === "yellow") return "yellow means 55-74; avoid max efforts";
+        if (lower === "red") return "red means <55; recovery first";
         return "Readiness blends sleep, heart, and load signals.";
       }
 
       function scoreNote(primaryLabel, score) {
         const label = String(primaryLabel || "").toLowerCase();
         if (label.includes("readiness")) {
-          return "Green 75+, yellow 55-74, red below 55. Pain, dizziness, or feeling sick overrides the score.";
+          return "Readiness thresholds: green 75+, yellow 55-74, red <55. Pain, dizziness, or feeling sick overrides the score.";
         }
         if (label.includes("load")) return "Higher load means more recovery cost, especially for legs and intervals.";
         if (label.includes("sleep")) return "This is a sleep target cue, not a medical score.";
@@ -1594,7 +1642,7 @@ TODAY_WIDGET_HTML = """
         if (lower.includes("temperature") || lower.includes("temp")) return "Sleep temperature change can hint body stress when it differs from your usual.";
         if (lower.includes("vo2")) return "VO2 max estimates cardio capacity; it changes slowly and is not today's stop/go signal.";
         if (lower.includes("steps")) return "Steps are movement load for this window, especially useful for leg fatigue.";
-        if (lower.includes("readiness")) return "Readiness blends sleep, heart, and load: green 75+, yellow 55-74, red below 55.";
+        if (lower.includes("readiness")) return "Readiness blends sleep, heart, and load: green 75+, yellow 55-74, red <55.";
         if (lower.includes("move")) return "Today's movement, not the whole week.";
         if (lower.includes("soreness")) return "Your check-in can override good wearable scores.";
         if (lower.includes("goal")) return "Goal pressure comes after recovery signals.";
@@ -1604,7 +1652,7 @@ TODAY_WIDGET_HTML = """
 
       function defaultLabelKey(labels) {
         const meanings = {
-          "Readiness": "sleep, heart, and recent load blended into one recovery cue; green 75+, yellow 55-74, red below 55",
+          "Readiness": "sleep, heart, and recent load blended into one recovery cue; green 75+, yellow 55-74, red <55",
           "RPE": "how hard it feels from 1 easy to 10 max; use it to decide whether to hold, back off, or stop",
           "HR": "heart rate right now, in beats per minute",
           "HRV": "recovery stress signal compared with your usual",
@@ -1665,13 +1713,17 @@ TODAY_WIDGET_HTML = """
 
       function readinessStateLabel(label) {
         const lower = String(label || "").toLowerCase();
-        if (lower === "green") return "Train available";
-        if (lower === "yellow") return "Keep controlled";
-        if (lower === "red") return "Recovery first";
+        if (lower === "green") return "Train available (75+)";
+        if (lower === "yellow") return "Controlled work (55-74)";
+        if (lower === "red") return "Recovery first (<55)";
         return "";
       }
 
       function readinessAccent(label) {
+        return "#d63384";
+      }
+
+      function readinessBandColor(label) {
         const band = readinessBand(null, label);
         if (band === "green") return "#2f7a5f";
         if (band === "yellow") return "#9b741c";
@@ -2166,7 +2218,7 @@ WIDGET_PREVIEW_STATES: dict[str, dict] = {
                 "Latest soreness check-in is 7/10. Your own body report can override a good wearable score.",
             ],
             "labels_explained": [
-                {"label": "Readiness", "meaning": "a quick recovery score built from sleep, heart, and recent load signals; green 75+, yellow 55-74, red below 55"},
+                {"label": "Readiness", "meaning": "a quick recovery score built from sleep, heart, and recent load signals; green 75+, yellow 55-74, red <55"},
                 {"label": "RPE", "meaning": "how hard it feels from 1 easy to 10 max; use it to decide whether to hold, back off, or stop"},
                 {"label": "HRV", "meaning": "recovery stress signal compared with your usual"},
                 {"label": "AZM", "meaning": "Fitbit hard-work minutes from elevated heart-rate zones; recent load that should change how hard you push"},
@@ -2277,7 +2329,7 @@ WIDGET_PREVIEW_STATES: dict[str, dict] = {
                 "User-stated lower-back or hip constraint should cap spinal loading.",
             ],
             "labels_explained": [
-                {"label": "Readiness", "meaning": "a quick recovery score built from sleep, heart, and recent load signals; green 75+, yellow 55-74, red below 55"},
+                {"label": "Readiness", "meaning": "a quick recovery score built from sleep, heart, and recent load signals; green 75+, yellow 55-74, red <55"},
                 {"label": "RPE", "meaning": "how hard it feels from 1 easy to 10 max; use it to decide whether to hold, back off, or stop"},
                 {"label": "HRV", "meaning": "recovery stress signal compared with your usual"},
                 {"label": "Resting HR", "meaning": "heart stress signal at rest, best judged against your usual"},
@@ -2344,7 +2396,7 @@ WIDGET_PREVIEW_STATES: dict[str, dict] = {
             "labels_explained": [
                 {"label": "HR", "meaning": "heart rate right now, in beats per minute"},
                 {"label": "RPE", "meaning": "how hard it feels from 1 easy to 10 max; use it to decide whether to hold, back off, or stop"},
-                {"label": "Readiness", "meaning": "a quick recovery score built from sleep, heart, and recent load signals; green 75+, yellow 55-74, red below 55"},
+                {"label": "Readiness", "meaning": "a quick recovery score built from sleep, heart, and recent load signals; green 75+, yellow 55-74, red <55"},
                 {"label": "AZM", "meaning": "Fitbit hard-work minutes from elevated heart-rate zones; recent load that should change how hard you push"},
             ],
             "stop_if": [

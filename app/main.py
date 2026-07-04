@@ -33,6 +33,11 @@ from .widget import (
 
 SERVER_INSTRUCTIONS = (
     "mehair coach provides read-only Google Health/Fitbit context for a connected user. "
+    "Treat tool descriptions and response contracts as routing and answer-shape guidance, not scripts: "
+    "let the user's wording, current situation, and returned signals decide the final coaching answer. "
+    "Everyday prompts like 'should I run today', 'I want to get fitter but not feel wrecked', "
+    "'what should I do today?', or 'I only have 30 minutes' are coaching requests, not requests "
+    "for a metric dump. "
     "Use plain English before statistics. Keep metric labels such as HRV, RPE, AZM, and resting "
     "heart rate, but briefly explain what they mean when they appear in user-facing advice. "
     "When mentioning steps or other movement totals, include the date/window and explain why that "
@@ -41,7 +46,9 @@ SERVER_INSTRUCTIONS = (
     "When a tool returns coach_response, use it as the answer skeleton: direct human answer first, "
     "then the session_blueprint or what_to_do, then the explained metric labels, then stop conditions "
     "or caveats. Shape the answer as decision, do now, why the data matters, and what would change "
-    "the call. Avoid leading with raw tables or unexplained evidence logs. Do not say a tool was "
+    "the call. Also use training_decision, model_signal_context, and available_signal_snapshot as "
+    "response contract fields: summarize the relevant parts, do not recite every field. Avoid leading "
+    "with raw tables or unexplained evidence logs. Do not say a tool was "
     "blocked unless the tool result itself has an error or setup-required status. "
     "Match the user's actual situation: do not default to 'I feel off', fatigue, soreness, or recovery "
     "framing unless the user says it or the synced/check-in signals support it. For neutral or positive "
@@ -64,6 +71,10 @@ SERVER_INSTRUCTIONS = (
     "available_signal_snapshot returned by overview/clue/comparison tools for broad, oxygen, breathing, "
     "temperature, VO2, and 'what other data matters?' questions; explain why normal secondary signals "
     "do or do not change the workout call instead of silently ignoring them. "
+    "If a user says their oxygen looked lower, breathing felt different, temperature changed, or VO2 "
+    "max changed, use recovery/comparison or clue tools to put those signals next to sleep, HRV, "
+    "resting heart rate, load, symptoms, and freshness; do not diagnose or treat normal oxygen/VO2 "
+    "as automatic permission for hard training. "
     "For exploratory or unusual questions, use list_available_health_metrics to inspect the per-user "
     "metric catalog and query_health_metrics to fetch the specific signals you choose; let the user's "
     "question decide the metric mix instead of following a fixed recipe. "
@@ -266,7 +277,11 @@ def create_server(settings_override: Settings | None = None) -> ServerBundle:
 
     @mcp.tool(
         title="Google Health connection status",
-        description="Check whether this ChatGPT user has connected Google Health/Fitbit data and whether records exist.",
+        description=(
+            "Check whether this ChatGPT user has connected Google Health/Fitbit data and whether "
+            "any synced records exist. Use for setup, empty-state, or 'can you see my data?' "
+            "questions before coaching from wearable context."
+        ),
         annotations=READ_ONLY,
     )
     def connect_google_health_status() -> dict[str, Any]:
@@ -275,8 +290,10 @@ def create_server(settings_override: Settings | None = None) -> ServerBundle:
     @mcp.tool(
         title="List available health metrics",
         description=(
-            "List every device-first Google Health/Fitbit metric this app can sync and query, with "
-            "per-user record counts plus model-facing guidance for choosing which metrics to inspect."
+            "Metric discovery for flexible questions. Use when the user asks what data you can see, "
+            "what other signals matter, or an unusual question does not fit a canned coaching path. "
+            "Returns every device-first Google Health/Fitbit metric this app can sync/query, per-user "
+            "record counts, and model-facing guidance so ChatGPT can choose metrics intelligently."
         ),
         annotations=READ_ONLY,
     )
@@ -286,19 +303,50 @@ def create_server(settings_override: Settings | None = None) -> ServerBundle:
     @mcp.tool(
         title="Query health metrics",
         description=(
-            "Generic model-selected metric query. Use after list_available_health_metrics or "
-            "get_health_question_clues when a question needs specific synced Google Health/Fitbit signals "
-            "over a bounded date range."
+            "Generic model-selected metric query for the exact synced Google Health/Fitbit signals "
+            "ChatGPT decides are relevant. Use after list_available_health_metrics or "
+            "get_health_question_clues when the answer needs details beyond an overview, such as "
+            "oxygen plus respiratory rate, HRV plus resting HR, heart-rate zones, steps, or workout "
+            "records over a bounded date range. Do not use a fixed recipe; choose metrics from the "
+            "user's question. For in-session HR/RPE/pain decisions, use guide_active_workout instead."
         ),
         annotations=READ_ONLY,
     )
     def query_health_metrics(
-        metrics: list[str] | None = None,
-        days: int = 7,
-        start_date: str | None = None,
-        end_date: str | None = None,
-        include_records: bool = False,
-        limit_per_metric: int = 25,
+        metrics: Annotated[
+            list[str] | None,
+            Field(
+                description=(
+                    "Metric ids to fetch, chosen from list_available_health_metrics or clue suggestions. "
+                    "Leave empty only when the user asks for a broad metric sample."
+                )
+            ),
+        ] = None,
+        days: Annotated[
+            int,
+            Field(description="Lookback window in days, usually 7-14 for coaching and up to 30 for trends."),
+        ] = 7,
+        start_date: Annotated[
+            str | None,
+            Field(description="Optional ISO date lower bound when the user gives a specific date range."),
+        ] = None,
+        end_date: Annotated[
+            str | None,
+            Field(description="Optional ISO date upper bound when the user gives a specific date range."),
+        ] = None,
+        include_records: Annotated[
+            bool,
+            Field(
+                description=(
+                    "Set true only when raw record examples are needed; summaries are usually better "
+                    "for normal ChatGPT coaching answers."
+                )
+            ),
+        ] = False,
+        limit_per_metric: Annotated[
+            int,
+            Field(description="Maximum raw records per metric when include_records is true."),
+        ] = 25,
     ) -> dict[str, Any]:
         user_id = current_user_id()
         if not user_id:
@@ -378,7 +426,11 @@ def create_server(settings_override: Settings | None = None) -> ServerBundle:
 
     @mcp.tool(
         title="Data freshness",
-        description="Report how fresh the synced Fitbit/Google Health records are for this user.",
+        description=(
+            "Report how fresh the synced Fitbit/Google Health records are. Use before hard, risky, "
+            "or time-sensitive advice when freshness is uncertain; broad overview tools already include "
+            "freshness metadata."
+        ),
         annotations=READ_ONLY,
     )
     def get_data_freshness() -> dict[str, Any]:
@@ -389,7 +441,11 @@ def create_server(settings_override: Settings | None = None) -> ServerBundle:
 
     @mcp.tool(
         title="Today context",
-        description="Return latest daily fitness context: activity, sleep, heart metrics, readiness, and evidence.",
+        description=(
+            "Compact latest daily fitness context: activity, sleep, heart metrics, readiness, and evidence. "
+            "Use for narrow current-data checks. Prefer get_health_overview for broad everyday coaching "
+            "prompts because it includes more context and a card contract."
+        ),
         annotations=READ_ONLY,
     )
     def get_today_context() -> dict[str, Any]:
@@ -401,10 +457,13 @@ def create_server(settings_override: Settings | None = None) -> ServerBundle:
     @mcp.tool(
         title="Health overview",
         description=(
-            "Fast path for current/latest/today health and fitness questions using already-synced "
-            "local Google Health/Fitbit data. Returns an all-data coaching overview across readiness, "
-            "activity, sleep, heart, recovery, workouts, goals, check-ins, data coverage, freshness, "
-            "and concrete next actions without starting a sync."
+            "Fast all-context path for everyday current/latest/today health and fitness questions using "
+            "already-synced local Google Health/Fitbit data. Use for prompts like 'what should I do "
+            "today?', 'should I run today?', 'how do I get fitter without feeling wrecked?', 'use all "
+            "my data', or 'what other signals matter?'. Returns a card-ready overview across readiness, "
+            "activity, sleep, heart, oxygen/breathing/temperature/capacity context when available, "
+            "workouts, goals, check-ins, data coverage, freshness, and concrete next actions without "
+            "starting a sync."
         ),
         annotations=READ_ONLY,
         meta=WIDGET_META,
@@ -417,7 +476,11 @@ def create_server(settings_override: Settings | None = None) -> ServerBundle:
 
     @mcp.tool(
         title="Recovery readiness",
-        description="Return a readiness score with evidence from sleep, HRV, resting heart rate, and activity load.",
+        description=(
+            "Narrow readiness score with evidence from sleep, HRV, resting heart rate, and activity load. "
+            "Use when the user asks specifically for readiness; for actual workout advice prefer "
+            "recommend_workout_today or plan_workout_with_health_context."
+        ),
         annotations=READ_ONLY,
     )
     def get_recovery_readiness() -> dict[str, Any]:
@@ -440,11 +503,11 @@ def create_server(settings_override: Settings | None = None) -> ServerBundle:
     @mcp.tool(
         title="Health question clues",
         description=(
-            "For a user's natural-language health, recovery, sleep, heart, soreness, or workout question, "
-            "identify likely intents, the best synced Fitbit metrics to inspect, clues already visible "
-            "from overview data, recommended follow-up tools, and reusable conversation flow options "
-            "for informal wording. Use this for 'what data matters?', 'what other signals are relevant?', "
-            "and ambiguous coaching prompts before the final answer."
+            "Natural-language routing helper for realistic health, recovery, sleep, heart, soreness, "
+            "oxygen, or workout questions. Use it when the prompt is informal, broad, diagnostic-sounding, "
+            "or asks 'what data matters?' / 'what other signals are relevant?'. It identifies likely "
+            "intents, the best synced Fitbit metrics to inspect, visible clues, recommended follow-up "
+            "tools, and conversation flow options without forcing a brittle script."
         ),
         annotations=READ_ONLY,
         meta=WIDGET_META,
@@ -458,9 +521,11 @@ def create_server(settings_override: Settings | None = None) -> ServerBundle:
     @mcp.tool(
         title="Recovery signal comparison",
         description=(
-            "Compare recent sleep, HRV, resting heart rate, respiratory/SpO2 context, and activity load "
-            "against baseline to explain recovery patterns. Includes available signal context so normal "
-            "oxygen/breathing signals can be named as background instead of ignored."
+            "Compare recent sleep, HRV, resting heart rate, respiratory/SpO2 context, sleep temperature, "
+            "and activity load against baseline to explain recovery patterns. Use for questions like "
+            "'why am I tired?', 'my oxygen looked lower', 'is my breathing data weird?', or 'how did "
+            "sleep and heart numbers affect today's plan?'. Includes available signal context so normal "
+            "oxygen/breathing signals can be named as background instead of ignored; it is not a diagnosis."
         ),
         annotations=READ_ONLY,
         meta=WIDGET_META,
@@ -474,10 +539,12 @@ def create_server(settings_override: Settings | None = None) -> ServerBundle:
     @mcp.tool(
         title="Recommend workout today",
         description=(
-            "Fast, card-ready answer for normal day-of coaching questions like 'I feel off, should I "
-            "work out?', 'how hard should I train today?', or 'what should I do today?'. Uses already-"
-            "synced Fitbit context, goals, check-ins, recent workouts, and the optional current_feeling "
-            "text. Does not start a sync."
+            "Fast, card-ready answer for normal day-of coaching questions like 'should I run today?', "
+            "'I feel off, should I work out?', 'how hard should I train today?', 'what should I do "
+            "today?', or 'I want to get fitter but not feel wrecked'. Uses already-synced Fitbit "
+            "context, goals, check-ins, recent workouts, and optional current_feeling text to produce "
+            "a direct decision, session blueprint, RPE cap, evidence, labels explained, and stop "
+            "conditions. Does not start a sync."
         ),
         annotations=READ_ONLY,
         meta=WIDGET_META,
@@ -489,7 +556,8 @@ def create_server(settings_override: Settings | None = None) -> ServerBundle:
                 description=(
                     "The user's current plain-language feeling, symptoms, soreness, energy, time limit, "
                     "or concern, for example 'I have 30 minutes after work', 'I feel good and want to run', "
-                    "or 'I feel a little off but want to work out'."
+                    "or 'I feel a little off but want to work out'. Pass only current user-stated context; "
+                    "do not revive old conversation symptoms unless the user says they still apply."
                 )
             ),
         ] = None,
@@ -510,7 +578,10 @@ def create_server(settings_override: Settings | None = None) -> ServerBundle:
         description=(
             "Plan a specific upcoming workout, sport session, or muscle-group day using synced "
             "sleep, HRV, resting heart rate, oxygen/breathing context, activity load, goals, check-ins, "
-            "the available signal snapshot, and user-stated constraints."
+            "the available signal snapshot, and user-stated constraints. Use for concrete plans like "
+            "'upper body but save my legs for a hike', '30-minute run after work', or 'chest day with "
+            "back soreness'. It returns a card-ready plan with exercises, substitutions, avoid-list, "
+            "RPE cap, label explanations, and a plain-English coaching contract."
         ),
         annotations=READ_ONLY,
         meta=WIDGET_META,
@@ -577,7 +648,9 @@ def create_server(settings_override: Settings | None = None) -> ServerBundle:
             "Give in-session continue/hold-steady/downshift/stop guidance using live user-reported "
             "heart rate, RPE, pain, symptoms, elapsed time, and the latest synced Fitbit "
             "readiness/load context. Use this for during-workout prompts like 'HR 150, RPE 7, "
-            "pain 0/10, should I push or back off?'; it returns the active workout card."
+            "pain 0/10, should I push or back off?', 'my chest feels tight', or 'keep going?'. "
+            "Live inputs are user-reported, not direct band telemetry. Do not substitute "
+            "get_health_overview for active in-session decisions; this returns the active workout card."
         ),
         annotations=READ_ONLY,
         meta=WIDGET_META,
@@ -606,7 +679,12 @@ def create_server(settings_override: Settings | None = None) -> ServerBundle:
         ] = None,
         symptoms: Annotated[
             str | None,
-            Field(description="Any live symptoms, breathing changes, dizziness, chest tightness, nausea, or 'none' if negated."),
+            Field(
+                description=(
+                    "Any live symptoms, breathing changes, dizziness, chest tightness, nausea, or "
+                    "'none' if the user explicitly negates symptoms."
+                )
+            ),
         ] = None,
         elapsed_minutes: Annotated[
             int | None,
@@ -643,7 +721,11 @@ def create_server(settings_override: Settings | None = None) -> ServerBundle:
 
     @mcp.tool(
         title="Sleep analysis",
-        description="Analyze recent synced Fitbit sleep records and return stages and latest duration.",
+        description=(
+            "Narrow sleep report from recent synced Fitbit records: duration, stages, and latest sleep. "
+            "Use as supporting detail for sleep-specific questions; for workout decisions pair with "
+            "readiness/recovery tools."
+        ),
         annotations=READ_ONLY,
         meta=WIDGET_META,
     )
@@ -655,7 +737,10 @@ def create_server(settings_override: Settings | None = None) -> ServerBundle:
 
     @mcp.tool(
         title="Activity load",
-        description="Summarize recent steps, active minutes, zone minutes, and distance.",
+        description=(
+            "Narrow activity-load report: recent steps, active minutes, zone minutes, and distance. "
+            "Use to explain load stacking, leg fatigue, or weekly movement context with a stated window."
+        ),
         annotations=READ_ONLY,
         meta=WIDGET_META,
     )
@@ -667,7 +752,11 @@ def create_server(settings_override: Settings | None = None) -> ServerBundle:
 
     @mcp.tool(
         title="Heart trends",
-        description="Summarize recent heart rate, resting heart rate, and HRV from synced Fitbit records.",
+        description=(
+            "Narrow heart report from synced Fitbit records: heart rate samples, resting heart rate, "
+            "and HRV. Use for heart-specific trend questions; for symptoms use safety-first language "
+            "and avoid diagnosis."
+        ),
         annotations=READ_ONLY,
         meta=WIDGET_META,
     )
@@ -679,7 +768,10 @@ def create_server(settings_override: Settings | None = None) -> ServerBundle:
 
     @mcp.tool(
         title="Workout history",
-        description="List recent Fitbit exercise sessions and workout-level metrics.",
+        description=(
+            "List recent Fitbit exercise sessions and workout-level metrics. Use for weekly consistency, "
+            "recent hard-session context, or when a workout plan needs prior-load detail."
+        ),
         annotations=READ_ONLY,
     )
     def get_workout_history(days: int = 14) -> dict[str, Any]:
@@ -2319,7 +2411,11 @@ def _today_workout_coach_response(
         "labels_explained": _coach_metric_glossary(_metric_labels_from_evidence(evidence)),
         "stop_if": stop_conditions[:5],
         "avoid": avoid[:5],
-        "answer_style": "Answer like a personal coach: direct recommendation first, then explain the kept metric labels in one short why section.",
+        "answer_style": (
+            "Use this as a flexible coaching contract, not wording to copy. Answer like a personal "
+            "coach: direct recommendation first, concrete next move second, then explain the kept "
+            "metric labels in one short why section. Match the current user-stated situation exactly."
+        ),
         "realistic_follow_ups": _today_realistic_followups(subjective_limiter, illness_flags),
     }
 
@@ -2388,8 +2484,9 @@ def _training_decision_frame(
         "avoid": avoid[:5],
         "stop_or_downshift_triggers": stop_conditions[:6],
         "model_guidance": (
-            "Use this as the compact decision frame. Explain the human action first, then use the reasons "
-            "for/against to show how the data changed the recommendation."
+            "Use this as the compact decision frame, not a script. Explain the human action first, "
+            "then use only the relevant reasons for/against to show how the data changed the "
+            "recommendation. Do not recite fields the user does not need."
         ),
     }
 
@@ -2512,8 +2609,9 @@ def _workout_plan_coach_response(
         "avoid": avoid[:5],
         "substitutions": substitutions[:5],
         "answer_style": (
-            "Keep the workout name and metric labels, translate each label in simple words, and match the "
-            "user's stated situation instead of assuming they feel off."
+            "Use this as a flexible workout-plan contract. Keep the workout name and metric labels, "
+            "translate each label in simple words, and match the user's stated situation instead of "
+            "assuming they feel off. Prefer a usable session blueprint over a stats recap."
         ),
         "realistic_follow_ups": [
             "I only have 30 minutes. What should I actually do?",
@@ -2590,7 +2688,11 @@ def _active_workout_coach_response(
             "Stop if pain rises above 3/10 or changes your form.",
         ],
         "avoid": avoid[:5],
-        "answer_style": "Use urgent, plain language first; explain HR, RPE, AZM, and readiness only after the action is clear.",
+        "answer_style": (
+            "Use urgent, plain language first; explain HR, RPE, AZM, and readiness only after the "
+            "action is clear. Say that live HR/RPE/pain are user-reported inputs, and never imply "
+            "this tool is streaming live band telemetry."
+        ),
     }
 
 

@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
+from time import monotonic
 from typing import Any
 from urllib.parse import urlencode
 
 import httpx
+
+MIN_PAGE_TIMEOUT_SECONDS = 0.05
 
 
 @dataclass(frozen=True)
@@ -98,22 +102,42 @@ class GoogleHealthClient:
         records: list[dict[str, Any]] = []
         page_token = ""
         pages = 0
-        timeout = _http_timeout(timeout_seconds)
+        deadline = monotonic() + max(MIN_PAGE_TIMEOUT_SECONDS, float(timeout_seconds))
+        default_timeout = _http_timeout(timeout_seconds)
+        filter_value = self._filter(spec, start_time, end_time)
 
         async def fetch_pages(http_client: httpx.AsyncClient) -> list[dict[str, Any]]:
             nonlocal page_token, pages
             while pages < max(1, max_pages):
+                remaining_seconds = deadline - monotonic()
+                if remaining_seconds <= 0:
+                    if records:
+                        break
+                    raise TimeoutError("Google Health metric request timed out.")
+                if records and remaining_seconds < MIN_PAGE_TIMEOUT_SECONDS:
+                    break
+
                 params: dict[str, str | int] = {"pageSize": page_size}
                 if page_token:
                     params["pageToken"] = page_token
-                filter_value = self._filter(spec, start_time, end_time)
                 if filter_value:
                     params["filter"] = filter_value
-                response = await http_client.get(
-                    f"{self.base_url}/users/me/dataTypes/{spec.id}/dataPoints?{urlencode(params)}",
-                    headers={"Authorization": f"Bearer {access_token}"},
-                    timeout=timeout,
-                )
+                try:
+                    response = await _await_with_timeout(
+                        http_client.get(
+                            f"{self.base_url}/users/me/dataTypes/{spec.id}/dataPoints?{urlencode(params)}",
+                            headers={"Authorization": f"Bearer {access_token}"},
+                            timeout=_http_timeout(
+                                remaining_seconds,
+                                minimum=MIN_PAGE_TIMEOUT_SECONDS,
+                            ),
+                        ),
+                        timeout_seconds=remaining_seconds,
+                    )
+                except (TimeoutError, httpx.TimeoutException):
+                    if records:
+                        break
+                    raise
                 response.raise_for_status()
                 body = response.json()
                 records.extend(body.get("dataPoints", []))
@@ -125,7 +149,7 @@ class GoogleHealthClient:
 
         if client is not None:
             return await fetch_pages(client)
-        async with httpx.AsyncClient(timeout=timeout) as local_client:
+        async with httpx.AsyncClient(timeout=default_timeout) as local_client:
             await fetch_pages(local_client)
         return records
 
@@ -197,7 +221,11 @@ class GoogleHealthClient:
         return {"date": {"year": year, "month": month, "day": day}}
 
 
-def _http_timeout(timeout_seconds: int) -> httpx.Timeout:
-    total = max(1.0, float(timeout_seconds))
+async def _await_with_timeout(awaitable: Any, timeout_seconds: float) -> Any:
+    return await asyncio.wait_for(awaitable, timeout=max(MIN_PAGE_TIMEOUT_SECONDS, timeout_seconds))
+
+
+def _http_timeout(timeout_seconds: int | float, *, minimum: float = 1.0) -> httpx.Timeout:
+    total = max(minimum, float(timeout_seconds))
     connect = min(2.0, total)
     return httpx.Timeout(total, connect=connect, read=total, write=total, pool=connect)

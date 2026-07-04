@@ -416,6 +416,8 @@ def test_eval_natural_prompt_mix_is_not_biased_to_off_day_language(tmp_path, mon
             resting_hr=resting,
             active_zone_minutes=azm,
             steps=steps,
+            respiratory_rate=15.4 + (resting % 3) * 0.3,
+            spo2=97.4 - (azm % 3) * 0.2,
         )
     seed_workout(store, user_id, "2026-07-01", "Easy run", azm=22)
     seed_workout(store, user_id, "2026-07-02", "Lift", azm=24)
@@ -474,6 +476,26 @@ def test_eval_natural_prompt_mix_is_not_biased_to_off_day_language(tmp_path, mon
             {"get_health_overview", "recommend_workout_today"},
         ),
         (
+            "I want a useful plan for the next 3 days. I care about getting fitter, not feeling wrecked, and I might play squash one evening.",
+            {"daily_plan", "general_overview", "workout_decision", "activity_load", "goal"},
+            {"get_health_overview", "recommend_workout_today", "plan_workout_with_health_context"},
+        ),
+        (
+            "My oxygen looked a little lower last night. What does that change for training?",
+            {"recovery", "sleep", "heart", "workout_decision"},
+            {"get_recovery_signal_comparison", "recommend_workout_today"},
+        ),
+        (
+            "I want to get fitter without feeling wrecked this week. What is the smart plan?",
+            {"daily_plan", "goal", "workout_decision", "activity_load"},
+            {"get_health_overview", "recommend_workout_today"},
+        ),
+        (
+            "I slept fine but feel flat. Should I do easy miles or lift?",
+            {"workout_decision", "subjective", "recovery", "activity_load"},
+            {"recommend_workout_today", "plan_workout_with_health_context"},
+        ),
+        (
             "I am not saying I feel off or sore. What should I focus on today from the data?",
             {"daily_plan", "general_overview", "workout_decision"},
             {"get_health_overview", "recommend_workout_today"},
@@ -513,6 +535,22 @@ def test_eval_natural_prompt_mix_is_not_biased_to_off_day_language(tmp_path, mon
     assert "available_signal_snapshot" in daily_flow["data_surfaces_to_use"]
     assert "training_decision" in daily_flow["data_surfaces_to_use"]
     assert any("conversation_flow_options" in item for item in informal_training["answering_guidance"])
+
+    multi_day_plan = store.health_question_clues(
+        user_id,
+        "I want a useful plan for the next 3 days. I care about getting fitter, not feeling wrecked, and I might play squash one evening.",
+        days=7,
+    )
+    multi_day_metric_ids = metric_ids(multi_day_plan)
+    assert {
+        "daily-oxygen-saturation",
+        "daily-respiratory-rate",
+        "daily-sleep-temperature-derivations",
+        "time-in-heart-rate-zone",
+        "daily-vo2-max",
+    } <= multi_day_metric_ids
+    assert {"daily-oxygen-saturation", "daily-respiratory-rate"} <= set(multi_day_plan["available_metric_ids"])
+    assert any(item["purpose"] == "recovery" for item in multi_day_plan["query_suggestions"])
 
 
 def test_eval_question_clues_include_human_decision_frame_for_life_constraints(tmp_path, monkeypatch) -> None:

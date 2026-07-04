@@ -48,21 +48,56 @@ async def test_mcp_tool_list_matches_private_beta_plan() -> None:
     assert by_name["sync_and_get_health_overview"].annotations.idempotentHint is True
     assert by_name["get_today_context"].meta is None
     assert by_name["get_recovery_readiness"].meta is None
+    assert "what data you can see" in by_name["list_available_health_metrics"].description
+    assert "ChatGPT can choose metrics intelligently" in by_name[
+        "list_available_health_metrics"
+    ].description
+    assert "Do not use a fixed recipe" in by_name["query_health_metrics"].description
+    query_schema = by_name["query_health_metrics"].inputSchema["properties"]
+    assert "Metric ids to fetch" in query_schema["metrics"]["description"]
+    assert "7-14 for coaching" in query_schema["days"]["description"]
+    assert "Fast all-context path" in by_name["get_health_overview"].description
+    assert "should I run today" in by_name["get_health_overview"].description
+    assert "get fitter without feeling wrecked" in by_name["get_health_overview"].description
+    assert "Prefer get_health_overview for broad everyday coaching prompts" in by_name[
+        "get_today_context"
+    ].description
+    assert "Narrow readiness score" in by_name["get_recovery_readiness"].description
     assert "what other signals are relevant" in by_name["get_health_question_clues"].description
+    assert "without forcing a brittle script" in by_name["get_health_question_clues"].description
     assert "oxygen/breathing signals can be named as background" in by_name[
         "get_recovery_signal_comparison"
     ].description
+    assert "my oxygen looked lower" in by_name["get_recovery_signal_comparison"].description
+    assert "I want to get fitter but not feel wrecked" in by_name[
+        "recommend_workout_today"
+    ].description
+    assert "Pass only current user-stated context" in by_name["recommend_workout_today"].inputSchema[
+        "properties"
+    ]["current_feeling"]["description"]
+    assert "upper body but save my legs for a hike" in by_name[
+        "plan_workout_with_health_context"
+    ].description
+    assert "Live inputs are user-reported" in by_name["guide_active_workout"].description
+    assert "not direct band telemetry" in by_name["guide_active_workout"].description
     planned_activity = by_name["guide_active_workout"].inputSchema["properties"]["planned_activity"]
     assert planned_activity["default"] == "current workout"
     assert "Use 'current workout'" in planned_activity["description"]
+    assert "explicitly negates symptoms" in by_name["guide_active_workout"].inputSchema["properties"][
+        "symptoms"
+    ]["description"]
 
 
 def test_server_instructions_keep_normal_latest_questions_fast() -> None:
     assert "Use plain English before statistics" in SERVER_INSTRUCTIONS
+    assert "Treat tool descriptions and response contracts as routing" in SERVER_INSTRUCTIONS
+    assert "Everyday prompts like 'should I run today'" in SERVER_INSTRUCTIONS
+    assert "'I want to get fitter but not feel wrecked'" in SERVER_INSTRUCTIONS
     assert "Keep metric labels such as HRV, RPE, AZM" in SERVER_INSTRUCTIONS
     assert "include the date/window" in SERVER_INSTRUCTIONS
     assert "recorded step days" in SERVER_INSTRUCTIONS
     assert "When a tool returns coach_response" in SERVER_INSTRUCTIONS
+    assert "training_decision, model_signal_context, and available_signal_snapshot" in SERVER_INSTRUCTIONS
     assert "Do not say a tool was blocked unless the tool result itself has an error" in SERVER_INSTRUCTIONS
     assert "decision, do now, why the data matters" in SERVER_INSTRUCTIONS
     assert "do not default to 'I feel off'" in SERVER_INSTRUCTIONS
@@ -80,6 +115,8 @@ def test_server_instructions_keep_normal_latest_questions_fast() -> None:
     assert "call get_health_overview" in SERVER_INSTRUCTIONS
     assert "available_signal_snapshot" in SERVER_INSTRUCTIONS
     assert "oxygen, breathing" in SERVER_INSTRUCTIONS
+    assert "oxygen looked lower" in SERVER_INSTRUCTIONS
+    assert "do not diagnose" in SERVER_INSTRUCTIONS
     assert "Do not substitute get_health_overview for live workout decisions" in SERVER_INSTRUCTIONS
 
 
@@ -91,11 +128,18 @@ async def test_widget_resource_is_registered() -> None:
 
     assert str(resources[0].uri) == WIDGET_URI
     assert resources[0].mimeType == "text/html;profile=mcp-app"
+    assert WIDGET_URI == "ui://mehair/today-v19.html"
+    assert "ui://mehair/today-v18.html" in LEGACY_WIDGET_URIS
     assert "Preparing card" in html
+    assert 'appInfo: { name: "mehair-coach-widget", version: "0.7.0" }' in html
     assert 'renderEmpty("Preparing the health card from the latest tool result.", "waiting")' in html
     assert "function hasCardData(data)" in html
     assert "function renderLabelKey(labels)" in html
     assert "label-key" in html
+    assert "score-state::before" in html
+    assert "band-green" in html
+    assert 'root.style.setProperty("--state", "#d63384")' in html
+    assert 'root.style.setProperty("--state", accent)' not in html
     assert "dataUsed.sleep_asleep_hours != null" in html
     assert "dataUsed.hrv_ms != null" in html
 
@@ -167,7 +211,9 @@ async def test_widget_preview_route_renders_real_card_state() -> None:
     assert "Signals checked" in overview.text
     assert "Other signals checked for this answer" in overview.text
     assert "signal-strip" in overview.text
-    assert "&lt;55 red" in overview.text
+    assert "green 75+" in overview.text
+    assert "yellow 55-74" in overview.text
+    assert "red &lt;55" in overview.text
     assert "Vitals" in overview.text
     assert "recovery-first" in overview.text
     assert "Priority Signals" in overview.text
@@ -181,15 +227,17 @@ async def test_widget_preview_route_renders_real_card_state() -> None:
     assert "Active Workout" in active_workout.text
     assert "stop_and_assess" in active_workout.text
     assert "Stop + Assess" in active_workout.text
+    assert "Stop Hard Work Now" in active_workout.text
+    assert "Do Now" not in active_workout.text
     assert recovery_comparison.status_code == 200
     assert "Recovery Signals" in recovery_comparison.text
     assert "What This Means For Training" in recovery_comparison.text
     assert "Latest recovery comparison" in recovery_comparison.text
     assert "dizzy during the interval" in active_workout.text
-    assert "green today; yellow is 55-74, red is below 55" in active_workout.text
+    assert "yellow today (55-74); green is 75+, red is <55" in active_workout.text
     assert "AZM = Fitbit hard-work minutes" in active_workout.text
     assert "SpO2 / oxygen saturation" in overview.text
-    assert "Green 75+, yellow 55-74, red below 55" in overview.text
+    assert "Readiness thresholds: green 75+, yellow 55-74, red <55" in overview.text
     assert today_workout.status_code == 200
     assert "Today's Workout" in today_workout.text
     assert "Next Session" in today_workout.text
