@@ -57,7 +57,10 @@ SERVER_INSTRUCTIONS = (
     "user asks to show, render, update, or rerun the workout card, make a current card-rendering "
     "tool call; do not say the workout card UI is unavailable when recommend_workout_today, "
     "plan_workout_with_health_context, or guide_active_workout is available. "
-    "If get_health_question_clues returns suggested_card, treat suggested_card as the current "
+    "For prompts that combine a fresh sync/refresh with a workout, run/lift, training, movement, "
+    "or workout-card request, call sync_and_get_workout_card as the single current card-rendering "
+    "path. That tool syncs first and then returns the actual workout card; do not route those prompts "
+    "through a health overview card. If get_health_question_clues returns suggested_card, treat suggested_card as the current "
     "card-ready coaching result for that turn; answer from it or make the next recommended tool "
     "call, but do not stop at a generic signals card when the user asked for a workout card. "
     "Match the user's actual situation: do not default to 'I feel off', fatigue, soreness, or recovery "
@@ -81,9 +84,10 @@ SERVER_INSTRUCTIONS = (
     "cloud-synced Fitbit data into their private store, so do not describe it as blocked, dangerous, "
     "or unsafe when the user requested it. Do not use sync_and_get_health_overview as the visible "
     "final card for prompts that also ask what workout to do, how hard to train, whether to run/lift, "
-    "or to update/show a workout card. In that combined case, call sync_latest_fitbit_data first if "
-    "a fresh sync is needed, then call recommend_workout_today, plan_workout_with_health_context, or "
-    "guide_active_workout. Sync tools are preparatory for workout/run/lift/card requests: after syncing, "
+    "or to update/show a workout card. In that combined case, prefer sync_and_get_workout_card. "
+    "If a separate sync was already called, then call recommend_workout_today, "
+    "plan_workout_with_health_context, or guide_active_workout. Sync tools are preparatory for "
+    "workout/run/lift/card requests: after syncing, "
     "the final card-rendering call for day-of workout advice must be recommend_workout_today, "
     "plan_workout_with_health_context, or guide_active_workout. Do not answer a workout-card request "
     "from a sync or overview result alone. For broad "
@@ -160,7 +164,8 @@ POST_SYNC_ROUTING_GUIDANCE = {
     ],
     "next_tool_for_workout_card": (
         "If the user asked for a workout card, day-of training decision, run/lift advice, "
-        "or enough movement before an obligation, call recommend_workout_today next and pass "
+        "or enough movement before an obligation, prefer sync_and_get_workout_card for a combined "
+        "sync+card request. If sync already happened, call recommend_workout_today next and pass "
         "the user's current plain-language context in current_feeling."
     ),
     "next_tool_for_specific_activity": (
@@ -450,8 +455,8 @@ def create_server(settings_override: Settings | None = None) -> ServerBundle:
             "and includes freshness metadata. Leave force false unless the user explicitly asks to force "
             "a refresh. Do not use this as the visible final card when the same prompt asks for a workout "
             "card, what to do today, how hard to train, whether to run/lift/work out, or a time-limited "
-            "session. In that case call sync_latest_fitbit_data first if a fresh sync is needed, then call "
-            "recommend_workout_today or plan_workout_with_health_context for the actual card."
+            "session. In that case call sync_and_get_workout_card instead so the visible card is the "
+            "actual workout card."
         ),
         annotations=SYNC,
     )
@@ -468,35 +473,138 @@ def create_server(settings_override: Settings | None = None) -> ServerBundle:
         if overview.get("status") != "ok":
             return overview
 
-        overview["fresh_sync"] = {
-            "status": sync.get("status"),
-            "message": sync.get("message"),
-            "sync_skipped": sync.get("sync_skipped", False),
-            "skip_reason": sync.get("skip_reason"),
-            "records_upserted": sync.get("records_upserted"),
-            "total_records": sync.get("total_records")
-            or overview.get("data_freshness", {}).get("records"),
-            "partial_sync": sync.get("partial_sync", False),
-            "time_budget_exhausted": sync.get("time_budget_exhausted", False),
-            "metrics_synced": sync.get("metrics_synced", []),
-            "metrics_fetched": sync.get("metrics_fetched", []),
-            "metrics_considered": sync.get("metrics_considered", []),
-            "metrics_deferred": sync.get("metrics_deferred", []),
-            "metric_errors": sync.get("metric_errors", []),
-            "elapsed_seconds": sync.get("elapsed_seconds"),
-            "sync_diagnostics": sync.get("sync_diagnostics", {}),
-            "lookback_days": sync.get("lookback_days"),
-            "sync_window": sync.get("sync_window"),
-            "freshness": sync.get("freshness") or overview.get("data_freshness"),
-        }
+        overview["fresh_sync"] = _fresh_sync_payload(sync, overview)
         overview["post_sync_routing_guidance"] = POST_SYNC_ROUTING_GUIDANCE
         overview["final_answer_guardrail"] = (
             "If the user's prompt asked for a workout card, what to do today, how hard to train, "
             "whether to run/lift/work out, or a time-limited session, do not answer from this broad "
-            "overview alone. Call recommend_workout_today or plan_workout_with_health_context next "
-            "so the visible card is an actual workout card."
+            "overview alone. Call sync_and_get_workout_card, recommend_workout_today, or "
+            "plan_workout_with_health_context next so the visible card is an actual workout card."
         )
         return overview
+
+    @mcp.tool(
+        title="Sync and get workout card",
+        description=(
+            "Best single tool when the user explicitly asks to sync, refresh, pull, update, or force "
+            "Fitbit/Google Health data and also asks what workout to do, how hard to train, whether "
+            "to run/lift/work out, enough movement today, or to show/update/rerun the actual workout "
+            "card. This tool syncs first, then renders the workout card using all available synced "
+            "signals including sleep, HRV, resting heart rate, SpO2, respiratory rate, sleep "
+            "temperature, AZM/load, steps with date/window, workouts, goals, check-ins, and freshness. "
+            "Use planned_activity for a named activity like run, lift, squash, mobility, or upper body; "
+            "leave it empty for a general day-of recommendation. Do not call get_health_overview after "
+            "this for the same workout-card request."
+        ),
+        annotations=SYNC,
+        meta=WIDGET_META,
+    )
+    async def sync_and_get_workout_card(
+        current_feeling: Annotated[
+            str | None,
+            Field(
+                description=(
+                    "Current user-stated context only: how they feel, soreness, symptoms, energy, "
+                    "time limits, desired effort, or concern. Do not revive old symptoms unless "
+                    "the user says they still apply."
+                )
+            ),
+        ] = None,
+        planned_activity: Annotated[
+            str | None,
+            Field(
+                description=(
+                    "Specific activity the user wants, such as run, upper-body lift, squash, mobility, "
+                    "or general workout. Leave empty for general day-of workout advice."
+                )
+            ),
+        ] = None,
+        target_areas: Annotated[
+            list[str] | None,
+            Field(description="Only body areas the user explicitly wants to train, if any."),
+        ] = None,
+        constraints: Annotated[
+            str | None,
+            Field(
+                description=(
+                    "User-stated constraints such as time limit, upcoming meeting/class, soreness, "
+                    "pain, symptoms, travel, or preserving legs for another activity."
+                )
+            ),
+        ] = None,
+        duration_minutes: Annotated[
+            int | None,
+            Field(description="Requested session length in minutes, if the user gives one."),
+        ] = None,
+        force: Annotated[
+            bool,
+            Field(description="Set true only when the user explicitly asks to force refresh now."),
+        ] = False,
+    ) -> dict[str, Any]:
+        user_id = current_user_id()
+        if not user_id:
+            return setup_required()
+
+        sync = await health_store.sync_latest(user_id, force=force, include_context=False)
+        if sync.get("status") != "ok":
+            return sync
+
+        context = health_store.health_overview(user_id, 14)
+        if context.get("status") != "ok":
+            return context
+
+        sync_context = _fresh_sync_payload(sync, context)
+        if (planned_activity or "").strip():
+            combined_constraints = _combine_user_context(
+                current_feeling=current_feeling,
+                constraints=constraints,
+                duration_minutes=duration_minutes,
+            )
+            card = workout_plan_for_activity(
+                context=context,
+                planned_activity=planned_activity or "general workout",
+                target_areas=target_areas or [],
+                constraints=combined_constraints,
+                duration_minutes=duration_minutes,
+                goal=health_store.latest_goal(user_id),
+                checkins=health_store.recent_checkins(user_id),
+            )
+            card_type = "workout_plan"
+        else:
+            combined_feeling = _combine_user_context(
+                current_feeling=current_feeling,
+                constraints=constraints,
+                duration_minutes=duration_minutes,
+            )
+            card = workout_recommendation(
+                context=context,
+                goal=health_store.latest_goal(user_id),
+                checkins=health_store.recent_checkins(user_id),
+                workout_history=health_store.workout_history(user_id, 7),
+                current_feeling=combined_feeling,
+            )
+            card_type = "today_workout"
+
+        if card.get("status") != "ok":
+            return card
+        card["fresh_sync"] = sync_context
+        card["sync_card_contract"] = {
+            "role": "final_workout_card_after_sync",
+            "visible_card_type": card_type,
+            "sync_status": "partial" if sync_context.get("partial_sync") else "full",
+            "visible_card_policy": (
+                "This is the final workout-card result for the combined sync+training prompt. "
+                "Do not replace it with a broad health overview card for the same user request."
+            ),
+            "answer_order": [
+                "direct workout decision",
+                "do now",
+                "why the data mattered in plain English",
+                "what would make the user back off or stop",
+                "sync freshness/full-or-partial note",
+            ],
+        }
+        return card
 
     @mcp.tool(
         title="Data freshness",
@@ -1050,6 +1158,44 @@ def create_server(settings_override: Settings | None = None) -> ServerBundle:
         mcp=mcp,
         app=app,
     )
+
+
+def _fresh_sync_payload(sync: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "status": sync.get("status"),
+        "message": sync.get("message"),
+        "sync_skipped": sync.get("sync_skipped", False),
+        "skip_reason": sync.get("skip_reason"),
+        "records_upserted": sync.get("records_upserted"),
+        "total_records": sync.get("total_records") or context.get("data_freshness", {}).get("records"),
+        "partial_sync": sync.get("partial_sync", False),
+        "time_budget_exhausted": sync.get("time_budget_exhausted", False),
+        "metrics_synced": sync.get("metrics_synced", []),
+        "metrics_fetched": sync.get("metrics_fetched", []),
+        "metrics_considered": sync.get("metrics_considered", []),
+        "metrics_deferred": sync.get("metrics_deferred", []),
+        "metric_errors": sync.get("metric_errors", []),
+        "elapsed_seconds": sync.get("elapsed_seconds"),
+        "sync_diagnostics": sync.get("sync_diagnostics", {}),
+        "lookback_days": sync.get("lookback_days"),
+        "sync_window": sync.get("sync_window"),
+        "freshness": sync.get("freshness") or context.get("data_freshness"),
+    }
+
+
+def _combine_user_context(
+    *,
+    current_feeling: str | None = None,
+    constraints: str | None = None,
+    duration_minutes: int | None = None,
+) -> str | None:
+    parts: list[str] = []
+    for text in (current_feeling, constraints):
+        parts.extend(part.strip() for part in (text or "").splitlines() if part.strip())
+    if duration_minutes is not None and duration_minutes > 0:
+        parts.append(f"Available time: {duration_minutes} minutes.")
+    deduped = _dedupe(parts)
+    return " ".join(deduped) if deduped else None
 
 
 def _augment_health_question_clues_for_card(

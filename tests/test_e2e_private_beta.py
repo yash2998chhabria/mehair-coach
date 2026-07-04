@@ -404,6 +404,7 @@ async def test_private_beta_oauth_mcp_sync_and_coaching_flow(tmp_path, monkeypat
             tool_names = {item["name"] for item in tools["result"]["tools"]}
             assert "sync_latest_fitbit_data" in tool_names
             assert "sync_and_get_health_overview" in tool_names
+            assert "sync_and_get_workout_card" in tool_names
             assert "get_today_context" in tool_names
             assert "get_health_overview" in tool_names
             assert "plan_workout_with_health_context" in tool_names
@@ -509,6 +510,31 @@ async def test_private_beta_oauth_mcp_sync_and_coaching_flow(tmp_path, monkeypat
             assert "plan_workout_with_health_context" in fresh_overview["post_sync_routing_guidance"][
                 "next_tool_for_specific_activity"
             ]
+
+            fresh_workout_card = tool_content(
+                await mcp_request(
+                    client,
+                    access_token,
+                    "tools/call",
+                    {
+                        "name": "sync_and_get_workout_card",
+                        "arguments": {
+                            "current_feeling": "I feel normal and want a useful workout.",
+                            "duration_minutes": 25,
+                        },
+                    },
+                    402,
+                )
+            )
+            assert fresh_workout_card["status"] == "ok"
+            assert fresh_workout_card["sync_card_contract"]["role"] == "final_workout_card_after_sync"
+            assert fresh_workout_card["sync_card_contract"]["visible_card_type"] == "today_workout"
+            assert fresh_workout_card["fresh_sync"]["status"] == "ok"
+            assert fresh_workout_card["fresh_sync"]["sync_skipped"] is True
+            assert fresh_workout_card["data_freshness"]["freshness_level"] == "fresh"
+            assert fresh_workout_card["subjective_context"]["time_limit_minutes"] == 25
+            assert fresh_workout_card["coach_response"]
+            assert "overview_type" not in fresh_workout_card
 
             catalog = tool_content(
                 await mcp_request(

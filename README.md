@@ -91,6 +91,7 @@ Connection and sync:
 - `connect_google_health_status`
 - `sync_latest_fitbit_data`
 - `sync_and_get_health_overview`
+- `sync_and_get_workout_card`
 - `get_data_freshness`
 
 Metric discovery and querying:
@@ -108,6 +109,8 @@ Coaching and analysis:
 - `recommend_workout_today`
 - `plan_workout_with_health_context`
 - `guide_active_workout`
+
+`sync_and_get_workout_card` is the intended path when the user asks to refresh Fitbit data and also wants workout advice or a workout card in the same turn.
 
 Specific summaries:
 

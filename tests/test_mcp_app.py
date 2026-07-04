@@ -19,6 +19,7 @@ async def test_mcp_tool_list_matches_private_beta_plan() -> None:
         "query_health_metrics",
         "sync_latest_fitbit_data",
         "sync_and_get_health_overview",
+        "sync_and_get_workout_card",
         "get_data_freshness",
         "get_today_context",
         "get_health_overview",
@@ -40,12 +41,14 @@ async def test_mcp_tool_list_matches_private_beta_plan() -> None:
     by_name = {tool.name: tool for tool in tools}
     assert by_name["get_health_overview"].meta["openai/outputTemplate"] == WIDGET_URI
     assert by_name["sync_and_get_health_overview"].meta is None
+    assert by_name["sync_and_get_workout_card"].meta["openai/outputTemplate"] == WIDGET_URI
     assert by_name["get_health_question_clues"].meta["openai/outputTemplate"] == WIDGET_URI
     assert by_name["get_recovery_signal_comparison"].meta["openai/outputTemplate"] == WIDGET_URI
     assert by_name["guide_active_workout"].meta["openai/outputTemplate"] == WIDGET_URI
     assert by_name["sync_latest_fitbit_data"].meta is None
     assert by_name["sync_latest_fitbit_data"].annotations.idempotentHint is True
     assert by_name["sync_and_get_health_overview"].annotations.idempotentHint is True
+    assert by_name["sync_and_get_workout_card"].annotations.idempotentHint is True
     assert by_name["get_today_context"].meta is None
     assert by_name["get_recovery_readiness"].meta is None
     assert "what data you can see" in by_name["list_available_health_metrics"].description
@@ -69,8 +72,15 @@ async def test_mcp_tool_list_matches_private_beta_plan() -> None:
     assert "Do not use this as the visible final card" in by_name[
         "sync_and_get_health_overview"
     ].description
-    assert "call sync_latest_fitbit_data first" in by_name[
-        "sync_and_get_health_overview"
+    sync_overview_description = by_name["sync_and_get_health_overview"].description
+    assert (
+        "call sync_latest_fitbit_data first" in sync_overview_description
+        or "sync_and_get_workout_card instead" in sync_overview_description
+    )
+    assert "Best single tool" in by_name["sync_and_get_workout_card"].description
+    assert "actual workout card" in by_name["sync_and_get_workout_card"].description
+    assert "Do not call get_health_overview after this" in by_name[
+        "sync_and_get_workout_card"
     ].description
     assert "Prefer get_health_overview for broad everyday coaching prompts" in by_name[
         "get_today_context"
@@ -135,6 +145,7 @@ def test_server_instructions_keep_normal_latest_questions_fast() -> None:
     assert "safety, recovery, load, capacity" in SERVER_INSTRUCTIONS
     assert "Do not say a tool was blocked unless the tool result itself has an error" in SERVER_INSTRUCTIONS
     assert "Actual mehair coach cards are rendered by card tools" in SERVER_INSTRUCTIONS
+    assert "call sync_and_get_workout_card as the single current card-rendering path" in SERVER_INSTRUCTIONS
     assert "do not say the workout card UI is unavailable" in SERVER_INSTRUCTIONS
     assert "decision, do now, why the data matters" in SERVER_INSTRUCTIONS
     assert "do not default to 'I feel off'" in SERVER_INSTRUCTIONS
