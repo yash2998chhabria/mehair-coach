@@ -70,14 +70,23 @@ INTENT_METRICS = {
         "exercise",
         "active-zone-minutes",
         "time-in-heart-rate-zone",
+        "calories-in-heart-rate-zone",
         "steps",
+        "active-minutes",
+        "activity-level",
+        "distance",
+        "floors",
+        "sedentary-period",
         "heart-rate",
         "daily-resting-heart-rate",
         "daily-heart-rate-variability",
         "sleep",
         "daily-respiratory-rate",
+        "respiratory-rate-sleep-summary",
         "daily-oxygen-saturation",
+        "oxygen-saturation",
         "daily-sleep-temperature-derivations",
+        "daily-vo2-max",
     ],
     "active_workout": [
         "heart-rate",
@@ -87,6 +96,9 @@ INTENT_METRICS = {
         "daily-resting-heart-rate",
         "daily-heart-rate-variability",
         "sleep",
+        "daily-respiratory-rate",
+        "daily-oxygen-saturation",
+        "daily-sleep-temperature-derivations",
     ],
     "recovery": [
         "sleep",
@@ -3690,6 +3702,12 @@ def _signal_roles_for_intents(
                     "how_to_use": "High AZM, hard workouts, or lots of steps should make the next session more controlled.",
                 },
                 {
+                    "signal": "capacity_progress",
+                    "metric_ids": ["daily-vo2-max", "exercise", "time-in-heart-rate-zone"],
+                    "role": "longer-term cardio capacity and progress context",
+                    "how_to_use": "Use VO2 max and workout history to shape endurance direction, but do not use them as same-day permission for max effort.",
+                },
+                {
                     "signal": "personal_context",
                     "metric_ids": [],
                     "role": "goals, check-ins, and constraints",
@@ -3988,6 +4006,8 @@ def _snapshot_takeaway_lines(snapshot: dict[str, Any], intents: list[str]) -> li
         wanted_ids.extend(["spo2", "respiratory_rate", "sleep_temperature", "heart_rate_samples"])
     if any(intent in intents for intent in ("activity_load", "workout_decision", "daily_plan")):
         wanted_ids.extend(["heart_rate_zones", "activity_levels", "sedentary_minutes", "floors", "distance"])
+    if any(intent in intents for intent in ("workout_decision", "daily_plan", "active_workout")):
+        wanted_ids.extend(["spo2", "respiratory_rate", "sleep_temperature", "vo2_max", "active_zone_minutes"])
     if "general_overview" in intents:
         wanted_ids.extend(["spo2", "respiratory_rate", "sleep_temperature", "vo2_max", "heart_rate_zones"])
     wanted = set(wanted_ids)

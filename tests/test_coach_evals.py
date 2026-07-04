@@ -573,6 +573,18 @@ def test_eval_natural_prompt_mix_is_not_biased_to_off_day_language(tmp_path, mon
     assert "training_decision" in daily_flow["data_surfaces_to_use"]
     assert any("conversation_flow_options" in item for item in informal_training["answering_guidance"])
     assert any("model_decision_policy" in item for item in informal_training["answering_guidance"])
+    assert {
+        "daily-vo2-max",
+        "oxygen-saturation",
+        "respiratory-rate-sleep-summary",
+        "daily-sleep-temperature-derivations",
+        "active-minutes",
+        "activity-level",
+    } <= metric_ids(informal_training)
+    assert any("SpO2 / oxygen saturation" in item for item in informal_training["clues"])
+    assert any("Respiratory rate" in item for item in informal_training["clues"])
+    assert any("Sleep temp" in item for item in informal_training["clues"])
+    assert any("VO2 max" in item for item in informal_training["clues"])
     policy = informal_training["decision_frame"]["model_decision_policy"]
     axes = {item["axis"]: item for item in policy["decision_axes"]}
     assert {
@@ -663,7 +675,14 @@ def test_eval_question_clues_include_human_decision_frame_for_life_constraints(t
     assert "workout_decision" in clues["intent_hints"]
     assert "reserve_energy_or_future_event" in context_cues
     assert "load_stacking" in context_cues
-    assert {"readiness", "sleep", "heart_recovery", "training_load", "personal_context"} <= role_signals
+    assert {
+        "readiness",
+        "sleep",
+        "heart_recovery",
+        "training_load",
+        "capacity_progress",
+        "personal_context",
+    } <= role_signals
     assert any("rpe cap" in item.lower() for item in frame["output_contract"])
     assert any("SpO2" in item and "VO2 max" in item for item in frame["output_contract"])
     assert any("azm =" in item.lower() for item in frame["plain_language_labels"])
