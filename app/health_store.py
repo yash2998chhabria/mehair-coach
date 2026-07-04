@@ -3758,16 +3758,27 @@ def _question_intents(question: str) -> list[str]:
         "during this workout",
         "in this workout",
     )
+    elapsed_workout_context = bool(
+        re.search(
+            r"\b\d{1,3}\s*(?:min|mins|minute|minutes)\s+into\s+(?:my|the|this)?\s*"
+            r"(?:run|ride|walk|workout|lift|session|interval|game|match|practice)\b",
+            text,
+        )
+    )
     live_measure = has("rpe", "elapsed", "bpm", "heart rate", "hr ")
     live_action = has(
         "keep going",
         "continue",
         "hold steady",
         "back off",
+        "ease up",
         "slow down",
+        "push",
+        "push harder",
+        "harder",
         "stop",
     )
-    live_workout_context = live_marker or (
+    live_workout_context = live_marker or elapsed_workout_context or (
         live_measure
         and has("pain", "dizzy", "dizziness", "chest pain", "chest tightness", "breathing", "rpe")
     ) or (live_action and (live_marker or live_measure))
@@ -4479,6 +4490,19 @@ def _question_context_cues(question: str) -> list[dict[str, str]]:
     text = question.lower()
     cues: list[dict[str, str]] = []
     minutes = _minutes_from_question(text)
+    metric_selection_context = _contains_context_term(
+        text,
+        (
+            "if they matter",
+            "only if they matter",
+            "use the band data",
+            "use all the band",
+            "use all signals",
+            "include oxygen",
+            "include breathing",
+            "oxygen/breathing",
+        ),
+    )
     if minutes is not None:
         cues.append(
             {
@@ -4556,11 +4580,27 @@ def _question_context_cues(question: str) -> list[dict[str, str]]:
                 "how_to_use": "Require stronger agreement from sleep, heart, load, freshness, and warm-up before endorsing high intensity.",
             }
         )
-    if any(term in text for term in ("pain", "dizzy", "dizziness", "chest", "sick", "fever", "symptom", "breathing")):
+    safety_terms = ("pain", "dizzy", "dizziness", "chest", "sick", "fever", "symptom")
+    breathing_as_symptom = _contains_context_term(
+        text,
+        (
+            "trouble breathing",
+            "hard to breathe",
+            "short of breath",
+            "breathing feels",
+            "breathing is",
+            "breathing got",
+            "breathing changed",
+            "breathing weird",
+            "breathless",
+            "wheezing",
+        ),
+    )
+    if any(term in text for term in safety_terms) or (breathing_as_symptom and not metric_selection_context):
         cues.append(
             {
                 "cue": "safety_or_symptom_context",
-                "value": "question includes pain, symptoms, breathing, dizziness, illness, or heart concern",
+                "value": "question includes pain, symptoms, breathing difficulty, dizziness, illness, or heart concern",
                 "how_to_use": "Use safety-first language, avoid diagnosis, and name stop or clinical-care triggers.",
             }
         )

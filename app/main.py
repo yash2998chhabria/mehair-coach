@@ -358,6 +358,96 @@ def create_server(settings_override: Settings | None = None) -> ServerBundle:
         token = get_access_token()
         return token.subject if token else None
 
+    def _context_for_card(user_id: str, days: int | None = None) -> dict[str, Any]:
+        if days is None:
+            return health_store.latest_context(user_id)
+        return health_store.health_overview(user_id, days)
+
+    async def _auto_sync_for_time_sensitive_card(
+        user_id: str,
+        *,
+        days: int | None = None,
+    ) -> tuple[dict[str, Any], dict[str, Any] | None]:
+        freshness = health_store.freshness(user_id)
+        if freshness.get("status") == "ok" and not freshness.get("needs_sync_before_time_sensitive_advice"):
+            return _context_for_card(user_id, days), None
+        if freshness.get("status") != "ok":
+            return _context_for_card(user_id, days), None
+
+        sync = await health_store.sync_latest(user_id, force=False, include_context=False)
+        context = _context_for_card(user_id, days)
+        return context, sync
+
+    def _attach_auto_sync_contract(
+        card: dict[str, Any],
+        *,
+        sync: dict[str, Any] | None,
+        context: dict[str, Any],
+        card_type: str,
+    ) -> dict[str, Any]:
+        if not sync or card.get("status") != "ok":
+            return card
+
+        if sync.get("status") in {"ok", "sync_in_progress"}:
+            card["fresh_sync"] = _fresh_sync_payload(sync, context)
+        else:
+            card["fresh_sync"] = {
+                "status": sync.get("status"),
+                "message": sync.get("message") or "Could not refresh Google Health before this card.",
+                "sync_in_progress": False,
+                "sync_skipped": sync.get("sync_skipped", False),
+                "skip_reason": sync.get("skip_reason"),
+                "freshness": context.get("data_freshness"),
+                "coverage_summary": sync.get("sync_diagnostics", {}).get("coverage_summary"),
+            }
+
+        sync_status = "failed"
+        if sync.get("status") == "sync_in_progress":
+            sync_status = "active_sync_fallback"
+        elif sync.get("status") == "ok":
+            sync_status = (
+                "skipped_recent_fresh"
+                if sync.get("sync_skipped")
+                else "partial"
+                if sync.get("partial_sync")
+                else "refreshed"
+            )
+
+        card["auto_sync_contract"] = {
+            "role": "time_sensitive_card_auto_sync",
+            "visible_card_type": card_type,
+            "trigger": "data_freshness.needs_sync_before_time_sensitive_advice",
+            "sync_status": sync_status,
+            "visible_card_policy": (
+                "This card tool refreshed stale or aging Fitbit/Google Health data when possible, "
+                "then rebuilt the visible workout card. Answer from this current card instead of "
+                "asking the user to manually sync first."
+            ),
+            "answer_order": [
+                "direct workout decision",
+                "specific do-now plan",
+                "why the latest data mattered in plain English",
+                "what would make the user back off or stop",
+                "freshness/date window",
+            ],
+        }
+        if sync.get("status") == "sync_in_progress":
+            card["auto_sync_contract"]["freshness_note"] = (
+                "A Google Health sync is already running, so this card uses the newest records "
+                "already stored. Refresh again shortly if the user needs the just-finished cloud pull."
+            )
+        elif sync.get("status") not in {"ok", "sync_in_progress"}:
+            card["auto_sync_contract"]["freshness_note"] = (
+                "The attempted refresh did not complete, so this card is based on the stored records "
+                "and must mention the freshness warning."
+            )
+        elif sync.get("sync_diagnostics", {}).get("coverage_summary", {}).get("core_recovery_ready") is False:
+            card["auto_sync_contract"]["freshness_note"] = (
+                "The refresh completed partially and did not confirm every core recovery metric; "
+                "mention which signals are current and keep time-sensitive advice conservative."
+            )
+        return card
+
     @mcp.tool(
         title="Google Health connection status",
         description=(
@@ -832,14 +922,16 @@ def create_server(settings_override: Settings | None = None) -> ServerBundle:
             "freshness, so do not call a broad overview first for normal day-of workout-card requests. "
             "If the user asks to include oxygen/breathing/heart/load only if they matter, still call "
             "this tool; do not treat that metric list as symptoms or as a blocked medical request. "
-            "Does not start a sync."
+            "If stored data is aging or stale, this tool automatically attempts one bounded, "
+            "non-forced Google Health sync before rendering the card, then includes the freshness "
+            "and sync result in the returned payload."
             " If the user asks to use tools, show the card, or asks the same day-of question again with "
             "new context, call this tool again rather than answering from an older card in the thread."
         ),
-        annotations=READ_ONLY,
+        annotations=SYNC,
         meta=WIDGET_META,
     )
-    def recommend_workout_today(
+    async def recommend_workout_today(
         current_feeling: Annotated[
             str | None,
             Field(
@@ -857,12 +949,19 @@ def create_server(settings_override: Settings | None = None) -> ServerBundle:
         user_id = current_user_id()
         if not user_id:
             return setup_required()
-        return workout_recommendation(
-            context=health_store.latest_context(user_id),
+        context, sync = await _auto_sync_for_time_sensitive_card(user_id)
+        card = workout_recommendation(
+            context=context,
             goal=health_store.latest_goal(user_id),
             checkins=health_store.recent_checkins(user_id),
             workout_history=health_store.workout_history(user_id, 7),
             current_feeling=current_feeling,
+        )
+        return _attach_auto_sync_contract(
+            card,
+            sync=sync,
+            context=context,
+            card_type="today_workout",
         )
 
     @mcp.tool(
@@ -881,13 +980,16 @@ def create_server(settings_override: Settings | None = None) -> ServerBundle:
             "rate, sleep temperature, AZM/load, steps, workouts, goals, check-ins, and freshness."
             " If the user asks to include oxygen/breathing/heart/load only if they matter, still call "
             "this tool; treat that as a data-use preference, not a symptom report. "
+            "If stored data is aging or stale, this tool automatically attempts one bounded, "
+            "non-forced Google Health sync before rendering the card, then includes the freshness "
+            "and sync result in the returned payload. "
             " If the user says to use tools or show a workout card, call this tool for the current turn "
             "instead of reusing an older visible card."
         ),
-        annotations=READ_ONLY,
+        annotations=SYNC,
         meta=WIDGET_META,
     )
-    def plan_workout_with_health_context(
+    async def plan_workout_with_health_context(
         planned_activity: Annotated[
             str,
             Field(
@@ -931,10 +1033,8 @@ def create_server(settings_override: Settings | None = None) -> ServerBundle:
         user_id = current_user_id()
         if not user_id:
             return setup_required()
-        context = health_store.health_overview(user_id, 14)
-        if context.get("status") != "ok":
-            return context
-        return workout_plan_for_activity(
+        context, sync = await _auto_sync_for_time_sensitive_card(user_id, days=14)
+        card = workout_plan_for_activity(
             context=context,
             planned_activity=planned_activity,
             target_areas=target_areas or [],
@@ -943,6 +1043,12 @@ def create_server(settings_override: Settings | None = None) -> ServerBundle:
             duration_minutes=duration_minutes,
             goal=health_store.latest_goal(user_id),
             checkins=health_store.recent_checkins(user_id),
+        )
+        return _attach_auto_sync_contract(
+            card,
+            sync=sync,
+            context=context,
+            card_type="workout_plan",
         )
 
     @mcp.tool(
@@ -1269,6 +1375,7 @@ def _fresh_sync_payload(sync: dict[str, Any], context: dict[str, Any]) -> dict[s
         "metric_errors": sync.get("metric_errors", []),
         "elapsed_seconds": sync.get("elapsed_seconds"),
         "sync_diagnostics": sync.get("sync_diagnostics", {}),
+        "coverage_summary": sync.get("sync_diagnostics", {}).get("coverage_summary"),
         "lookback_days": sync.get("lookback_days"),
         "sync_window": sync.get("sync_window"),
         "freshness": sync.get("freshness") or context.get("data_freshness"),

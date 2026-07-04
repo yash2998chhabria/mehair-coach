@@ -238,6 +238,9 @@ async def test_widget_resource_is_registered() -> None:
     assert "formatDateTime(freshness.last_sync)} (${ageMinutesText(minutes)})" in html
     assert "not fresh; sync recommended" in html
     assert "using Fitbit data through" in html
+    assert "Fresh pull" in html
+    assert "Aging pull" in html
+    assert "Stale pull" in html
     assert "data-window" in html
     assert "--sync-dot" in html
     assert "function todayWorkoutTitle(data, reserveEnergy, deadlineMinutes)" in html
@@ -264,8 +267,9 @@ async def test_widget_resource_is_registered() -> None:
     assert "band-green" in html
     assert "training available" not in html
     assert "Train available" not in html
-    assert "more training room" in html
-    assert "More training room (75+)" in html
+    assert "more training room" not in html
+    assert "supports training" in html
+    assert "Training room, not automatic go (75+)" in html
     assert "function renderPrescriptionPills(block)" in html
     assert "workout-prescription" in html
     assert "rx-pill" in html
@@ -405,7 +409,7 @@ async def test_widget_preview_route_renders_real_card_state() -> None:
     assert "Signals checked" in overview.text
     assert "Other signals checked for this answer" in overview.text
     assert "Fitbit data timing" in overview.text
-    assert "Fresh data" in overview.text
+    assert "Fresh pull" in overview.text
     assert "Latest Fitbit data pull was" in overview.text
     assert "using Fitbit data through" in overview.text
     assert "signal-strip" in overview.text

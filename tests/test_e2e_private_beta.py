@@ -3,7 +3,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
@@ -65,6 +65,37 @@ async def mcp_request(
 
 def tool_content(response: dict[str, Any]) -> dict[str, Any]:
     return response["result"]["structuredContent"]
+
+
+def issue_test_app_token(bundle: ServerBundle, user_id: str, client_id: str) -> str:
+    with bundle.db.connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO oauth_clients (client_id, client_secret, metadata_json, created_at)
+            VALUES (?, NULL, ?, ?)
+            """,
+            (client_id, json.dumps({"token_endpoint_auth_method": "none"}), datetime.now(UTC).isoformat()),
+        )
+    return json.loads(bundle.auth_service._issue_app_tokens(user_id, client_id, ["health.read"]).body)[
+        "access_token"
+    ]
+
+
+def mark_synced_data_older_than(bundle: ServerBundle, user_id: str, age: timedelta) -> None:
+    old_time = (datetime.now(UTC) - age).isoformat()
+    with bundle.db.connect() as conn:
+        conn.execute(
+            "UPDATE raw_health_records SET synced_at = ? WHERE user_id = ?",
+            (old_time, user_id),
+        )
+        conn.execute(
+            """
+            UPDATE sync_runs
+            SET started_at = ?, finished_at = ?
+            WHERE user_id = ? AND status IN ('ok', 'partial')
+            """,
+            (old_time, old_time, user_id),
+        )
 
 
 class FakeGoogleHealth:
@@ -1289,6 +1320,86 @@ async def test_sync_workout_card_uses_existing_records_while_sync_is_running(tmp
     assert "your next obligation caps the dose" in card["coach_response"]["data_story"]
     assert "your next session is the priority" not in card["coach_response"]["data_story"]
     assert "overview_type" not in card
+
+
+@pytest.mark.asyncio
+async def test_direct_workout_card_tools_auto_sync_stale_data(tmp_path) -> None:
+    bundle = make_bundle(tmp_path)
+    fake_health = FakeGoogleHealth()
+    bundle.health_store.google = fake_health
+    user_id = bundle.auth_service._create_user_from_google(
+        {
+            "access_token": "fake-google-access",
+            "refresh_token": "fake-google-refresh",
+            "expires_in": 3600,
+            "scope": " ".join(bundle.settings.google_scopes),
+        },
+        {"email": "tester@example.com", "sub": "google-subject"},
+    )
+    initial_sync = await bundle.health_store.sync_latest(user_id, force=True, include_context=False)
+    assert initial_sync["status"] == "ok"
+    initial_request_count = len(fake_health.requested_specs)
+
+    mark_synced_data_older_than(bundle, user_id, timedelta(hours=2))
+    access_token = issue_test_app_token(bundle, user_id, "auto-sync-card-client")
+    transport = httpx.ASGITransport(app=bundle.app)
+
+    async with bundle.app.router.lifespan_context(bundle.app):
+        async with httpx.AsyncClient(transport=transport, base_url="http://localhost:8787") as client:
+            recommendation = tool_content(
+                await mcp_request(
+                    client,
+                    access_token,
+                    "tools/call",
+                    {
+                        "name": "recommend_workout_today",
+                        "arguments": {
+                            "current_feeling": (
+                                "I feel normal but only have 20 minutes before work and do not want to feel drained."
+                            )
+                        },
+                    },
+                    503,
+                )
+            )
+
+            assert recommendation["status"] == "ok"
+            assert len(fake_health.requested_specs) > initial_request_count
+            assert recommendation["data_freshness"]["freshness_level"] == "fresh"
+            assert recommendation["fresh_sync"]["status"] == "ok"
+            assert recommendation["fresh_sync"]["sync_skipped"] is False
+            assert recommendation["auto_sync_contract"]["role"] == "time_sensitive_card_auto_sync"
+            assert recommendation["auto_sync_contract"]["visible_card_type"] == "today_workout"
+            assert recommendation["auto_sync_contract"]["sync_status"] in {"refreshed", "partial"}
+            assert recommendation["coach_response"]["short_answer"]
+
+            request_count_after_recommendation = len(fake_health.requested_specs)
+            mark_synced_data_older_than(bundle, user_id, timedelta(hours=2))
+            plan = tool_content(
+                await mcp_request(
+                    client,
+                    access_token,
+                    "tools/call",
+                    {
+                        "name": "plan_workout_with_health_context",
+                        "arguments": {
+                            "planned_activity": "20-minute pre-work movement session",
+                            "target_areas": [],
+                            "constraints": "keep it useful without feeling drained before work",
+                            "duration_minutes": 20,
+                        },
+                    },
+                    504,
+                )
+            )
+
+    assert plan["status"] == "ok"
+    assert len(fake_health.requested_specs) > request_count_after_recommendation
+    assert plan["data_freshness"]["freshness_level"] == "fresh"
+    assert plan["fresh_sync"]["status"] == "ok"
+    assert plan["auto_sync_contract"]["role"] == "time_sensitive_card_auto_sync"
+    assert plan["auto_sync_contract"]["visible_card_type"] == "workout_plan"
+    assert plan["planned_activity"] == "20-minute pre-work movement session"
 
 
 @pytest.mark.asyncio

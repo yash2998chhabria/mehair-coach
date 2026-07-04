@@ -1491,13 +1491,13 @@ TODAY_WIDGET_HTML = """
             ? `Fitbit pull timestamp unavailable; freshness says ${pullAge}`
             : "Fitbit timing unavailable for this card";
         const latest = latestDay
-          ? `using Fitbit data through ${latestDay}`
+          ? `using Fitbit data through ${formatDayLabel(latestDay)}`
           : model.date
             ? `card window: ${model.date}`
             : "";
         return {
           level,
-          levelLabel: level === "fresh" ? "Fresh data" : level === "aging" ? "Aging data" : level === "stale" ? "Stale data" : "Fitbit timing",
+          levelLabel: level === "fresh" ? "Fresh pull" : level === "aging" ? "Aging pull" : level === "stale" ? "Stale pull" : "Fitbit timing",
           pull,
           latest,
         };
@@ -1572,6 +1572,20 @@ TODAY_WIDGET_HTML = """
         }
         dates.sort();
         return dates[dates.length - 1] || "";
+      }
+
+      function formatDayLabel(value) {
+        const match = String(value || "").match(/\\d{4}-\\d{2}-\\d{2}/);
+        if (!match) return String(value || "");
+        const [year, month, day] = match[0].split("-").map(Number);
+        const parsed = new Date(year, month - 1, day);
+        if (Number.isNaN(parsed.getTime())) return match[0];
+        const now = new Date();
+        const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+        const deltaDays = Math.round((today.getTime() - parsed.getTime()) / 86400000);
+        if (deltaDays === 0) return "Today";
+        if (deltaDays === 1) return "Yesterday";
+        return parsed.toLocaleDateString(undefined, { month: "short", day: "numeric" });
       }
 
       function formatDateTime(value) {
@@ -1952,7 +1966,7 @@ TODAY_WIDGET_HTML = """
         const band = readinessBand(score, label);
         const scoreText = Number.isFinite(Number(score)) && Number(score) > 0 ? `${Math.round(Number(score))}/100: ` : "";
         const clean = titleCase(band || label || "pending");
-        if (band === "green") return `${scoreText}${clean} 75+ more training room`;
+        if (band === "green") return `${scoreText}${clean} 75+ supports training`;
         if (band === "yellow") return `${scoreText}${clean} 55-74 keep controlled`;
         if (band === "red") return `${scoreText}${clean} <55 recovery first`;
         return clean;
@@ -2137,7 +2151,7 @@ TODAY_WIDGET_HTML = """
 
       function readinessStateLabel(label) {
         const lower = String(label || "").toLowerCase();
-        if (lower === "green") return "More training room (75+)";
+        if (lower === "green") return "Training room, not automatic go (75+)";
         if (lower === "yellow") return "Controlled work (55-74)";
         if (lower === "red") return "Recovery first (<55)";
         return "";

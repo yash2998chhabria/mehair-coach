@@ -616,6 +616,14 @@ def test_eval_natural_prompt_mix_is_not_biased_to_off_day_language(tmp_path, mon
     assert "active_workout" not in casual_push["intent_hints"]
     assert casual_push["recommended_tool_sequence"][0] == "recommend_workout_today"
 
+    natural_live_run = store.health_question_clues(
+        user_id,
+        "I am 18 minutes into my run, HR 166, breathing controlled, pain 0. Should I push or hold?",
+        days=7,
+    )
+    assert "active_workout" in natural_live_run["intent_hints"]
+    assert natural_live_run["recommended_tool_sequence"][0] == "guide_active_workout"
+
     minimum_before_work = store.health_question_clues(
         user_id,
         "I feel normal but only have 20 minutes before work. What is useful without feeling drained?",
@@ -827,6 +835,10 @@ def test_eval_natural_prompt_mix_is_not_biased_to_off_day_language(tmp_path, mon
     assert "specific_activity" in metric_selection_card_request["intent_hints"]
     assert "breathing_recovery" not in metric_selection_card_request["intent_hints"]
     assert "symptom_safety" not in metric_selection_card_request["intent_hints"]
+    metric_selection_cues = {
+        item["cue"] for item in metric_selection_card_request["decision_frame"]["user_context_cues"]
+    }
+    assert "safety_or_symptom_context" not in metric_selection_cues
     assert metric_selection_card_request["recommended_tool_sequence"][0] == "plan_workout_with_health_context"
     assert {
         "daily-oxygen-saturation",
