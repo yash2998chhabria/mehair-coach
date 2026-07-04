@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime
+from time import monotonic
 
+import pytest
 import app.health_store as health_store_module
 from app.auth import AuthService
 from app.crypto import generate_key
@@ -125,6 +128,81 @@ def test_freshness_uses_15_and_60_minute_sync_windows(monkeypatch) -> None:
     assert stale["freshness_level"] == "stale"
     assert stale["freshness_label"] == "stale >1 hour"
     assert stale["needs_sync_before_time_sensitive_advice"] is True
+
+
+@pytest.mark.asyncio
+async def test_sync_returns_at_live_budget_when_answer_ready(tmp_path, monkeypatch) -> None:
+    fixed_now = datetime(2026, 7, 3, 12, 0, tzinfo=UTC)
+    monkeypatch.setattr(health_store_module, "utc_now", lambda: fixed_now)
+    db, store = make_store(tmp_path)
+    user_id = create_user(db, "live_budget_user")
+    store.settings.sync_live_return_budget_seconds = 1
+    store.settings.sync_request_budget_seconds = 8
+    store.settings.sync_metric_timeout_seconds = 4
+    monkeypatch.setattr(store.auth, "refresh_token_available", lambda _user_id: True)
+
+    async def fake_access_token(_user_id: str) -> str:
+        return "test-access-token"
+
+    monkeypatch.setattr(store.auth, "ensure_google_access_token", fake_access_token)
+    quick_metrics = {
+        "sleep",
+        "daily-resting-heart-rate",
+        "daily-heart-rate-variability",
+    }
+
+    async def fake_fetch_metric_records(_access_token, spec, **_kwargs):
+        if spec.id not in quick_metrics:
+            await asyncio.sleep(10)
+            return []
+        await asyncio.sleep(0.01)
+        if spec.id == "sleep":
+            return [
+                {
+                    "name": "sleep-live-budget",
+                    "sleep": {
+                        "interval": {
+                            "startTime": "2026-07-03T00:00:00Z",
+                            "endTime": "2026-07-03T08:00:00Z",
+                        },
+                        "summary": {
+                            "minutesAsleep": "450",
+                            "minutesAwake": "30",
+                            "minutesInSleepPeriod": "480",
+                        },
+                    },
+                }
+            ]
+        if spec.id == "daily-resting-heart-rate":
+            return [
+                {
+                    "name": "rhr-live-budget",
+                    "dailyRestingHeartRate": {"beatsPerMinute": 58},
+                    "date": {"year": 2026, "month": 7, "day": 3},
+                }
+            ]
+        return [
+            {
+                "name": "hrv-live-budget",
+                "dailyHeartRateVariability": {
+                    "averageHeartRateVariabilityMilliseconds": 71.0
+                },
+                "date": {"year": 2026, "month": 7, "day": 3},
+            }
+        ]
+
+    monkeypatch.setattr(store, "_fetch_metric_records", fake_fetch_metric_records)
+
+    started = monotonic()
+    result = await store.sync_latest(user_id, force=True, include_context=False)
+    elapsed = monotonic() - started
+
+    assert result["status"] == "ok"
+    assert elapsed < 2.5
+    assert result["partial_sync"] is True
+    assert result["sync_window"]["live_return_cutoff"] is True
+    assert result["sync_window"]["answer_ready_metrics"] == sorted(quick_metrics)
+    assert set(result["metrics_synced"]) == quick_metrics
 
 
 def test_sync_storage_prep_aggregates_high_volume_activity_metrics() -> None:

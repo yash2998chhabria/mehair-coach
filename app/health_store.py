@@ -594,34 +594,49 @@ class HealthStore:
                 pending_by_task = {asyncio.create_task(fetch_one(spec)): spec for spec in specs}
                 completed_results: list[dict[str, Any]] = []
                 pending = set(pending_by_task)
+
+                def live_ready_state() -> tuple[set[str], set[str]]:
+                    answer_ready = {
+                        item["metric"]
+                        for item in completed_results
+                        if item.get("status") == "ok"
+                        and item.get("metric") in LIVE_READY_METRICS
+                        and item.get("records")
+                    }
+                    pending_ready = {
+                        pending_by_task[task].id
+                        for task in pending
+                        if pending_by_task[task].id in LIVE_READY_METRICS
+                    }
+                    return answer_ready, pending_ready
+
                 while pending:
                     remaining = deadline - monotonic()
                     if remaining <= 0:
                         time_budget_exhausted = True
                         break
+                    wait_timeout = remaining
+                    if monotonic() < live_deadline:
+                        wait_timeout = min(wait_timeout, max(0.05, live_deadline - monotonic()))
                     done, pending = await asyncio.wait(
                         pending,
-                        timeout=remaining,
+                        timeout=wait_timeout,
                         return_when=asyncio.FIRST_COMPLETED,
                     )
                     if not done:
-                        time_budget_exhausted = True
-                        break
+                        if monotonic() < live_deadline:
+                            continue
+                        answer_ready_metrics, pending_ready_metrics = live_ready_state()
+                        if len(answer_ready_metrics) >= 3 or not pending_ready_metrics:
+                            time_budget_exhausted = True
+                            sync_window["live_return_cutoff"] = True
+                            sync_window["answer_ready_metrics"] = sorted(answer_ready_metrics)
+                            break
+                        continue
                     for task in done:
                         completed_results.append(task.result())
                     if pending and monotonic() >= live_deadline:
-                        answer_ready_metrics = {
-                            item["metric"]
-                            for item in completed_results
-                            if item.get("status") == "ok"
-                            and item.get("metric") in LIVE_READY_METRICS
-                            and item.get("records")
-                        }
-                        pending_ready_metrics = {
-                            pending_by_task[task].id
-                            for task in pending
-                            if pending_by_task[task].id in LIVE_READY_METRICS
-                        }
+                        answer_ready_metrics, pending_ready_metrics = live_ready_state()
                         if len(answer_ready_metrics) >= 3 or not pending_ready_metrics:
                             time_budget_exhausted = True
                             sync_window["live_return_cutoff"] = True
