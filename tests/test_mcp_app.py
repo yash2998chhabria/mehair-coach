@@ -215,10 +215,10 @@ async def test_widget_resource_is_registered() -> None:
 
     assert str(resources[0].uri) == WIDGET_URI
     assert resources[0].mimeType == "text/html;profile=mcp-app"
-    assert WIDGET_URI == "ui://mehair/today-v28.html"
-    assert "ui://mehair/today-v27.html" in LEGACY_WIDGET_URIS
+    assert WIDGET_URI == "ui://mehair/today-v29.html"
+    assert "ui://mehair/today-v28.html" in LEGACY_WIDGET_URIS
     assert "Preparing card" in html
-    assert 'appInfo: { name: "mehair coach", version: "0.7.9" }' in html
+    assert 'appInfo: { name: "mehair coach", version: "0.8.0" }' in html
     assert "mehair-coach-widget" not in html
     assert 'renderEmpty("Preparing the health card from the latest tool result.", "waiting")' in html
     assert "window.openai?.toolOutput" in html
@@ -238,6 +238,7 @@ async def test_widget_resource_is_registered() -> None:
     assert "Before Dinner Movement" in html
     assert "Before Plans Movement" in html
     assert "Before Travel Movement" in html
+    assert "Game-Day Primer" in html
     assert "Tomorrow-Friendly Workout" in html
     assert 'text.includes("work")' not in html
     assert "function renderLabelKey(labels)" in html
@@ -245,8 +246,9 @@ async def test_widget_resource_is_registered() -> None:
     assert "label-key" in html
     assert "Metric labels, translated" in html
     assert "score-state::before" in html
-    assert "const showScore = model.showScore !== false" in html
+    assert "const showScore = model.showScore !== false && isReadinessScore" in html
     assert 'class="hero ${showScore ? "" : "no-score"}"' in html
+    assert "showScore: !hasSafetyFlags" in html
     assert "showScore: !safety.length" in html
     assert "band-green" in html
     assert "training available" not in html

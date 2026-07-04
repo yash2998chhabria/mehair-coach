@@ -368,8 +368,9 @@ def test_specific_lift_plan_uses_stated_energy_pain_and_tomorrow_sport() -> None
     assert any("energy is low at 4/10" in item for item in plan["limiting_factors"])
     assert any("pain or tightness is 2/10" in item for item in plan["limiting_factors"])
     assert any("preserve readiness" in item for item in plan["limiting_factors"])
-    assert any("tomorrow's sport session" in item for item in plan["session_guidance"])
-    assert any("tomorrow's sport or workout session" in item for item in plan["avoid"])
+    assert plan["data_used"]["future_session_label"] == "tomorrow's squash session"
+    assert any("tomorrow's squash session" in item for item in plan["session_guidance"])
+    assert any("tomorrow's squash session" in item for item in plan["avoid"])
 
 
 def test_planned_run_with_tomorrow_sport_does_not_match_row_inside_tomorrow() -> None:
@@ -416,7 +417,8 @@ def test_planned_run_with_tomorrow_sport_does_not_match_row_inside_tomorrow() ->
     assert not any("Neutral-grip lat pulldown" == exercise for exercise in exercises)
     assert not any("Leg press" in exercise for exercise in exercises)
     assert not any("Hamstring curl" == exercise for exercise in exercises)
-    assert any("tomorrow's sport session" in item for item in plan["session_guidance"])
+    assert plan["data_used"]["future_session_label"] == "tomorrow's soccer session"
+    assert any("tomorrow's soccer session" in item for item in plan["session_guidance"])
     assert "row" not in " ".join(plan["substitutions"]).lower()
     assert not any("keep every set" in item.lower() for item in plan["coach_response"]["session_blueprint"])
     assert any("keep effort" in item.lower() for item in plan["coach_response"]["session_blueprint"])
@@ -472,10 +474,119 @@ def test_preserving_tomorrow_does_not_imply_user_feels_off() -> None:
 
     assert plan["data_used"]["preserving_next_session"] is True
     assert plan["rpe_cap"] <= 6
-    assert "tomorrow still stays available" in coach["short_answer"]
+    assert "tomorrow's basketball game stays available" in coach["short_answer"]
     assert "not-100" not in joined
     assert "feel off" not in joined
     assert "do not feel fully right" not in joined
+
+
+def test_later_today_basketball_preserves_game_without_off_day_language() -> None:
+    context = {
+        "status": "ok",
+        "latest_date": "2026-07-04",
+        "activity_date": "2026-07-04",
+        "recovery_date": "2026-07-04",
+        "data_freshness": {
+            "freshness_level": "fresh",
+            "freshness_label": "fresh <15 min",
+            "latest_observed_date": "2026-07-04",
+            "sync_age_minutes": 4,
+        },
+        "readiness": {
+            "score": 44,
+            "label": "red",
+            "recommendation": "Prioritize recovery, mobility, walking, and sleep.",
+            "evidence": [
+                "Latest sleep is strong at 9.4h.",
+                "HRV is above recent baseline: 92.1 ms vs 61.7 ms.",
+                "Resting heart rate is steady: 60 bpm.",
+            ],
+            "score_breakdown": {
+                "base": 50,
+                "score": 44,
+                "band": "red",
+                "activity_date": "2026-07-04",
+                "recovery_date": "2026-07-04",
+                "contributions": [
+                    {
+                        "signal": "spo2",
+                        "points": -6,
+                        "role": "safety_caution",
+                        "date": "2026-07-04",
+                        "explanation": "SpO2 is low enough to cap intensity if it repeats or matches symptoms.",
+                    }
+                ],
+            },
+        },
+        "today": {
+            "steps": 6400,
+            "active_minutes": 42,
+            "active_zone_minutes": 0,
+            "hrv_ms": 92.1,
+            "resting_heart_rate": 60,
+            "sleep": {"asleep_hours": 9.4, "sessions_count": 1},
+            "latest_training_load": {"date": "2026-07-03", "active_zone_minutes": 23},
+        },
+        "available_signal_snapshot": {
+            "status": "ok",
+            "available_signal_ids": ["sleep_duration", "hrv", "resting_heart_rate", "spo2", "active_zone_minutes"],
+            "signals": [
+                {
+                    "id": "spo2",
+                    "label": "SpO2 / oxygen saturation",
+                    "display": "82.1%",
+                    "latest": 82.1,
+                    "latest_date": "2026-07-04",
+                    "category": "breathing",
+                    "coaching_use": "Use low SpO2 as a caution clue with breathing, symptoms, and heart signals.",
+                },
+                {
+                    "id": "active_zone_minutes",
+                    "label": "AZM",
+                    "display": "23 min",
+                    "latest": 23,
+                    "latest_date": "2026-07-03",
+                    "category": "training_load",
+                    "coaching_use": "Recent hard-work minutes should reduce extra intensity.",
+                },
+            ],
+        },
+    }
+
+    plan = workout_plan_for_activity(
+        context=context,
+        planned_activity="pre basketball primer and mobility",
+        target_areas=[],
+        constraints=(
+            "New unrelated scenario: I feel normal and have a basketball game tonight. "
+            "I want to do something useful now without messing up the game."
+        ),
+        duration_minutes=30,
+    )
+
+    coach = plan["coach_response"]
+    joined = " ".join(
+        [
+            plan["summary"],
+            coach["short_answer"],
+            coach["data_story"],
+            *coach["what_to_do"],
+            *coach["session_blueprint"],
+            *plan["session_guidance"],
+            *plan["avoid"],
+        ]
+    ).lower()
+
+    assert plan["data_used"]["preserving_next_session"] is True
+    assert plan["data_used"]["protect_lower_body"] is True
+    assert plan["data_used"]["positive_current_feeling"] is True
+    assert plan["data_used"]["future_session_label"] == "tonight's basketball game"
+    assert "tonight's basketball game stays available" in coach["short_answer"]
+    assert "not-100" not in joined
+    assert "do not feel fully right" not in joined
+    assert "you feel off" not in joined
+    assert "tomorrow" not in joined
+    assert any("SpO2" in item for item in plan["limiting_factors"])
 
 
 def test_hike_tomorrow_card_preserves_legs_instead_of_prescribing_leg_blocks() -> None:

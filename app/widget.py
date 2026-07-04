@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 
 
-WIDGET_URI = "ui://mehair/today-v28.html"
+WIDGET_URI = "ui://mehair/today-v29.html"
 LEGACY_WIDGET_URIS = (
     "ui://mehair/today-v1.html",
     "ui://mehair/today-v2.html",
@@ -32,6 +32,7 @@ LEGACY_WIDGET_URIS = (
     "ui://mehair/today-v25.html",
     "ui://mehair/today-v26.html",
     "ui://mehair/today-v27.html",
+    "ui://mehair/today-v28.html",
 )
 WIDGET_RESOURCE_URIS = (WIDGET_URI, *LEGACY_WIDGET_URIS)
 WIDGET_MIME_TYPE = "text/html;profile=mcp-app"
@@ -793,7 +794,7 @@ TODAY_WIDGET_HTML = """
         updateFromResponse(window.openai?.toolOutput);
         try {
           await rpcRequest("ui/initialize", {
-            appInfo: { name: "mehair coach", version: "0.7.9" },
+            appInfo: { name: "mehair coach", version: "0.8.0" },
             appCapabilities: {},
             protocolVersion: "2026-01-26",
           });
@@ -1031,6 +1032,7 @@ TODAY_WIDGET_HTML = """
           ].filter(Boolean),
           score,
           primaryLabel: "Readiness",
+          showScore: !hasSafetyFlags,
           headline: data.headline || "Useful Fitbit signals selected for this question.",
           focusTitle: hasSafetyFlags ? "Safety First" : "Why I Checked These",
           focus: hasSafetyFlags ? data.safety_flags || [] : data.clues || [],
@@ -1169,7 +1171,11 @@ TODAY_WIDGET_HTML = """
             has(/\\b(work|shift)\\s+(in|within|starts|begins)\\b/)
           ) return "Before Work Movement";
           if (
-            has(/\\b(tomorrow|later today|tonight|this evening|upcoming)\\b/) &&
+            has(/\\b(later today|tonight|this evening)\\b/) &&
+            has(/\\b(pickleball|tennis|squash|basketball|soccer|hike|walk|run|race|match|game)\\b/)
+          ) return "Game-Day Primer";
+          if (
+            has(/\\b(tomorrow|upcoming)\\b/) &&
             has(/\\b(pickleball|tennis|squash|basketball|soccer|hike|walk|run|race|match|game)\\b/)
           ) return "Tomorrow-Friendly Workout";
           return "Minimum Useful Movement";
@@ -1468,10 +1474,11 @@ TODAY_WIDGET_HTML = """
       }
 
       function dataWindowFromPayload(data, model) {
-        const freshness = data.data_freshness || data.freshness || data.context?.data_freshness || {};
+        const source = data?.suggested_card || data || {};
+        const freshness = source.data_freshness || source.freshness || source.context?.data_freshness || data.data_freshness || data.freshness || data.context?.data_freshness || {};
         const level = normalizedFreshnessLevel(freshness);
         const pullAge = pullAgeText(freshness);
-        const latestDay = explicitLatestDateFromPayload(data);
+        const latestDay = explicitLatestDateFromPayload(source) || explicitLatestDateFromPayload(data);
         const pull = pullAge
           ? `Latest Fitbit data pull was ${pullAge}`
           : "Fitbit timing unavailable for this card";
@@ -1607,7 +1614,7 @@ TODAY_WIDGET_HTML = """
         const blocks = renderBlocks(model.blocks);
         const scoreContext = scoreNote(model.primaryLabel, score);
         const stateLabel = isReadinessScore ? readinessStateLabel(model.stateLabel || readinessBand(score, "")) : "";
-        const showScore = model.showScore !== false;
+        const showScore = model.showScore !== false && isReadinessScore;
         root.innerHTML = `
           <div class="mast">
             <div class="identity">

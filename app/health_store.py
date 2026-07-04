@@ -1252,15 +1252,38 @@ class HealthStore:
             "message": "Google Health is connected.",
         }
 
-    def records_for_user(self, user_id: str) -> list[dict[str, Any]]:
+    def records_for_user(
+        self,
+        user_id: str,
+        *,
+        start_date: str | None = None,
+        data_types: list[str] | tuple[str, ...] | None = None,
+        limit: int | None = None,
+    ) -> list[dict[str, Any]]:
+        clauses = ["user_id = ?"]
+        params: list[Any] = [user_id]
+        if start_date:
+            clauses.append("observed_date >= ?")
+            params.append(start_date)
+        if data_types:
+            unique_types = [item for item in dict.fromkeys(data_types) if item]
+            if unique_types:
+                placeholders = ",".join("?" for _ in unique_types)
+                clauses.append(f"data_type IN ({placeholders})")
+                params.extend(unique_types)
+        limit_sql = ""
+        if limit is not None:
+            limit_sql = " LIMIT ?"
+            params.append(max(1, int(limit)))
         rows = self.db.all(
-            """
+            f"""
             SELECT data_type, observed_date, payload_json
             FROM raw_health_records
-            WHERE user_id = ?
+            WHERE {' AND '.join(clauses)}
             ORDER BY observed_date DESC, id DESC
+            {limit_sql}
             """,
-            (user_id,),
+            tuple(params),
         )
         return [
             {
@@ -1275,7 +1298,8 @@ class HealthStore:
         self,
         user_id: str,
     ) -> tuple[list[dict[str, Any]], dict[str, Any], dict[str, Any]]:
-        records = self.records_for_user(user_id)
+        recent_start = (datetime.now(UTC).date() - timedelta(days=45)).isoformat()
+        records = self.records_for_user(user_id, start_date=recent_start)
         if not records:
             return records, {}, empty_data()
         summary = summarize_records(records)
@@ -3549,25 +3573,29 @@ def _question_intents(question: str) -> list[str]:
         intents.extend(["workout_decision", "recovery", "activity_load", "heart", "sleep", "subjective", "goal"])
     if specific_activity_context and exercise_context:
         intents.extend(["specific_activity", "workout_decision", "activity_load", "recovery", "subjective"])
-    live_workout_context = has(
+    live_marker = has(
         "during workout",
         "during my workout",
         "in-session",
         "in session",
         "mid-workout",
         "active workout",
+        "during this workout",
+        "in this workout",
+    )
+    live_measure = has("rpe", "elapsed", "bpm", "heart rate", "hr ")
+    live_action = has(
         "keep going",
         "continue",
         "hold steady",
         "back off",
         "slow down",
         "stop",
-        "rpe",
-        "elapsed",
-    ) or (
-        has("bpm", "heart rate", "hr ")
-        and has("pain", "dizzy", "dizziness", "chest pain", "chest tightness", "breathing", "rpe")
     )
+    live_workout_context = live_marker or (
+        live_measure
+        and has("pain", "dizzy", "dizziness", "chest pain", "chest tightness", "breathing", "rpe")
+    ) or (live_action and (live_marker or live_measure))
     if live_workout_context:
         intents.extend(["active_workout", "workout_decision", "heart", "activity_load", "recovery", "subjective"])
     if has("tired", "fatigue", "fatigued", "cooked", "drained", "recovery", "readiness", "ready", "rest", "rested", "why"):
@@ -3577,12 +3605,15 @@ def _question_intents(question: str) -> list[str]:
     if has("heart", "hrv", "bpm", "pulse", "resting", "cardio"):
         intents.extend(["heart", "recovery", "activity_load"])
     if has("oxygen", "spo2", "sp02", "breathing", "breath", "respiratory", "temperature", "temp"):
+        training_context = exercise_context or asks_for_today_plan or practical_decision_context or future_window_context or improvement_goal_context
         if metric_selection_context and (
-            exercise_context or asks_for_today_plan or future_window_context or improvement_goal_context
+            training_context
         ):
             intents.extend(["recovery", "sleep", "heart", "workout_decision"])
         else:
-            intents.extend(["breathing_recovery", "recovery", "sleep", "heart", "workout_decision"])
+            intents.extend(["breathing_recovery", "recovery", "sleep", "heart"])
+            if training_context:
+                intents.append("workout_decision")
     if has("vo2", "capacity", "endurance", "aerobic", "cardio fitness"):
         intents.extend(["general_overview", "activity_load", "heart", "goal"])
         if "today" in text or has(
@@ -4437,7 +4468,7 @@ def _signal_roles_for_intents(
 def _output_contract_for_intents(intents: list[str], freshness: dict[str, Any]) -> list[str]:
     contract = [
         "Start with a one-sentence decision in plain language.",
-        "Name the data used and why each signal changes the recommendation.",
+        "Name the signals that changed the recommendation, plus any checked secondary signals that were relevant background.",
         "Explain labels the first time they appear, including Readiness, RPE, AZM, HRV, Resting HR, SpO2, respiratory rate, or VO2 max when used.",
     ]
     if "active_workout" in intents:

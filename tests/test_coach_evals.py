@@ -601,6 +601,18 @@ def test_eval_natural_prompt_mix_is_not_biased_to_off_day_language(tmp_path, mon
     assert "active_workout" not in casual_push["intent_hints"]
     assert casual_push["recommended_tool_sequence"][0] == "recommend_workout_today"
 
+    standalone_oxygen = store.health_question_clues(user_id, "Why was my SpO2 lower last night?", days=7)
+    assert "breathing_recovery" in standalone_oxygen["intent_hints"]
+    assert "workout_decision" not in standalone_oxygen["intent_hints"]
+    assert standalone_oxygen["primary_conversation_flows"][0]["flow"] == "sleep_breathing_recovery_question"
+    assert "get_recovery_signal_comparison" in standalone_oxygen["recommended_tool_sequence"]
+
+    stop_training_today = store.health_question_clues(user_id, "Should I stop training hard today?", days=7)
+    assert "workout_decision" in stop_training_today["intent_hints"]
+    assert "active_workout" not in stop_training_today["intent_hints"]
+    assert "guide_active_workout" not in stop_training_today["recommended_tool_sequence"]
+    assert "recommend_workout_today" in stop_training_today["recommended_tool_sequence"]
+
     not_ill = store.health_question_clues(user_id, "I am not ill, just want a useful plan.", days=7)
     assert "symptom_safety" not in not_ill["intent_hints"]
 

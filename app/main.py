@@ -141,8 +141,8 @@ SERVER_INSTRUCTIONS = (
     "context only because they may not include the user's new constraint, especially time limits, "
     "class/meeting/work/travel obligations, pain, symptoms, or in-workout reports. "
     "During an active workout, call guide_active_workout when the user reports live RPE, heart rate, "
-    "pain, symptoms, elapsed time, or asks whether to keep going, push, hold steady, back off, slow "
-    "down, or stop. Call guide_active_workout directly for these in-session questions because it "
+    "pain, symptoms, elapsed time, or asks in an in-session context whether to keep going, push, hold "
+    "steady, back off, slow down, or stop. Call guide_active_workout directly for these in-session questions because it "
     "already reads the latest synced readiness/load context and renders the active workout card. Do "
     "not substitute get_health_overview for live workout decisions. Prefer one card-rendering tool per "
     "answer unless the user explicitly asks for multiple cards."
@@ -1413,6 +1413,7 @@ def workout_recommendation(
     stated_soreness = _rating_from_text(current_feeling_lower, ("soreness", "sore", "tightness", "tight"))
     stated_pain = _rating_from_text(current_feeling_lower, ("pain", "ache", "tightness", "tight"))
     subjective_limiter = _subjective_limiter_from_text(current_feeling_lower)
+    positive_current_feeling = _positive_or_neutral_feeling_from_text(current_feeling_lower)
     stated_high_movement = _high_movement_from_text(current_feeling_lower)
     reserve_energy_obligation = _reserve_energy_obligation_from_text(current_feeling_lower)
     deadline_movement_minutes = _movement_minutes_before_obligation(current_feeling_lower)
@@ -1599,6 +1600,7 @@ def workout_recommendation(
     deduped_next_actions = _dedupe(next_actions)
     deduped_avoid = _dedupe(avoid)
     stop_conditions = _dedupe(stop_conditions)
+    signal_context = model_signal_context(signal_snapshot)
     coach_response = _today_workout_coach_response(
         intensity=intensity,
         rpe_cap=rpe_cap,
@@ -1613,6 +1615,7 @@ def workout_recommendation(
         time_limit_minutes=time_limit_minutes,
         reserve_energy_obligation=reserve_energy_obligation,
         high_movement_context=stated_high_movement or high_step_load,
+        positive_current_feeling=positive_current_feeling,
     )
     training_decision = _training_decision_frame(
         intensity=intensity,
@@ -1651,6 +1654,7 @@ def workout_recommendation(
             "time_limit_minutes": time_limit_minutes,
             "deadline_movement_minutes": deadline_movement_minutes,
             "subjective_limiter": subjective_limiter,
+            "positive_current_feeling": positive_current_feeling,
             "reserve_energy_obligation": reserve_energy_obligation,
             "latest_checkins": checkins or [],
         },
@@ -1658,7 +1662,18 @@ def workout_recommendation(
         "data_freshness": freshness,
         "training_decision": training_decision,
         "readiness_attribution": readiness_attribution,
-        "model_signal_context": model_signal_context(signal_snapshot),
+        "model_signal_context": signal_context,
+        "coach_decision_surface": _coach_decision_surface(
+            signal_context,
+            freshness,
+            user_context={
+                "prompt_current_feeling": current_feeling_text or None,
+                "time_limit_minutes": time_limit_minutes,
+                "reserve_energy_obligation": reserve_energy_obligation,
+                "subjective_limiter": subjective_limiter,
+                "positive_current_feeling": positive_current_feeling,
+            },
+        ),
         "data_used": {
             "activity_date": activity_date,
             "recovery_date": recovery_date,
@@ -1734,6 +1749,7 @@ def workout_plan_for_activity(
     stated_soreness = _rating_from_text(constraint_text, ("soreness", "sore", "tightness", "tight"))
     stated_pain = _rating_from_text(constraint_text, ("pain", "ache", "tightness", "tight"))
     subjective_limiter = _subjective_limiter_from_text(constraint_text)
+    positive_current_feeling = _positive_or_neutral_feeling_from_text(constraint_text)
     stated_high_movement = _high_movement_from_text(constraint_text)
     reserve_energy_obligation = _reserve_energy_obligation_from_text(all_context_text)
     soreness_rating = _first_present(stated_soreness, stated_pain, _latest_rating(checkins or [], "soreness"))
@@ -1766,6 +1782,7 @@ def workout_plan_for_activity(
     )
     preserving_next_session = _mentions_upcoming_session(constraint_text)
     protect_lower_body = _protect_lower_body_from_text(constraint_text)
+    future_session_label = _future_session_label(all_context_text)
     exercise_context_text = _workout_activity_selection_text(
         planned=planned,
         constraint_text=constraint_text,
@@ -1778,7 +1795,7 @@ def workout_plan_for_activity(
     rpe_cap = {"easy": 6, "moderate": 7, "moderate-to-hard": 8}.get(intensity, 6)
     limiting_factors = _normalized_readiness_evidence(context)
     limiting_factors.extend(_readiness_attribution_evidence(context))
-    limiting_factors.extend(_signal_snapshot_evidence(signal_snapshot, limit=5))
+    limiting_factors.extend(_signal_snapshot_evidence(signal_snapshot, limit=7))
     steps_today = _safe_int(today.get("steps"))
     high_step_load = steps_today is not None and steps_today >= 15000
     short_constrained_session = _short_constrained_session(
@@ -1845,7 +1862,7 @@ def workout_plan_for_activity(
             limiting_factors.append("User-stated high walking or step volume today should count as leg/load context.")
     if preserving_next_session:
         rpe_cap = min(rpe_cap, 6)
-        limiting_factors.append("User wants to preserve readiness for another sport or workout soon.")
+        limiting_factors.append(f"User wants to preserve readiness for {future_session_label}.")
     if reserve_energy_obligation:
         if intensity == "moderate-to-hard":
             intensity = "moderate"
@@ -1931,8 +1948,8 @@ def workout_plan_for_activity(
             ]
         )
     if preserving_next_session:
-        session.append("Leave the session feeling fresher than you started so tomorrow's sport session stays available.")
-        avoid.append("Extra finishers that steal from tomorrow's sport or workout session")
+        session.append(f"Leave the session feeling fresher than you started so {future_session_label} stays available.")
+        avoid.append(f"Extra finishers that steal from {future_session_label}")
     if reserve_energy_obligation:
         focus.insert(0, "Make this the smallest useful dose before the rest of the day.")
         session.insert(0, "Use easy movement, mobility, or submax work that leaves breathing calm and focus intact.")
@@ -1944,7 +1961,7 @@ def workout_plan_for_activity(
         avoid.extend(
             [
                 "Squats, lunges, leg press, hamstring curls, calf raises, hill sprints, intervals, plyometrics, or hard bike work",
-                "Any finisher that makes tomorrow's legs feel heavy",
+                f"Any finisher that makes {future_session_label} feel compromised",
             ]
         )
         substitutions.append("Leg-heavy plan -> upper-body lift, core, mobility, or very easy recovery movement.")
@@ -1985,6 +2002,7 @@ def workout_plan_for_activity(
         subjective_limiter=subjective_limiter,
         reserve_energy_obligation=reserve_energy_obligation,
         requested_duration_minutes=requested_duration_minutes,
+        future_session_label=future_session_label,
     )
     planned_date_text = planned_date or "next planned session"
     summary = (
@@ -2029,6 +2047,8 @@ def workout_plan_for_activity(
         preserving_next_session=preserving_next_session,
         illness_flags=illness_flags,
         stop_conditions=stop_conditions,
+        positive_current_feeling=positive_current_feeling,
+        future_session_label=future_session_label,
     )
     training_decision = _training_decision_frame(
         intensity=intensity,
@@ -2041,6 +2061,7 @@ def workout_plan_for_activity(
         freshness=context.get("data_freshness", {}),
     )
     readiness_attribution = _readiness_attribution(readiness)
+    signal_context = model_signal_context(signal_snapshot)
 
     return {
         "status": "ok",
@@ -2069,7 +2090,20 @@ def workout_plan_for_activity(
         "limiting_factors": deduped_limiting_factors,
         "training_decision": training_decision,
         "readiness_attribution": readiness_attribution,
-        "model_signal_context": model_signal_context(signal_snapshot),
+        "model_signal_context": signal_context,
+        "coach_decision_surface": _coach_decision_surface(
+            signal_context,
+            context.get("data_freshness", {}),
+            user_context={
+                "planned_activity": display_activity,
+                "planned_activity_raw": planned_activity,
+                "target_areas": target_areas,
+                "constraint_roles": intent_context.get("constraint_roles"),
+                "future_session_label": future_session_label,
+                "requested_duration_minutes": requested_duration_minutes,
+                "positive_current_feeling": positive_current_feeling,
+            },
+        ),
         "data_freshness": context.get("data_freshness", {}),
         "data_used": {
             "activity_date": activity_date,
@@ -2090,6 +2124,7 @@ def workout_plan_for_activity(
             "stated_soreness": stated_soreness,
             "stated_pain": stated_pain,
             "subjective_limiter": subjective_limiter,
+            "positive_current_feeling": positive_current_feeling,
             "reserve_energy_obligation": reserve_energy_obligation,
             "stated_high_movement": stated_high_movement,
             "illness_flags": illness_flags,
@@ -2098,6 +2133,7 @@ def workout_plan_for_activity(
             "localized_soreness_away_from_target": localized_soreness_away_from_target,
             "preserving_next_session": preserving_next_session,
             "protect_lower_body": protect_lower_body,
+            "future_session_label": future_session_label,
             "short_constrained_session": short_constrained_session,
             "explicit_high_intensity_request": explicit_high_intensity_request,
             "requested_duration_minutes": requested_duration_minutes,
@@ -2172,6 +2208,7 @@ def active_workout_guidance(
             "Synced Fitbit context freshness: "
             f"{freshness.get('freshness_label')}. Live HR/RPE/pain come from what the user reports during the workout."
         )
+    evidence.extend(_signal_snapshot_evidence(signal_snapshot, limit=4))
 
     next_check_window = _active_workout_check_window(elapsed_minutes)
     rpe_cap = _active_workout_rpe_cap(rpe, readiness_label)
@@ -2266,6 +2303,7 @@ def active_workout_guidance(
     deduped_avoid = _dedupe(avoid)
     deduped_evidence = _dedupe(evidence)
     readiness_attribution = _readiness_attribution(readiness)
+    signal_context = model_signal_context(signal_snapshot)
     coach_response = _active_workout_coach_response(
         decision=decision,
         headline=headline,
@@ -2297,7 +2335,22 @@ def active_workout_guidance(
         "goal_context": (goal or {}).get("goal"),
         "recent_checkins": checkins or [],
         "data_freshness": freshness,
-        "model_signal_context": model_signal_context(signal_snapshot),
+        "model_signal_context": signal_context,
+        "coach_decision_surface": _coach_decision_surface(
+            signal_context,
+            freshness,
+            user_context={
+                "planned_activity": planned_activity,
+                "live_inputs": {
+                    "current_heart_rate_bpm": current_heart_rate_bpm,
+                    "current_rpe": rpe,
+                    "pain_level": pain,
+                    "symptoms": symptoms,
+                    "elapsed_minutes": elapsed_minutes,
+                    "planned_duration_minutes": planned_duration_minutes,
+                },
+            },
+        ),
         "readiness_attribution": readiness_attribution,
         "live_data_note": "In-session guidance uses user-reported live HR/RPE/pain plus the latest cloud-synced Fitbit context; it is not direct band telemetry.",
         "live_inputs": {
@@ -2680,7 +2733,7 @@ def _coach_data_story(readiness: dict[str, Any], evidence: list[str]) -> str:
     if subjective_items:
         constraints.append("your current body feel caps the ceiling")
     if preserve_items:
-        constraints.append("tomorrow's session is the priority")
+        constraints.append("your next session is the priority")
 
     if constraints:
         return "The useful read: " + "; ".join(_dedupe(constraints)[:4]) + "."
@@ -2954,6 +3007,7 @@ def _today_workout_coach_response(
     time_limit_minutes: int | None = None,
     reserve_energy_obligation: bool = False,
     high_movement_context: bool = False,
+    positive_current_feeling: bool = False,
 ) -> dict[str, Any]:
     evidence_text = " ".join(evidence).lower()
     has_stale_data = "data freshness is stale" in evidence_text or "sync latest fitbit data" in evidence_text
@@ -2979,7 +3033,7 @@ def _today_workout_coach_response(
         else:
             short_answer = "Training is available today if the warm-up feels normal and your breathing, form, and pain stay calm."
 
-    if subjective_limiter and not illness_flags:
+    if subjective_limiter and not illness_flags and not positive_current_feeling:
         short_answer += " Because you do not feel fully right, let the first 10-15 minutes decide whether to continue."
     if time_limit_minutes is not None and time_limit_minutes <= 35 and not has_stale_data:
         short_answer += f" Since you have {time_limit_minutes} minutes, make the plan compact instead of adding extra volume."
@@ -3122,6 +3176,64 @@ def _training_decision_frame(
             "checked data that did not materially change the call. Use source_boundaries to keep "
             "wearable evidence separate from user-stated or conversation context."
         ),
+    }
+
+
+def _coach_decision_surface(
+    signal_context: dict[str, Any],
+    freshness: dict[str, Any] | None,
+    *,
+    user_context: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    freshness = freshness or {}
+    decision_policy = signal_context.get("decision_policy") or {}
+    signal_groups = signal_context.get("signal_groups") or {}
+
+    def compact_group(group_name: str) -> list[dict[str, Any]]:
+        compacted: list[dict[str, Any]] = []
+        for signal in signal_groups.get(group_name, []) or []:
+            compacted.append(
+                {
+                    "id": signal.get("id"),
+                    "label": signal.get("label"),
+                    "latest": signal.get("latest"),
+                    "latest_date": signal.get("latest_date"),
+                    "role": group_name,
+                    "coaching_use": signal.get("coaching_use"),
+                    "confidence": signal.get("confidence"),
+                }
+            )
+        return compacted
+
+    return {
+        "status": signal_context.get("status", "missing"),
+        "purpose": (
+            "Use this to decide which synced band signals matter for the user's exact question. "
+            "It is a selection surface, not a script."
+        ),
+        "freshness": {
+            "level": freshness.get("freshness_level"),
+            "label": freshness.get("freshness_label"),
+            "latest_observed_date": freshness.get("latest_observed_date"),
+            "sync_age_minutes": freshness.get("sync_age_minutes"),
+            "needs_sync_before_time_sensitive_advice": freshness.get("needs_sync_before_time_sensitive_advice"),
+        },
+        "user_context": user_context or {},
+        "available_signal_ids": signal_context.get("all_available_signal_ids", []),
+        "decision_axes": decision_policy.get("decision_axes", []),
+        "primary_recovery": compact_group("primary_recovery"),
+        "breathing_temperature_caution": compact_group("breathing_temperature_caution"),
+        "activity_load_window": compact_group("activity_load_window"),
+        "capacity_progress": compact_group("capacity_progress"),
+        "in_session_context": compact_group("in_session_context"),
+        "model_contract": [
+            "Start with the human coaching decision, then name only the signals that changed it.",
+            "If the user asks broadly or worries a metric is ignored, mention checked background signals and why they did or did not change the call.",
+            "Treat low or unusual SpO2, respiratory rate, and sleep temperature as caution context with symptoms and heart/sleep data.",
+            "Treat AZM, steps, active minutes, heart-rate zones, and workouts as load-window context; always name the date/window.",
+            "Treat VO2 max as capacity/progress context, not same-day permission to train hard.",
+            "Do not imply Fitbit measured the user's schedule, sport, soreness, symptoms, or preferences unless those came from a stored check-in.",
+        ],
     }
 
 
@@ -3380,13 +3492,15 @@ def _workout_plan_coach_response(
     preserving_next_session: bool,
     illness_flags: list[str],
     stop_conditions: list[str],
+    positive_current_feeling: bool = False,
+    future_session_label: str | None = None,
 ) -> dict[str, Any]:
     has_short_time_box = any("short time box" in item.lower() for item in limiting_factors)
     has_reserve_obligation = any("near-term" in item.lower() and "obligation" in item.lower() for item in limiting_factors)
     if illness_flags:
         short_answer = f"For {display_activity}, keep this as rest or very easy movement until symptoms improve."
     elif preserving_next_session:
-        short_answer = f"For {display_activity}, train controlled enough that tomorrow still stays available."
+        short_answer = f"For {display_activity}, train controlled enough that {(future_session_label or 'the next session')} stays available."
     elif has_reserve_obligation:
         short_answer = f"For {display_activity}, do the smallest useful dose and leave energy for what comes next."
     elif has_short_time_box:
@@ -3398,10 +3512,10 @@ def _workout_plan_coach_response(
     else:
         short_answer = f"For {display_activity}, a normal session is reasonable if the warm-up feels good."
 
-    if subjective_limiter and not illness_flags and not preserving_next_session:
+    if subjective_limiter and not illness_flags and not preserving_next_session and not positive_current_feeling:
         short_answer += " This is a not-100% day, so treat the warm-up as the test."
     elif subjective_limiter and preserving_next_session and not illness_flags:
-        short_answer += " If the warm-up feels bad, downshift immediately so tomorrow stays protected."
+        short_answer += f" If the warm-up feels bad, downshift immediately so {(future_session_label or 'the next session')} stays protected."
 
     priority_session = _priority_session_line(session)
     what_to_do = [
@@ -4288,6 +4402,11 @@ def _protect_lower_body_from_text(text: str) -> bool:
         "not drained",
         "useful",
         "usable",
+        "mess up",
+        "messing up",
+        "ruin",
+        "throw off",
+        "wreck",
     )
     return (
         any(term in lower for term in future_terms)
@@ -4378,6 +4497,7 @@ def _workout_intent_context(
     subjective_limiter: bool,
     reserve_energy_obligation: bool,
     requested_duration_minutes: int | None,
+    future_session_label: str | None = None,
 ) -> dict[str, Any]:
     constraint_roles: list[str] = []
     exercise_bias: list[str] = []
@@ -4394,12 +4514,12 @@ def _workout_intent_context(
         guardrails.extend(
             [
                 "avoid leg-fatiguing strength, intervals, plyometrics, hill work, or finishers",
-                "keep the session useful enough to train, but easy enough that tomorrow still feels available",
+                f"keep the session useful enough to train, but easy enough that {(future_session_label or 'the next session')} stays available",
             ]
         )
         do_not_treat_as_targets.extend(["legs", "hike", "walk", "future sport"])
     elif preserving_next_session:
-        primary_job = "train today without stealing readiness from the next session"
+        primary_job = f"train today without stealing readiness from {future_session_label or 'the next session'}"
         exercise_bias.extend(["controlled_volume", "submaximal_strength", "technique"])
         constraint_roles.append("future_session_priority")
         guardrails.append("leave clear energy in reserve")
@@ -4633,7 +4753,7 @@ def _exercise_prescription(
             "Dead bug + side plank",
             "2",
             "8 each side + 20-30 sec",
-            "Core work that supports tomorrow without tiring your legs.",
+            "Core work that supports your next session without tiring your legs.",
             "Pallof press or easy breathing drill.",
         )
 
@@ -4989,15 +5109,55 @@ def _mentions_upcoming_session(text: str) -> bool:
         "have practice",
         "compete",
     )
+    direct_sport_event = re.search(
+        r"\b(?:have|got|play|playing|heading to|going to)\b.{0,50}\b"
+        r"(?:squash|tennis|pickleball|basketball|soccer|hike|run|race|match|game|practice|tournament)\b",
+        text,
+    )
     return (
         any(term in text for term in future_terms)
         and any(term in text for term in sport_terms)
         and (
             any(term in text for term in intent_terms)
+            or direct_sport_event is not None
             or "tomorrow" in text
             or "upcoming" in text
         )
     )
+
+
+def _future_session_label(text: str) -> str:
+    lower = (text or "").lower()
+    if _mentions(lower, ("basketball",)):
+        sport = "basketball"
+    elif _mentions(lower, ("soccer",)):
+        sport = "soccer"
+    elif _mentions(lower, ("pickleball",)):
+        sport = "pickleball"
+    elif _mentions(lower, ("tennis",)):
+        sport = "tennis"
+    elif _mentions(lower, ("squash",)):
+        sport = "squash"
+    elif _mentions(lower, ("hike", "hiking")):
+        sport = "hike"
+    elif _mentions(lower, ("run", "race")):
+        sport = "run"
+    else:
+        sport = "sport"
+
+    if _mentions(lower, ("tonight", "this evening")):
+        if sport == "basketball" or _mentions(lower, ("game", "match")):
+            return f"tonight's {sport} game" if sport != "sport" else "tonight's game"
+        return f"tonight's {sport} session" if sport != "sport" else "tonight's session"
+    if "later today" in lower:
+        return f"today's later {sport} session" if sport != "sport" else "the later session today"
+    if "tomorrow" in lower or "next day" in lower:
+        if sport == "basketball" or _mentions(lower, ("game", "match")):
+            return f"tomorrow's {sport} game" if sport != "sport" else "tomorrow's game"
+        return f"tomorrow's {sport} session" if sport != "sport" else "tomorrow's session"
+    if "upcoming" in lower or "next session" in lower:
+        return f"the upcoming {sport} session" if sport != "sport" else "the upcoming session"
+    return "the next session"
 
 
 def _normalized_readiness_evidence(context: dict[str, Any]) -> list[str]:
