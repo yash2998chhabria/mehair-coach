@@ -4655,6 +4655,18 @@ def _has_unnegated_phrase(text: str, phrase: str) -> bool:
         if re.search(r"\b(no|not|without|denies|deny|none)\b[\s,;:.-]{0,12}$", prefix):
             continue
         if re.search(
+            r"\b(?:not|without|avoid(?:ing)?)\s+"
+            r"(?:feel|feeling|be|being|getting|ending\s+up|getting\s+to)\s*$",
+            local_prefix,
+        ):
+            continue
+        if re.search(
+            r"\b(?:do not|don't|dont)\s+want\s+(?:to\s+)?"
+            r"(?:feel|be|end\s+up|leave)\s*$",
+            local_prefix,
+        ):
+            continue
+        if re.search(
             r"\b(?:not|never)\s+"
             r"(?:saying|claiming|reporting|telling(?:\s+you)?|indicating|mentioning)\b",
             local_prefix,
@@ -5114,12 +5126,38 @@ def _mentions_upcoming_session(text: str) -> bool:
         r"(?:squash|tennis|pickleball|basketball|soccer|hike|run|race|match|game|practice|tournament)\b",
         text,
     )
+    preservation_context = any(
+        phrase in text
+        for phrase in (
+            "ready for",
+            "save my legs",
+            "save legs",
+            "fresh legs",
+            "preserve legs",
+            "protect legs",
+            "not tired",
+            "not drained",
+            "not feel tired",
+            "not feeling tired",
+            "don't want to feel tired",
+            "dont want to feel tired",
+            "do not want to feel tired",
+            "without feeling tired",
+            "without messing up",
+            "messing up the game",
+            "mess up the game",
+            "ruin the game",
+            "throw off the game",
+            "wreck the game",
+        )
+    )
     return (
         any(term in text for term in future_terms)
         and any(term in text for term in sport_terms)
         and (
             any(term in text for term in intent_terms)
             or direct_sport_event is not None
+            or preservation_context
             or "tomorrow" in text
             or "upcoming" in text
         )

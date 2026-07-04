@@ -589,6 +589,93 @@ def test_later_today_basketball_preserves_game_without_off_day_language() -> Non
     assert any("SpO2" in item for item in plan["limiting_factors"])
 
 
+def test_game_day_not_tired_language_is_not_body_feel_limiter() -> None:
+    context = {
+        "status": "ok",
+        "latest_date": "2026-07-04",
+        "activity_date": "2026-07-04",
+        "recovery_date": "2026-07-04",
+        "data_freshness": {
+            "freshness_level": "aging",
+            "freshness_label": "aging 15-60m",
+            "latest_observed_date": "2026-07-04",
+            "sync_age_minutes": 21,
+        },
+        "readiness": {
+            "score": 44,
+            "label": "red",
+            "recommendation": "Prioritize recovery, mobility, walking, and sleep.",
+            "evidence": ["Latest sleep is strong at 9.4h."],
+            "score_breakdown": {
+                "base": 50,
+                "score": 44,
+                "band": "red",
+                "activity_date": "2026-07-04",
+                "recovery_date": "2026-07-04",
+                "contributions": [
+                    {
+                        "signal": "spo2",
+                        "points": -6,
+                        "role": "safety_caution",
+                        "date": "2026-07-04",
+                        "explanation": "SpO2 is low enough to cap intensity if it repeats or matches symptoms.",
+                    }
+                ],
+            },
+        },
+        "today": {
+            "steps": 6400,
+            "active_minutes": 42,
+            "active_zone_minutes": 0,
+            "hrv_ms": 92.1,
+            "resting_heart_rate": 60,
+            "sleep": {"asleep_hours": 9.4, "sessions_count": 1},
+            "latest_training_load": {"date": "2026-07-03", "active_zone_minutes": 23},
+        },
+        "available_signal_snapshot": {
+            "status": "ok",
+            "signals": [
+                {
+                    "id": "spo2",
+                    "label": "SpO2 / oxygen saturation",
+                    "display": "82.1%",
+                    "latest": 82.1,
+                    "latest_date": "2026-07-04",
+                    "category": "breathing",
+                    "coaching_use": "Use low SpO2 as a caution clue with breathing, symptoms, and heart signals.",
+                }
+            ],
+        },
+    }
+
+    plan = workout_plan_for_activity(
+        context=context,
+        planned_activity="pre basketball movement / light workout",
+        target_areas=[],
+        constraints="I do not want to feel tired for the basketball game tonight.",
+        duration_minutes=30,
+    )
+
+    joined = " ".join(
+        [
+            plan["summary"],
+            plan["coach_response"]["short_answer"],
+            *plan["focus"],
+            *plan["session_guidance"],
+            *plan["avoid"],
+            *plan["limiting_factors"],
+        ]
+    ).lower()
+
+    assert plan["data_used"]["subjective_limiter"] is False
+    assert plan["data_used"]["preserving_next_session"] is True
+    assert plan["data_used"]["protect_lower_body"] is True
+    assert plan["data_used"]["future_session_label"] == "tonight's basketball game"
+    assert "tonight's basketball game stays available" in plan["coach_response"]["short_answer"]
+    assert "not-100" not in joined
+    assert "do not feel fully right" not in joined
+
+
 def test_hike_tomorrow_card_preserves_legs_instead_of_prescribing_leg_blocks() -> None:
     context = {
         "status": "ok",
