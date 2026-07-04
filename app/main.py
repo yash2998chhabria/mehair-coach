@@ -98,7 +98,7 @@ WIDGET_META = {
 }
 APP_ICON_SVG = """
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96" role="img" aria-label="Mehair Coach">
-  <rect width="96" height="96" rx="24" fill="#f43f8f"/>
+  <rect width="96" height="96" rx="24" fill="#d63384"/>
   <path d="M22 64V31h9l17 20 17-20h9v33h-9V44L50 62h-4L31 44v20h-9Z" fill="white"/>
   <circle cx="73" cy="24" r="8" fill="#fff0f6"/>
 </svg>
@@ -129,6 +129,10 @@ METRIC_LABEL_EXPLANATIONS = {
     "HRV": "heart-rate variability: a recovery stress signal compared with your usual",
     "Resting HR": "resting heart rate: heart stress at rest, best judged against your usual",
     "AZM": "Active Zone Minutes: Fitbit's hard-work minutes from elevated heart-rate zones; recent AZM is load you need to recover from",
+    "SpO2": "oxygen saturation context from Fitbit; useful with breathing, symptoms, and heart signals, not a standalone green light",
+    "Respiratory rate": "overnight breaths per minute; compare it with your usual before using it as a caution signal",
+    "Sleep temperature": "temperature deviation during sleep; can be a stress or illness clue, but is not diagnostic",
+    "VO2 max": "longer-term cardio capacity context, not same-day recovery readiness",
 }
 
 CARDIO_SPORT_TERMS = (
@@ -886,6 +890,7 @@ def workout_recommendation(
     goal_payload = (goal or {}).get("goal") or {}
     goal_status = _goal_status(goal_payload, workout_count)
     context_gaps = _workout_context_gaps(checkins or [], goal_status, has_current_feeling=bool(current_feeling_text))
+    signal_snapshot = context.get("available_signal_snapshot", {}) or {}
 
     if label == "green":
         plan = "Train normally: strength, intervals, or a full session are reasonable if your body agrees."
@@ -1030,6 +1035,16 @@ def workout_recommendation(
         current_feeling=current_feeling_text,
         time_limit_minutes=time_limit_minutes,
     )
+    training_decision = _training_decision_frame(
+        intensity=intensity,
+        rpe_cap=rpe_cap,
+        readiness=readiness,
+        evidence=evidence,
+        avoid=deduped_avoid,
+        stop_conditions=stop_conditions,
+        next_actions=deduped_next_actions,
+        freshness=freshness,
+    )
 
     return {
         "status": "ok",
@@ -1059,6 +1074,7 @@ def workout_recommendation(
         },
         "workout_history_summary": workout_summary or None,
         "data_freshness": freshness,
+        "training_decision": training_decision,
         "data_used": {
             "activity_date": activity_date,
             "recovery_date": recovery_date,
@@ -1084,7 +1100,10 @@ def workout_recommendation(
             "goal": goal,
             "recent_workouts": workout_count,
             "freshness_level": freshness.get("freshness_level"),
+            "available_signal_count": len(signal_snapshot.get("signals", [])),
+            "available_signal_ids": signal_snapshot.get("available_signal_ids", []),
         },
+        "available_signal_snapshot": signal_snapshot,
         "readiness": readiness,
         "coach_response": coach_response,
         "context": context,
@@ -1159,6 +1178,7 @@ def workout_plan_for_activity(
         constraint_text=constraint_text,
         protect_lower_body=protect_lower_body,
     )
+    signal_snapshot = context.get("available_signal_snapshot", {}) or {}
 
     intensity = _base_intensity(readiness_label)
     rpe_cap = {"easy": 6, "moderate": 7, "moderate-to-hard": 8}.get(intensity, 6)
@@ -1363,6 +1383,16 @@ def workout_plan_for_activity(
         illness_flags=illness_flags,
         stop_conditions=stop_conditions,
     )
+    training_decision = _training_decision_frame(
+        intensity=intensity,
+        rpe_cap=rpe_cap,
+        readiness=readiness,
+        evidence=deduped_limiting_factors,
+        avoid=deduped_avoid,
+        stop_conditions=stop_conditions,
+        next_actions=session,
+        freshness=context.get("data_freshness", {}),
+    )
 
     return {
         "status": "ok",
@@ -1389,6 +1419,7 @@ def workout_plan_for_activity(
         ],
         "stop_conditions": stop_conditions,
         "limiting_factors": deduped_limiting_factors,
+        "training_decision": training_decision,
         "data_used": {
             "activity_date": activity_date,
             "recovery_date": recovery_date,
@@ -1419,7 +1450,10 @@ def workout_plan_for_activity(
             "explicit_high_intensity_request": explicit_high_intensity_request,
             "requested_duration_minutes": requested_duration_minutes,
             "goal": goal,
+            "available_signal_count": len(signal_snapshot.get("signals", [])),
+            "available_signal_ids": signal_snapshot.get("available_signal_ids", []),
         },
+        "available_signal_snapshot": signal_snapshot,
         "questions_to_ask_if_uncertain": [
             "Any pain above 3/10 during warm-up?",
             "Did sleep feel restorative despite the wearable score?",
@@ -1453,12 +1487,14 @@ def active_workout_guidance(
     hrv_ms = _hrv_ms_from_context(context)
     resting_heart_rate = _resting_heart_rate_from_context(context)
     activity_date, recovery_date = _context_dates(context)
+    freshness = context.get("data_freshness", {})
     readiness_label = readiness.get("label", "pending")
     readiness_score = int(readiness.get("score", 0))
     rpe = _bounded_rating(current_rpe)
     pain = _bounded_rating(pain_level, minimum=0)
     symptoms_text = " ".join([symptoms or "", notes or ""]).lower()
     safety_flags = _active_workout_safety_flags(symptoms_text, current_heart_rate_bpm, pain)
+    signal_snapshot = context.get("available_signal_snapshot", {}) or {}
     evidence = list(readiness.get("evidence", []))
     if current_heart_rate_bpm is not None:
         evidence.append(f"Live heart rate reported: {current_heart_rate_bpm} bpm (HR = current beats per minute).")
@@ -1471,6 +1507,11 @@ def active_workout_guidance(
             "Latest synced load before/during this decision: "
             f"{latest_load['active_zone_minutes']} Active Zone Minutes on {latest_load.get('date')} "
             "(AZM, Fitbit hard-work minutes)."
+        )
+    if freshness.get("freshness_label"):
+        evidence.append(
+            "Synced Fitbit context freshness: "
+            f"{freshness.get('freshness_label')}. Live HR/RPE/pain come from what the user reports during the workout."
         )
 
     next_check_window = _active_workout_check_window(elapsed_minutes)
@@ -1595,6 +1636,8 @@ def active_workout_guidance(
         "readiness": readiness,
         "goal_context": (goal or {}).get("goal"),
         "recent_checkins": checkins or [],
+        "data_freshness": freshness,
+        "live_data_note": "In-session guidance uses user-reported live HR/RPE/pain plus the latest cloud-synced Fitbit context; it is not direct band telemetry.",
         "live_inputs": {
             "current_heart_rate_bpm": current_heart_rate_bpm,
             "current_rpe": rpe,
@@ -1612,7 +1655,13 @@ def active_workout_guidance(
             "latest_training_load": latest_load,
             "resting_heart_rate": resting_heart_rate,
             "hrv_ms": hrv_ms,
+            "freshness_level": freshness.get("freshness_level"),
+            "freshness_label": freshness.get("freshness_label"),
+            "live_inputs_are_user_reported": True,
+            "available_signal_count": len(signal_snapshot.get("signals", [])),
+            "available_signal_ids": signal_snapshot.get("available_signal_ids", []),
         },
+        "available_signal_snapshot": signal_snapshot,
         "questions_to_ask_if_uncertain": [
             "Are symptoms new, severe, or getting worse?",
             "Is pain sharp, localized, or changing your movement?",
@@ -1714,8 +1763,20 @@ def _coach_data_story(readiness: dict[str, Any], evidence: list[str]) -> str:
     movement_items = [
         item
         for item in evidence_items
-        if "high movement" in item or "high-step" in item or "high walking" in item or "step volume" in item
+        if "high movement" in item or "high-step" in item or "high walking" in item
     ]
+    steps_window_items = [
+        item
+        for item in evidence_items
+        if "recorded step days" in item or "steps across" in item
+    ]
+    breathing_items = [
+        item
+        for item in evidence_items
+        if "spo2" in item or "oxygen" in item or "respiratory rate" in item
+    ]
+    temperature_items = [item for item in evidence_items if "sleep temperature" in item]
+    capacity_items = [item for item in evidence_items if "vo2 max" in item]
     localized_soreness_items = [
         item
         for item in evidence_items
@@ -1783,8 +1844,26 @@ def _coach_data_story(readiness: dict[str, Any], evidence: list[str]) -> str:
 
     if movement_items:
         constraints.append("movement volume may affect legs")
+    elif steps_window_items:
+        supports.append("steps are useful background load context, with the recorded-day window stated")
     if localized_soreness_items:
         constraints.append("sore areas should shape exercise choice, not automatically cancel training")
+    if any(
+        " is elevated" in item
+        or "below recent baseline" in item
+        or "training caution signal" in item
+        or "treat oxygen context as a training caution" in item
+        for item in breathing_items
+    ):
+        constraints.append("breathing or oxygen context should cap intensity if symptoms agree")
+    elif breathing_items:
+        supports.append("breathing and oxygen signals are background context, not a standalone green light")
+    if any("meaningfully different" in item or "temperature is high" in item for item in temperature_items):
+        constraints.append("sleep temperature adds a caution clue")
+    elif temperature_items:
+        supports.append("sleep temperature is checked as secondary context")
+    if capacity_items:
+        supports.append("VO2 max informs capacity, not today's readiness")
 
     limiting_checkins = any(
         "soreness check-in is high" in item
@@ -2091,13 +2170,137 @@ def _today_workout_coach_response(
         "data_story": _coach_data_story(readiness, evidence),
         "session_blueprint": session_blueprint,
         "what_to_do": _dedupe(what_to_do)[:5],
-        "why": _humanized_evidence(evidence)[:6],
-        "labels_explained": _coach_metric_glossary(),
+        "why": _humanized_evidence(_prioritize_coach_evidence(evidence))[:10],
+        "labels_explained": _coach_metric_glossary(_metric_labels_from_evidence(evidence)),
         "stop_if": stop_conditions[:5],
         "avoid": avoid[:5],
         "answer_style": "Answer like a personal coach: direct recommendation first, then explain the kept metric labels in one short why section.",
         "realistic_follow_ups": _today_realistic_followups(subjective_limiter, illness_flags),
     }
+
+
+def _training_decision_frame(
+    *,
+    intensity: str,
+    rpe_cap: int,
+    readiness: dict[str, Any],
+    evidence: list[str],
+    avoid: list[str],
+    stop_conditions: list[str],
+    next_actions: list[str],
+    freshness: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    freshness = freshness or {}
+    evidence_text = " ".join(str(item).lower() for item in evidence)
+    has_sync_limit = bool(freshness.get("needs_sync_before_time_sensitive_advice")) or "data freshness" in evidence_text
+    has_symptom_limit = any(
+        term in evidence_text
+        for term in (
+            "illness symptoms",
+            "reported symptoms",
+            "urgent care",
+            "chest pain",
+            "chest tightness",
+            "dizzy",
+            "dizziness",
+            "fever",
+            "user-stated pain",
+            "live pain reported",
+            "soreness check-in is high",
+        )
+    )
+    has_load_limit = any(term in evidence_text for term in ("high-step", "high walking", "high zone", "high recent load"))
+    if intensity == "moderate-to-hard" and not has_sync_limit and not has_symptom_limit:
+        hard_training = "yes_if_warmup_agrees"
+    elif intensity == "easy" or has_symptom_limit:
+        hard_training = "no"
+    else:
+        hard_training = "conditional"
+
+    if intensity == "easy":
+        best_session_type = "recovery movement, mobility, walking, or rest"
+    elif intensity == "moderate":
+        best_session_type = "controlled strength, zone 2, technique, or submax intervals"
+    else:
+        best_session_type = "normal training with a warm-up check and no blind max effort"
+
+    reasons_for, reasons_against = _split_training_reasons(evidence)
+    if has_sync_limit and not any("fresh" in item.lower() or "sync" in item.lower() for item in reasons_against):
+        reasons_against.insert(0, freshness.get("recommendation") or "Data should be synced before hard time-sensitive training.")
+    if has_load_limit and not any("load" in item.lower() or "step" in item.lower() for item in reasons_against):
+        reasons_against.append("Recent movement or zone load should cap added intensity.")
+
+    return {
+        "hard_training": hard_training,
+        "best_session_type": best_session_type,
+        "rpe_cap": rpe_cap,
+        "readiness_score": readiness.get("score"),
+        "readiness_band": readiness.get("label"),
+        "freshness_level": freshness.get("freshness_level"),
+        "reasons_for": reasons_for[:5],
+        "reasons_against": reasons_against[:5],
+        "do_now": next_actions[:5],
+        "avoid": avoid[:5],
+        "stop_or_downshift_triggers": stop_conditions[:6],
+        "model_guidance": (
+            "Use this as the compact decision frame. Explain the human action first, then use the reasons "
+            "for/against to show how the data changed the recommendation."
+        ),
+    }
+
+
+def _split_training_reasons(evidence: list[str]) -> tuple[list[str], list[str]]:
+    positive_terms = (
+        "strong",
+        "support",
+        "above recent",
+        "steady",
+        "not elevated",
+        "normal",
+        "green",
+        "available",
+        "useful context",
+    )
+    caution_terms = (
+        "short",
+        "below",
+        "elevated",
+        "high",
+        "stale",
+        "aging",
+        "sync",
+        "training caution",
+        "pain",
+        "illness",
+        "symptom",
+        "not feel",
+        "soreness",
+        "stress",
+    )
+    reasons_for: list[str] = []
+    reasons_against: list[str] = []
+    for item in _humanized_evidence(_prioritize_coach_evidence(evidence)):
+        lower = item.lower()
+        if (
+            ("spo2" in lower or "oxygen saturation" in lower or "respiratory rate" in lower)
+            and " is elevated" not in lower
+            and "below recent baseline" not in lower
+            and "training caution" not in lower
+        ):
+            reasons_for.append(item)
+            continue
+        if "sleep temperature" in lower and "meaningfully different" not in lower and "temperature is high" not in lower:
+            reasons_for.append(item)
+            continue
+        if any(term in lower for term in caution_terms):
+            reasons_against.append(item)
+        elif any(term in lower for term in positive_terms):
+            reasons_for.append(item)
+    if not reasons_for:
+        reasons_for.append("Enough synced context exists to make a data-guided coaching call.")
+    if not reasons_against:
+        reasons_against.append("No major synced red flag was detected; warm-up, pain, breathing, and symptoms still decide the ceiling.")
+    return _dedupe(reasons_for), _dedupe(reasons_against)
 
 
 def _workout_plan_coach_response(
@@ -2264,6 +2467,42 @@ def _humanized_evidence(items: list[str]) -> list[str]:
     return _dedupe([_humanize_evidence_item(item) for item in items if item])
 
 
+def _prioritize_coach_evidence(evidence: list[str]) -> list[str]:
+    core: list[str] = []
+    secondary: list[str] = []
+    rest: list[str] = []
+    secondary_needles = (
+        "spo2",
+        "oxygen saturation",
+        "respiratory rate",
+        "sleep temperature",
+        "vo2 max",
+        "steps across",
+        "recorded step days",
+        "heart-rate zones",
+        "activity levels",
+    )
+    core_needles = (
+        "data freshness",
+        "sleep",
+        "hrv",
+        "resting heart",
+        "resting hr",
+        "active zone minutes",
+        "current user-stated feeling",
+        "check-in",
+    )
+    for item in evidence:
+        lower = str(item).lower()
+        if any(needle in lower for needle in secondary_needles):
+            secondary.append(item)
+        elif any(needle in lower for needle in core_needles):
+            core.append(item)
+        else:
+            rest.append(item)
+    return _dedupe(core[:4] + secondary[:5] + core[4:] + rest)
+
+
 def _humanize_evidence_item(item: str) -> str:
     text = str(item)
     lower = text.lower()
@@ -2301,6 +2540,16 @@ def _humanize_evidence_item(item: str) -> str:
         if "high" in lower or "latest training load" in lower:
             return f"{expanded} More AZM means more recent training stress to account for."
         return expanded
+    if "spo2" in lower or "oxygen saturation" in lower:
+        return f"{text} Oxygen is useful context with breathing, symptoms, and heart signals; it is not a standalone green light."
+    if "respiratory rate" in lower:
+        return f"{text} Breathing rate matters most when it is unusual for you or paired with symptoms."
+    if "sleep temperature" in lower:
+        return f"{text} Temperature can add a stress or illness clue, but it does not diagnose anything by itself."
+    if "vo2 max" in lower:
+        return f"{text} VO2 max helps plan endurance work and progress, not today's recovery ceiling."
+    if "steps across" in lower or "recorded step days" in lower:
+        return f"{text} This is movement-load context, and the recorded-day window keeps the average honest."
     if "rpe" in lower:
         return text.replace("RPE", "RPE (how hard it feels)")
     if "sleep" in lower and ("short" in lower or "below" in lower):
@@ -2385,6 +2634,8 @@ def _workout_evidence(
             "(resting heart rate is heart stress at rest)."
         )
 
+    evidence.extend(_signal_snapshot_evidence(context.get("available_signal_snapshot", {}), limit=7))
+
     if energy_rating is not None:
         evidence.append(f"Latest energy check-in is {energy_rating}/10.")
     if soreness_rating is not None:
@@ -2423,6 +2674,64 @@ def _workout_evidence(
         evidence.append(f"Hardest recent workout: {name}{suffix}.")
 
     return _dedupe(evidence)
+
+
+def _signal_snapshot_evidence(snapshot: dict[str, Any], *, limit: int = 6) -> list[str]:
+    if snapshot.get("status") != "ok":
+        return []
+    priority = {
+        "spo2": 0,
+        "respiratory_rate": 1,
+        "sleep_temperature": 2,
+        "heart_rate_zones": 3,
+        "steps": 4,
+        "heart_rate_samples": 5,
+        "vo2_max": 6,
+        "activity_levels": 7,
+        "sedentary_minutes": 8,
+        "distance": 9,
+        "floors": 10,
+    }
+    signals = sorted(
+        snapshot.get("signals") or [],
+        key=lambda signal: priority.get(str(signal.get("id") or ""), 99),
+    )
+    lines: list[str] = []
+    for signal in signals:
+        signal_id = str(signal.get("id") or "")
+        if signal_id not in priority:
+            continue
+        display = signal.get("display")
+        if not display:
+            continue
+        label = signal.get("label") or signal_id
+        coaching_use = signal.get("coaching_use") or signal.get("why_it_matters") or ""
+        if signal_id == "steps":
+            window = signal.get("window_summary") or {}
+            display = window.get("display") or display
+            average = window.get("average_display")
+            if average:
+                display = f"{display}; {average}"
+        lines.append(f"{label}: {display}. {coaching_use}".strip())
+        if len(lines) >= limit:
+            break
+    return lines
+
+
+def _metric_labels_from_evidence(evidence: list[str]) -> list[str]:
+    labels = ["Readiness", "RPE", "HRV", "Resting HR", "AZM"]
+    evidence_text = " ".join(str(item) for item in evidence).lower()
+    additions = (
+        ("SpO2", ("spo2", "oxygen saturation")),
+        ("Respiratory rate", ("respiratory rate", "breaths/min")),
+        ("Sleep temperature", ("sleep temperature", "temperature deviation")),
+        ("VO2 max", ("vo2 max", "cardio capacity")),
+        ("HR", ("heart-rate samples", "heart rate samples", "live heart rate")),
+    )
+    for label, needles in additions:
+        if any(needle in evidence_text for needle in needles):
+            labels.append(label)
+    return _dedupe(labels)
 
 
 def _workout_context_gaps(

@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 
 
-WIDGET_URI = "ui://mehair/today-v16.html"
+WIDGET_URI = "ui://mehair/today-v17.html"
 LEGACY_WIDGET_URIS = (
     "ui://mehair/today-v1.html",
     "ui://mehair/today-v2.html",
@@ -20,6 +20,7 @@ LEGACY_WIDGET_URIS = (
     "ui://mehair/today-v13.html",
     "ui://mehair/today-v14.html",
     "ui://mehair/today-v15.html",
+    "ui://mehair/today-v16.html",
 )
 WIDGET_RESOURCE_URIS = (WIDGET_URI, *LEGACY_WIDGET_URIS)
 WIDGET_MIME_TYPE = "text/html;profile=mcp-app"
@@ -441,11 +442,20 @@ TODAY_WIDGET_HTML = """
         line-height: 1.3;
       }
 
+      .signal-heading {
+        border-top: 1px solid #f7deea;
+        padding: 12px 14px 7px;
+        color: var(--brand);
+        font-size: 11px;
+        font-weight: 820;
+        line-height: 1.2;
+        text-transform: uppercase;
+      }
+
       .signal-strip {
         display: grid;
         grid-template-columns: repeat(3, minmax(0, 1fr));
         gap: 8px;
-        border-top: 1px solid #f7deea;
         padding: 0 14px 14px;
       }
 
@@ -539,6 +549,12 @@ TODAY_WIDGET_HTML = """
         .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
         .signal-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
         .details { grid-template-columns: 1fr; }
+      }
+
+      @media (max-width: 430px) {
+        .metrics { grid-template-columns: 1fr; }
+        .label-key { grid-template-columns: 1fr; }
+        .signal-strip { grid-template-columns: 1fr; }
       }
 
       @media (max-width: 340px) {
@@ -822,7 +838,7 @@ TODAY_WIDGET_HTML = """
         const intents = data.intent_hints || [];
         const freshness = data.data_freshness || {};
         const signalSnapshot = data.available_signal_snapshot || {};
-        const snapshotSignals = (signalSnapshot.signals || []).filter((item) => item.display).slice(0, 6);
+        const snapshotSignals = prioritySignalStrip(signalSnapshot.signals || []);
         const topMetrics = (available.length ? available : metrics).slice(0, 6);
         const hasSafetyFlags = (data.safety_flags || []).length > 0;
         return {
@@ -852,10 +868,11 @@ TODAY_WIDGET_HTML = """
               ]),
           evidenceTitle: hasSafetyFlags ? "Relevant Metrics" : "Why These",
           evidence: snapshotSignals.length
-            ? snapshotSignals.map((item) => `${item.label || item.id}: ${item.why_it_matters || "Useful context."}`)
+            ? snapshotSignals.map((item) => `${item.label || item.id}: ${item.coaching_use || item.why_it_matters || "Useful context."}`)
             : topMetrics.map((item) => `${item.label || item.id}: ${item.reason || "Useful context."}`),
           secondaryTitle: hasSafetyFlags ? "Data Clues" : "Watchouts",
           secondary: hasSafetyFlags ? data.clues || [] : data.watchouts || [],
+          signalStrip: snapshotSignals,
         };
       }
 
@@ -868,6 +885,7 @@ TODAY_WIDGET_HTML = """
         const score = finiteNumber(readiness.score, 0);
         const band = readinessBand(score, label);
         const sleepTemp = latest.sleep_temperature || {};
+        const signalSnapshot = data.available_signal_snapshot || {};
         return {
           accent: readinessAccent(band),
           stateLabel: band,
@@ -899,6 +917,7 @@ TODAY_WIDGET_HTML = """
           evidence: data.positives || [],
           secondaryTitle: "Watchouts",
           secondary: data.watchouts || [],
+          signalStrip: prioritySignalStrip(signalSnapshot.signals || []),
         };
       }
 
@@ -913,12 +932,15 @@ TODAY_WIDGET_HTML = """
         const subjective = data.subjective_context || {};
         const freshness = data.data_freshness || {};
         const coach = data.coach_response || {};
+        const signalSnapshot = data.available_signal_snapshot || {};
         const sleepHours = data.data_used?.latest_sleep_hours ?? sleep.asleep_hours ?? sleep.duration_hours;
         const goalDetail = goal.remaining_sessions != null
           ? `${goal.remaining_sessions} goal sessions left`
           : goal.target || "";
         const activityWindow = data.activity_date || data.data_used?.activity_date || data.latest_date || "today";
         const activityWindowLabel = activityWindow === "today" ? "today so far" : `${activityWindow} so far`;
+        const stepsValue = today.steps ?? data.data_used?.steps_today;
+        const azmValue = today.active_zone_minutes ?? data.data_used?.active_zone_minutes_today;
         return {
           accent: readinessAccent(band),
           stateLabel: band,
@@ -940,13 +962,14 @@ TODAY_WIDGET_HTML = """
           focus: coach.session_blueprint || coach.what_to_do || data.next_actions || [],
           labels: coach.labels_explained || defaultLabelKey(["Readiness", "RPE", "HRV", "Resting HR", "AZM"]),
           metrics: [
-            ["Steps", `${intText(today.steps ?? data.data_used?.steps_today ?? 0)} steps`, activityWindowLabel, "Movement load in this window; mostly useful for leg fatigue."],
-            ["AZM", `${intText(today.active_zone_minutes ?? data.data_used?.active_zone_minutes_today ?? 0)} min`, activityWindowLabel, "AZM = Fitbit hard-work minutes in this window."],
+            ["Steps", stepsValue != null ? `${intText(stepsValue)} steps` : null, activityWindowLabel, "Movement load in this window; mostly useful for leg fatigue."],
+            ["AZM", azmValue != null ? `${intText(azmValue)} min` : null, activityWindowLabel, "AZM = Fitbit hard-work minutes in this window."],
             ["Sleep", sleepHours != null ? `${num(sleepHours, 1)}h` : null],
             ["HRV", data.data_used?.hrv_ms != null ? `${num(data.data_used.hrv_ms, 1)} ms` : null],
             ["Soreness", subjective.soreness != null ? `${subjective.soreness}/10` : null, subjective.energy != null ? `energy ${subjective.energy}/10` : ""],
             ["Goal", goal.remaining_sessions != null ? intText(goal.remaining_sessions) : "No goal", goalDetail],
           ],
+          signalStrip: prioritySignalStrip(signalSnapshot.signals || []),
           evidenceTitle: "What This Means",
           evidence: [coach.data_story, ...(coach.why || prioritizeWorkoutEvidence(data.evidence || data.why || []))].filter(Boolean),
           secondaryTitle: coach.stop_if ? "Stop If" : "Avoid",
@@ -991,6 +1014,8 @@ TODAY_WIDGET_HTML = """
         const recoveryDate = context.recovery_date || today.recovery_date || activityDate;
         const latestLoad = today.latest_training_load || {};
         const sleepHours = sleep.asleep_hours ?? sleep.duration_hours;
+        const stepsValue = today.steps;
+        const azmValue = today.active_zone_minutes;
         const source = activityDate && recoveryDate && activityDate !== recoveryDate
           ? `Activity ${activityDate}; recovery ${recoveryDate}.`
           : activityDate ? `Health context from ${activityDate}.` : "Waiting for synced health context.";
@@ -1007,8 +1032,8 @@ TODAY_WIDGET_HTML = """
           focusTitle: "Coach Take",
           focus: [readiness.recommendation || data.recommendation || "Health context synced."],
           metrics: [
-            ["Steps", `${intText(today.steps ?? 0)} steps`, activityDate ? `${activityDate} so far` : "latest window", "Movement load context, not a recovery score."],
-            ["AZM", `${intText(today.active_zone_minutes ?? 0)} min`, latestLoad.date && latestLoad.date !== activityDate ? `${latestLoad.active_zone_minutes ?? 0} on ${latestLoad.date}` : activityDate ? `${activityDate} so far` : "", "Fitbit hard-work minutes."],
+            ["Steps", stepsValue != null ? `${intText(stepsValue)} steps` : null, activityDate ? `${activityDate} so far` : "latest window", "Movement load context, not a recovery score."],
+            ["AZM", azmValue != null ? `${intText(azmValue)} min` : null, latestLoad.date && latestLoad.date !== activityDate ? `${latestLoad.active_zone_minutes ?? 0} on ${latestLoad.date}` : activityDate ? `${activityDate} so far` : "", "Fitbit hard-work minutes."],
             ["Active", optionalInt(today.active_minutes), "minutes"],
             ["Sleep", sleepHours != null ? `${num(sleepHours, 1)}h` : null, sleep.sessions_count ? `${sleep.sessions_count} sessions` : ""],
             ["Resting HR", today.resting_heart_rate ? `${today.resting_heart_rate} bpm` : heart.avg_bpm ? `${heart.avg_bpm} avg` : null],
@@ -1082,6 +1107,7 @@ TODAY_WIDGET_HTML = """
             live.current_rpe != null ? rpeChip(live.current_rpe) : "",
             live.pain_level != null ? `Pain ${live.pain_level}/10` : "",
             readinessChip(readinessLabel, readinessScore),
+            freshnessChip(data.data_freshness || {}),
           ].filter(Boolean),
           score: readinessScore,
           primaryLabel: "Readiness",
@@ -1312,11 +1338,12 @@ TODAY_WIDGET_HTML = """
         const usable = (signals || []).filter((item) => item && item.label).slice(0, 6);
         if (!usable.length) return "";
         return `
+          <div class="signal-heading">Other signals checked</div>
           <div class="signal-strip" aria-label="Signals checked">
             ${usable.map((item) => `
               <div class="signal-card">
                 <b>${escapeHtml(item.label)}</b>
-                <span>${escapeHtml(item.display || item.latest || "synced")}</span>
+                <span>${escapeHtml([item.display || item.latest || "synced", item.latest_date || item.window || ""].filter(Boolean).join(" · "))}</span>
                 <small>${escapeHtml(item.coaching_use || item.why_it_matters || metricHint(item.label))}</small>
               </div>
             `).join("")}
@@ -1364,6 +1391,8 @@ TODAY_WIDGET_HTML = """
             label: item.label || titleCase(item.id || "Signal"),
             display: item.display ?? item.latest,
             coaching_use: item.coaching_use || item.why_it_matters || metricHint(item.label || item.id),
+            latest_date: item.latest_date || item.window || "",
+            why_it_matters: item.why_it_matters || "",
           }));
       }
 

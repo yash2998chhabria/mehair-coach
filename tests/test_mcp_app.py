@@ -121,7 +121,7 @@ async def test_http_metadata_routes() -> None:
     assert health.json()["mcp_endpoint"].endswith("/mcp")
     assert icon.status_code == 200
     assert icon.headers["content-type"].startswith("image/svg+xml")
-    assert "#f43f8f" in icon.text
+    assert "#d63384" in icon.text
     assert oauth.status_code == 200
     assert oauth.json()["client_name"] == "Mehair Coach"
     assert oauth.json()["logo_uri"].endswith("/assets/mehair-coach-icon.svg")
@@ -165,6 +165,7 @@ async def test_widget_preview_route_renders_real_card_state() -> None:
     assert "HRV = recovery stress signal" in overview.text
     assert "AZM = Fitbit hard-work minutes" in overview.text
     assert "Signals checked" in overview.text
+    assert "Other signals checked" in overview.text
     assert "signal-strip" in overview.text
     assert "&lt;55 red" in overview.text
     assert "Vitals" in overview.text

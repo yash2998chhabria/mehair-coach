@@ -4510,6 +4510,10 @@ def _context_from_summary(summary: dict[str, Any], freshness: dict[str, Any]) ->
         "active_zone_minutes": load_minutes,
     }
     readiness = readiness_from_day(today, daily)
+    daily_rows = [
+        {"date": day, **_public_daily_values(values)}
+        for day, values in sorted(daily.items())[-14:]
+    ]
     return {
         "status": "ok",
         "latest_date": latest_date,
@@ -4520,6 +4524,10 @@ def _context_from_summary(summary: dict[str, Any], freshness: dict[str, Any]) ->
         "evidence": readiness["evidence"],
         "data_coverage": data_coverage(daily),
         "data_freshness": freshness,
+        "available_signal_snapshot": _available_signal_snapshot(
+            daily_rows,
+            lookback_days=min(14, len(daily_rows)) or None,
+        ),
     }
 
 

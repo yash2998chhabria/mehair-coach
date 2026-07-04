@@ -1207,6 +1207,59 @@ def test_today_recommendation_returns_human_coach_response_without_losing_labels
                 "average_resting_heart_rate": 58,
             }
         },
+        "available_signal_snapshot": {
+            "status": "ok",
+            "available_signal_ids": [
+                "spo2",
+                "respiratory_rate",
+                "sleep_temperature",
+                "heart_rate_zones",
+                "steps",
+                "vo2_max",
+            ],
+            "signals": [
+                {
+                    "id": "spo2",
+                    "label": "SpO2 / oxygen saturation",
+                    "display": "96.5%",
+                    "coaching_use": "Use low or unusual SpO2 with respiratory rate, resting HR, sleep, and symptoms to lower intensity or recommend caution.",
+                },
+                {
+                    "id": "respiratory_rate",
+                    "label": "Respiratory rate",
+                    "display": "16.6 breaths/min",
+                    "coaching_use": "Use elevated or unusual respiratory rate as a reason to cap intensity, especially with symptoms or low sleep.",
+                },
+                {
+                    "id": "sleep_temperature",
+                    "label": "Sleep temperature",
+                    "display": "+0.45 C vs baseline",
+                    "coaching_use": "Use an elevated deviation as context to keep training controlled; do not diagnose from it.",
+                },
+                {
+                    "id": "heart_rate_zones",
+                    "label": "Heart-rate zones",
+                    "display": "fat burn 12m, cardio 4m",
+                    "coaching_use": "More peak/cardio zone time should push the next session toward easy volume, technique, or strength away from fatigue.",
+                },
+                {
+                    "id": "steps",
+                    "label": "Steps",
+                    "display": "6,400 steps",
+                    "window_summary": {
+                        "display": "18,897 steps across 4 recorded days in the 14-day lookback",
+                        "average_display": "4,724/day across recorded step days",
+                    },
+                    "coaching_use": "Use high step volume as fatigue context; low steps alone do not mean the user needs hard training.",
+                },
+                {
+                    "id": "vo2_max",
+                    "label": "VO2 max",
+                    "display": "44.4 ml/kg/min",
+                    "coaching_use": "Use it for endurance planning and progress, not as the main same-day train-or-rest signal.",
+                },
+            ],
+        },
     }
 
     recommendation = workout_recommendation(
@@ -1218,11 +1271,25 @@ def test_today_recommendation_returns_human_coach_response_without_losing_labels
     assert "let the first 10-15 minutes decide" in recommendation["coach_response"]["short_answer"]
     assert any(item["label"] == "Readiness" for item in recommendation["coach_response"]["labels_explained"])
     assert any(item["label"] == "AZM" for item in recommendation["coach_response"]["labels_explained"])
+    assert any(item["label"] == "SpO2" for item in recommendation["coach_response"]["labels_explained"])
+    assert any(item["label"] == "Respiratory rate" for item in recommendation["coach_response"]["labels_explained"])
+    assert any(item["label"] == "Sleep temperature" for item in recommendation["coach_response"]["labels_explained"])
+    assert any(item["label"] == "VO2 max" for item in recommendation["coach_response"]["labels_explained"])
     assert any("10-15 minutes" in item for item in recommendation["coach_response"]["session_blueprint"])
     assert "current body feel caps the ceiling" in recommendation["coach_response"]["data_story"]
+    assert "breathing or oxygen context should cap intensity" not in recommendation["coach_response"]["data_story"]
     assert any("RPE (how hard it feels)" in item for item in recommendation["coach_response"]["what_to_do"])
     assert any("HRV (recovery stress signal)" in item for item in recommendation["coach_response"]["why"])
     assert any("Resting HR" in item for item in recommendation["coach_response"]["why"])
+    assert any("SpO2" in item for item in recommendation["coach_response"]["why"])
+    assert any("Respiratory rate" in item for item in recommendation["coach_response"]["why"])
+    assert any("Sleep temperature" in item for item in recommendation["coach_response"]["why"])
+    assert any("18,897 steps across 4 recorded days" in item for item in recommendation["coach_response"]["why"])
+    assert recommendation["data_used"]["available_signal_ids"] == context["available_signal_snapshot"]["available_signal_ids"]
+    assert recommendation["available_signal_snapshot"]["status"] == "ok"
+    assert recommendation["training_decision"]["hard_training"] == "conditional"
+    assert recommendation["training_decision"]["rpe_cap"] == 7
+    assert any("breathing" in item.lower() or "oxygen" in item.lower() for item in recommendation["training_decision"]["reasons_for"])
     assert any("I only have 30 minutes" in item for item in recommendation["coach_response"]["realistic_follow_ups"])
     assert any("If I still feel off" in item for item in recommendation["coach_response"]["realistic_follow_ups"])
 

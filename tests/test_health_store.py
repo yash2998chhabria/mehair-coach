@@ -510,6 +510,8 @@ def test_synthetic_records_calculate_context(tmp_path, monkeypatch) -> None:
     assert context["today"]["sleep_temperature"]["delta_celsius"] == 0.21
     assert context["readiness"]["label"] == "green"
     assert context["readiness"]["score"] >= 75
+    context_signal_ids = set(context["available_signal_snapshot"]["available_signal_ids"])
+    assert {"spo2", "respiratory_rate", "sleep_temperature", "vo2_max", "heart_rate_zones", "steps"} <= context_signal_ids
 
     sleep = store.sleep_analysis(user_id)
     activity = store.activity_load(user_id)
