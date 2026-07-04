@@ -619,6 +619,15 @@ def test_eval_natural_prompt_mix_is_not_biased_to_off_day_language(tmp_path, mon
     assert {"daily-oxygen-saturation", "daily-respiratory-rate"} <= set(multi_day_plan["available_metric_ids"])
     assert any(item["purpose"] == "recovery" for item in multi_day_plan["query_suggestions"])
 
+    pure_multi_day_plan = store.health_question_clues(
+        user_id,
+        "Build me the next 3 days around getting fitter without feeling wrecked.",
+        days=7,
+    )
+    assert pure_multi_day_plan["primary_conversation_flows"][0]["flow"] == "weekly_training_planning"
+    assert "multi_day_plan" in pure_multi_day_plan["intent_hints"]
+    assert pure_multi_day_plan["recommended_tool_sequence"][1] == "get_health_overview"
+
     generalizable_prompts = [
         "Make the call for my body today; I want something useful without being dumb.",
         "What clues from the band would talk me out of a big session?",
@@ -652,6 +661,17 @@ def test_eval_natural_prompt_mix_is_not_biased_to_off_day_language(tmp_path, mon
     assert oxygen_question["primary_conversation_flows"][0]["flow"] == "sleep_breathing_recovery_question"
     assert "daily-oxygen-saturation" in metric_ids(oxygen_question)
     assert "daily-respiratory-rate" in metric_ids(oxygen_question)
+
+    constrained_activity_prompts = [
+        "I have a hike tomorrow. What workout keeps my legs useful?",
+        "I walked a lot this morning. Does that change my lift later?",
+        "My sleep was good but my legs feel heavy. Run or upper body?",
+    ]
+    for question in constrained_activity_prompts:
+        clues = store.health_question_clues(user_id, question, days=7)
+        assert clues["primary_conversation_flows"][0]["flow"] == "specific_activity_plan"
+        assert "specific_activity" in clues["intent_hints"]
+        assert clues["recommended_tool_sequence"][1] == "plan_workout_with_health_context"
 
 
 def test_eval_question_clues_include_human_decision_frame_for_life_constraints(tmp_path, monkeypatch) -> None:

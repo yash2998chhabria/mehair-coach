@@ -171,6 +171,38 @@ INTENT_METRICS = {
         "daily-resting-heart-rate",
         "daily-vo2-max",
     ],
+    "specific_activity": [
+        "exercise",
+        "active-zone-minutes",
+        "time-in-heart-rate-zone",
+        "activity-level",
+        "active-minutes",
+        "steps",
+        "distance",
+        "floors",
+        "sleep",
+        "daily-heart-rate-variability",
+        "daily-resting-heart-rate",
+        "daily-respiratory-rate",
+        "daily-oxygen-saturation",
+        "daily-sleep-temperature-derivations",
+    ],
+    "multi_day_plan": [
+        "exercise",
+        "active-zone-minutes",
+        "time-in-heart-rate-zone",
+        "activity-level",
+        "active-minutes",
+        "steps",
+        "distance",
+        "sleep",
+        "daily-heart-rate-variability",
+        "daily-resting-heart-rate",
+        "daily-respiratory-rate",
+        "daily-oxygen-saturation",
+        "daily-sleep-temperature-derivations",
+        "daily-vo2-max",
+    ],
     "symptom_safety": [
         "daily-resting-heart-rate",
         "heart-rate",
@@ -3016,6 +3048,32 @@ def _question_intents(question: str) -> list[str]:
         "preserve energy",
         "stay fresh",
     )
+    specific_activity_context = has(
+        "hike",
+        "walk",
+        "long walk",
+        "lift",
+        "run",
+        "upper body",
+        "lower body",
+        "legs",
+        "leg day",
+        "gym",
+        "squash",
+        "soccer",
+        "sport",
+        "dinner later",
+        "later today",
+        "tomorrow",
+        "next session",
+        "preserve",
+        "keep my legs",
+        "keeps my legs",
+        "feel drained",
+        "not drained",
+        "run or",
+        "or lift",
+    )
     broad_data_context = has(
         "what data",
         "which data",
@@ -3117,11 +3175,16 @@ def _question_intents(question: str) -> list[str]:
             ]
         )
 
-    if future_window_context or improvement_goal_context:
+    if future_window_context:
+        intents.extend(["multi_day_plan", "daily_plan", "general_overview", "workout_decision", "recovery", "activity_load", "heart", "sleep", "goal"])
+
+    if improvement_goal_context:
         intents.extend(["daily_plan", "general_overview", "workout_decision", "recovery", "activity_load", "heart", "sleep", "goal"])
 
     if exercise_context:
         intents.extend(["workout_decision", "recovery", "activity_load", "heart", "sleep", "subjective", "goal"])
+    if specific_activity_context and exercise_context:
+        intents.extend(["specific_activity", "workout_decision", "activity_load", "recovery", "subjective"])
     live_workout_context = has(
         "during workout",
         "during my workout",
@@ -3521,6 +3584,10 @@ def _primary_conversation_flows(
         add("sleep_breathing_recovery_question", "Oxygen, respiratory-rate, or sleep-temperature questions need recovery comparison before training permission.")
     if "metric_discovery" in intents:
         add("metric_discovery_or_unusual_question", "The user is asking which data matters, what is available, or what is being ignored.")
+    if "specific_activity" in intents:
+        add("specific_activity_plan", "A named activity, future event, body area, or energy-preservation constraint should shape the session first.")
+    if "multi_day_plan" in intents:
+        add("weekly_training_planning", "A next-few-days or weekly question should start from recent load, workout history, goals, and recovery windows.")
     if "daily_plan" in intents or "workout_decision" in intents:
         add("daily_training_decision", "The user needs a concrete today/session decision, not only a metric explanation.")
     if "goal" in intents and ("daily_plan" in intents or "activity_load" in intents):
