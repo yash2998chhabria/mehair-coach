@@ -1732,9 +1732,28 @@ def test_workout_plan_separates_low_spo2_from_whole_readiness_score() -> None:
     assert "source_boundaries" in plan["training_decision"]["model_guidance"]
     assert any("Readiness attribution" in item for item in plan["limiting_factors"])
     assert any("caution signals can cap intensity" in item for item in plan["limiting_factors"])
+    assert any("very low for wearable oxygen" in item for item in plan["limiting_factors"])
+    assert plan["recommended_intensity"] == "easy"
+    assert plan["rpe_cap"] == 4
+    assert plan["training_decision"]["hard_training"] == "no"
+    assert any("re-check the SpO2" in item for item in plan["warmup"])
+    assert any("Running, intervals, heavy lifting" in item for item in plan["avoid"])
+    assert any("Stop and seek medical help" in item for item in plan["stop_conditions"])
     assert plan["training_decision"]["readiness_attribution"]["cautions"] == attribution["cautions"]
     assert "readiness_attribution" in plan["coach_response"]["answer_style"]
     assert "Separate source types" in plan["coach_response"]["answer_style"]
+
+    recommendation = workout_recommendation(
+        context=context,
+        current_feeling="I feel good and have 30 minutes before dinner.",
+    )
+
+    assert recommendation["intensity"] == "easy"
+    assert recommendation["rpe_cap"] == 4
+    assert recommendation["training_decision"]["hard_training"] == "no"
+    assert any("very low for wearable oxygen" in item for item in recommendation["evidence"])
+    assert any("Re-check oxygen" in item for item in recommendation["next_actions"])
+    assert any("Running, intervals, heavy lifting" in item for item in recommendation["avoid"])
 
 
 def test_today_recommendation_for_normal_green_day_does_not_assume_off_day() -> None:

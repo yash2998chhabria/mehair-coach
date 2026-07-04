@@ -1428,6 +1428,7 @@ def workout_recommendation(
         checkin_illness_flags=checkin_illness_flags,
         current_text=current_feeling_lower,
     )
+    oxygen_constraint = _oxygen_training_constraint(context)
     workout_summary = (workout_history or {}).get("summary", {}) if (workout_history or {}).get("status") == "ok" else {}
     workout_count = int(workout_summary.get("workout_count") or 0)
     goal_payload = (goal or {}).get("goal") or {}
@@ -1525,6 +1526,15 @@ def workout_recommendation(
     if stress_rating and stress_rating >= 7:
         plan += f" Stress is high at {stress_rating}/10, so keep the session predictable and avoid all-out work."
         rpe_cap = min(rpe_cap, 7)
+    if oxygen_constraint:
+        plan += " " + oxygen_constraint["plan_note"]
+        if oxygen_constraint["severity"] == "very_low":
+            intensity = "easy"
+        elif intensity == "moderate-to-hard":
+            intensity = "moderate"
+        rpe_cap = min(rpe_cap, oxygen_constraint["rpe_cap"])
+        next_actions.append(oxygen_constraint["next_action"])
+        avoid.append(oxygen_constraint["avoid"])
     if illness_flags:
         plan += " Illness signs override normal training pressure: skip hard work and use rest or only very easy movement if symptoms are mild."
         intensity = "easy"
@@ -1558,6 +1568,8 @@ def workout_recommendation(
             primary_action = "Do one controlled main block: easy zone 2 if no plan, or submax planned training with reps in reserve."
     else:
         primary_action = "Make today recovery-biased: walk, mobility, easy cardio, or rest."
+    if oxygen_constraint:
+        primary_action = oxygen_constraint["primary_action"]
     if illness_flags:
         primary_action = "Rest today, or keep movement to a short easy walk if symptoms are mild and improving."
     next_actions.insert(1 if freshness.get("needs_sync_before_time_sensitive_advice") else 0, primary_action)
@@ -1575,13 +1587,18 @@ def workout_recommendation(
         goal_status=goal_status,
         workout_summary=workout_summary,
     )
+    if oxygen_constraint:
+        evidence.insert(0, oxygen_constraint["evidence"])
     stop_conditions = _workout_stop_conditions(
         rpe_cap,
         subjective_limiter=subjective_limiter,
         illness_flags=illness_flags,
     )
+    if oxygen_constraint:
+        stop_conditions.insert(0, oxygen_constraint["stop_condition"])
     deduped_next_actions = _dedupe(next_actions)
     deduped_avoid = _dedupe(avoid)
+    stop_conditions = _dedupe(stop_conditions)
     coach_response = _today_workout_coach_response(
         intensity=intensity,
         rpe_cap=rpe_cap,
@@ -1755,6 +1772,7 @@ def workout_plan_for_activity(
         protect_lower_body=protect_lower_body,
     )
     signal_snapshot = context.get("available_signal_snapshot", {}) or {}
+    oxygen_constraint = _oxygen_training_constraint(context)
 
     intensity = _base_intensity(readiness_label)
     rpe_cap = {"easy": 6, "moderate": 7, "moderate-to-hard": 8}.get(intensity, 6)
@@ -1847,12 +1865,24 @@ def workout_plan_for_activity(
         )
     if latest_load.get("active_zone_minutes", 0) > 45:
         rpe_cap = min(rpe_cap, 7)
+    if oxygen_constraint:
+        if oxygen_constraint["severity"] == "very_low":
+            intensity = "easy"
+        elif intensity == "moderate-to-hard":
+            intensity = "moderate"
+        rpe_cap = min(rpe_cap, oxygen_constraint["rpe_cap"])
+        limiting_factors.append(oxygen_constraint["evidence"])
     if illness_flags:
         intensity = "easy"
         rpe_cap = min(rpe_cap, 4)
         limiting_factors.extend(illness_flags)
 
     focus, avoid, warmup, session = _activity_guidance(exercise_context_text, rpe_cap, intensity)
+    if oxygen_constraint:
+        focus.insert(0, "Verify oxygen first; do not use a low SpO2 reading as something to train through.")
+        avoid.insert(0, oxygen_constraint["avoid"])
+        warmup.insert(0, "Before training, re-check the SpO2 reading and sensor fit; treat a repeat low reading as a stop signal.")
+        session.insert(0, oxygen_constraint["primary_action"])
     exercise_blocks, substitutions = _exercise_prescription(
         exercise_context_text,
         rpe_cap,
@@ -1970,11 +2000,15 @@ def workout_plan_for_activity(
         summary += " Today's walking or step volume should count as leg/load context, so avoid stacking extra hard lower-body work."
     if reserve_energy_obligation:
         summary += " Keep it useful but leave enough energy and attention for the next obligation."
+    if oxygen_constraint:
+        summary += " Verify the oxygen signal first and keep the session very easy unless the repeat reading looks normal."
     stop_conditions = _workout_stop_conditions(
         rpe_cap,
         subjective_limiter=subjective_limiter,
         illness_flags=illness_flags,
     )
+    if oxygen_constraint:
+        stop_conditions.insert(0, oxygen_constraint["stop_condition"])
     deduped_limiting_factors = _dedupe(limiting_factors)
     deduped_avoid = _dedupe(avoid)
     deduped_substitutions = _dedupe(substitutions)
@@ -3015,6 +3049,10 @@ def _training_decision_frame(
             "user-stated pain",
             "live pain reported",
             "soreness check-in is high",
+            "very low for wearable oxygen",
+            "verify-first safety cap",
+            "low oxygen reading",
+            "low enough to cap intensity",
         )
     )
     has_load_limit = any(term in evidence_text for term in ("high-step", "high walking", "high zone", "high recent load"))
@@ -3763,6 +3801,110 @@ def _signal_snapshot_evidence(snapshot: dict[str, Any], *, limit: int = 6) -> li
         if len(lines) >= limit:
             break
     return lines
+
+
+def _oxygen_training_constraint(context: dict[str, Any]) -> dict[str, Any] | None:
+    spo2 = _latest_spo2_percent(context)
+    if spo2 is None or spo2 >= 94:
+        return None
+
+    display = f"{spo2:.1f}%"
+    if spo2 < 90:
+        return {
+            "severity": "very_low",
+            "rpe_cap": 4,
+            "evidence": (
+                f"SpO2 is {display}, which is very low for wearable oxygen context; "
+                "verify the reading and do not train through it as a fitness challenge."
+            ),
+            "plan_note": (
+                f"SpO2 is {display}, so this is a verify-first safety cap: do not run, lift hard, "
+                "or chase fitness unless a repeat reading looks normal and you feel completely well."
+            ),
+            "primary_action": (
+                "Re-check the SpO2 reading and sensor fit first. If it repeats low, skip training; "
+                "if it looks like a sensor error and you feel completely normal, keep movement to "
+                "very easy mobility or walking only."
+            ),
+            "next_action": (
+                "Re-check oxygen/sensor fit before training; if the reading repeats low or you have "
+                "shortness of breath, chest pain/tightness, faintness, confusion, blue lips, or new "
+                "symptoms, skip the workout and seek urgent medical help."
+            ),
+            "avoid": (
+                "Running, intervals, heavy lifting, breath-holding, or any workout that pushes breathing "
+                "while SpO2 is this low."
+            ),
+            "stop_condition": (
+                "Stop and seek medical help if low oxygen repeats or comes with shortness of breath, "
+                "chest pain/tightness, faintness, confusion, blue lips, or symptoms that are new or worsening."
+            ),
+        }
+
+    return {
+        "severity": "low",
+        "rpe_cap": 5,
+        "evidence": (
+            f"SpO2 is {display}, which is low enough to cap intensity; treat it as a caution signal "
+            "with breathing, heart, sleep, symptoms, and sensor quality."
+        ),
+        "plan_note": (
+            f"SpO2 is {display}, so keep this below hard cardio or heavy strain until the reading "
+            "looks normal and warm-up breathing feels ordinary."
+        ),
+        "primary_action": (
+            "Keep movement very easy and use the warm-up as a breathing check; only continue if a "
+            "repeat oxygen reading looks normal and breathing feels ordinary."
+        ),
+        "next_action": "Re-check SpO2 and keep the session very easy unless the repeat reading looks normal.",
+        "avoid": "Hard cardio, intervals, heavy sets, or breath-holding while SpO2 is below the normal context range.",
+        "stop_condition": (
+            "Stop if breathing feels unusual, the low oxygen reading repeats, or symptoms like dizziness, "
+            "chest tightness, faintness, or severe shortness of breath appear."
+        ),
+    }
+
+
+def _latest_spo2_percent(context: dict[str, Any]) -> float | None:
+    today = context.get("today") or {}
+    candidates: list[Any] = [
+        today.get("spo2_avg"),
+        (today.get("spo2_sample") or {}).get("avg") if isinstance(today.get("spo2_sample"), dict) else None,
+    ]
+    sections = context.get("sections") or {}
+    recovery = sections.get("recovery") or {}
+    candidates.append(recovery.get("latest_spo2"))
+
+    snapshot = context.get("available_signal_snapshot") or {}
+    for signal in snapshot.get("signals") or []:
+        if str(signal.get("id") or "").lower() != "spo2":
+            continue
+        candidates.extend(
+            [
+                signal.get("latest_value"),
+                signal.get("latest"),
+                signal.get("display"),
+            ]
+        )
+
+    for candidate in candidates:
+        value = _percent_number(candidate)
+        if value is not None:
+            return value
+    return None
+
+
+def _percent_number(value: Any) -> float | None:
+    number = _number_or_none(value)
+    if number is None and isinstance(value, str):
+        match = re.search(r"-?\d+(?:\.\d+)?", value)
+        if match:
+            number = _number_or_none(match.group(0))
+    if number is None or number <= 0:
+        return None
+    if number <= 1:
+        return number * 100
+    return number
 
 
 def _metric_labels_from_evidence(evidence: list[str]) -> list[str]:

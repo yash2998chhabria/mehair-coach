@@ -724,6 +724,49 @@ def test_synthetic_records_calculate_context(tmp_path, monkeypatch) -> None:
     assert brief["context_gaps"] == []
 
 
+def test_overview_treats_very_low_spo2_as_watchout(tmp_path, monkeypatch) -> None:
+    fixed_now = datetime(2026, 7, 3, 12, 0, tzinfo=UTC)
+    monkeypatch.setattr(health_store_module, "utc_now", lambda: fixed_now)
+    monkeypatch.setattr(health_store_module, "iso_now", lambda: fixed_now.isoformat())
+    db, store = make_store(tmp_path)
+    user_id = create_user(db)
+
+    store.upsert_records(
+        user_id,
+        "oxygen-saturation",
+        [
+            {
+                "name": "spo2-low",
+                "oxygenSaturation": {
+                    "percentage": 80.4,
+                    "sampleTime": {"physicalTime": "2026-07-03T06:00:00Z"},
+                },
+            }
+        ],
+    )
+    store.upsert_records(
+        user_id,
+        "daily-respiratory-rate",
+        [
+            {
+                "name": "resp-context",
+                "dailyRespiratoryRate": {"breathsPerMinute": 16.6},
+                "date": {"year": 2026, "month": 7, "day": 3},
+            }
+        ],
+    )
+
+    overview = store.health_overview(user_id, days=1)
+
+    assert overview["sections"]["recovery"]["latest_spo2"] == 80.4
+    assert any("very low wearable oxygen context" in item for item in overview["watchouts"])
+    assert any("avoid hard training" in item for item in overview["next_actions"])
+    assert not any("Latest SpO2 is 80.4% as context" in item for item in overview["positives"])
+    spo2_signal = next(item for item in overview["daily_brief"]["priority_signals"] if item["label"] == "SpO2")
+    assert spo2_signal["status"] == "watchout"
+    assert "Very low wearable oxygen context" in spo2_signal["impact"]
+
+
 def test_overview_flags_stale_data_before_time_sensitive_advice(tmp_path, monkeypatch) -> None:
     fixed_now = datetime(2026, 7, 3, 12, 0, tzinfo=UTC)
     monkeypatch.setattr(health_store_module, "utc_now", lambda: fixed_now)

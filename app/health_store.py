@@ -4948,8 +4948,22 @@ def _overview_coaching(
         else:
             positives.append("Resting heart rate is not elevated versus the recent average.")
 
-    if recovery.get("latest_spo2"):
-        positives.append(f"Latest SpO2 is {recovery['latest_spo2']:.1f}% as context, not a standalone training signal.")
+    latest_spo2 = recovery.get("latest_spo2")
+    if latest_spo2 is not None:
+        if latest_spo2 < 90:
+            watchouts.append(
+                f"Latest SpO2 is {latest_spo2:.1f}%, which is very low wearable oxygen context; verify the reading before training."
+            )
+            next_actions.append(
+                "Re-check SpO2/sensor fit and avoid hard training; seek urgent medical help if low oxygen repeats or comes with symptoms."
+            )
+        elif latest_spo2 < 94:
+            watchouts.append(
+                f"Latest SpO2 is {latest_spo2:.1f}%, so oxygen context should cap intensity until it looks normal."
+            )
+            next_actions.append("Keep training very easy unless a repeat oxygen reading looks normal and breathing feels ordinary.")
+        else:
+            positives.append(f"Latest SpO2 is {latest_spo2:.1f}% as context, not a standalone training signal.")
     if recovery.get("latest_respiratory_rate"):
         positives.append(f"Latest respiratory rate is {recovery['latest_respiratory_rate']:.1f} breaths/min.")
     sleep_temp = recovery.get("latest_sleep_temperature") or {}
@@ -5166,12 +5180,24 @@ def _daily_coaching_brief(
         context_gaps.append("Activity/load data is missing in this window, so training-load context is limited.")
 
     if recovery.get("latest_spo2") is not None:
+        latest_spo2 = recovery["latest_spo2"]
+        if latest_spo2 < 90:
+            spo2_status = "watchout"
+            spo2_impact = (
+                "Very low wearable oxygen context should override hard-training plans until the reading is checked."
+            )
+        elif latest_spo2 < 94:
+            spo2_status = "watchout"
+            spo2_impact = "Low oxygen context should keep the session very easy unless a repeat reading looks normal."
+        else:
+            spo2_status = "context"
+            spo2_impact = "Use alongside respiratory and heart signals, not as a standalone diagnosis."
         add_signal(
             "recovery",
             "SpO2",
-            f"{recovery['latest_spo2']:.1f}% latest average.",
-            "Use alongside respiratory and heart signals, not as a standalone diagnosis.",
-            "context",
+            f"{latest_spo2:.1f}% latest average.",
+            spo2_impact,
+            spo2_status,
         )
     if recovery.get("latest_respiratory_rate") is not None:
         add_signal(
