@@ -873,6 +873,23 @@ def test_today_recommendation_for_normal_green_day_does_not_assume_off_day() -> 
     assert "current body feel caps the ceiling" not in positive_story
     assert "sleep supports training" in positive_story
 
+    negated_feeling = workout_recommendation(
+        context=context,
+        current_feeling="I am not saying I feel off or sore. I just want a normal data-based plan.",
+    )
+    negated_coach = negated_feeling["coach_response"]
+    negated_joined = " ".join(
+        [
+            negated_coach["short_answer"],
+            negated_coach["data_story"],
+            *negated_coach["session_blueprint"],
+        ]
+    ).lower()
+    assert negated_feeling["subjective_context"]["subjective_limiter"] is False
+    assert "training is available today" in negated_coach["short_answer"].lower()
+    assert "current body feel caps the ceiling" not in negated_joined
+    assert "do not feel fully right" not in negated_joined
+
 
 def test_workout_plan_does_not_flag_negated_illness_terms() -> None:
     context = {

@@ -51,6 +51,7 @@ async def test_mcp_tool_list_matches_private_beta_plan() -> None:
 def test_server_instructions_keep_normal_latest_questions_fast() -> None:
     assert "Use plain English before statistics" in SERVER_INSTRUCTIONS
     assert "Keep metric labels such as HRV, RPE, AZM" in SERVER_INSTRUCTIONS
+    assert "include the date/window" in SERVER_INSTRUCTIONS
     assert "When a tool returns coach_response" in SERVER_INSTRUCTIONS
     assert "do not default to 'I feel off'" in SERVER_INSTRUCTIONS
     assert "Use already-synced local data for normal current/latest/today questions" in SERVER_INSTRUCTIONS

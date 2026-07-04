@@ -1987,6 +1987,9 @@ def _question_intents(question: str) -> list[str]:
             "best use of my time",
             "best use of today",
             "quick useful",
+            "useful move",
+            "useful session",
+            "smartest useful session",
         )
     ) or ("today" in text and any(word in text for word in ("recommend", "suggest", "plan", "focus", "best use")))
     if not asks_for_today_plan and has("minutes", "quick", "short on time", "only have"):
@@ -2017,6 +2020,10 @@ def _question_intents(question: str) -> list[str]:
         "lift",
         "run",
         "cardio",
+        "interval",
+        "intervals",
+        "push",
+        "harder",
         "squash",
         "sport",
         "legs",
@@ -2049,7 +2056,7 @@ def _question_intents(question: str) -> list[str]:
         intents.extend(["active_workout", "workout_decision", "heart", "activity_load", "recovery", "subjective"])
     if has("tired", "fatigue", "fatigued", "cooked", "drained", "recovery", "readiness", "ready", "rest", "rested", "why"):
         intents.extend(["recovery", "sleep", "heart", "activity_load", "subjective"])
-    if has("sleep", "nap", "bed", "insomnia", "awake", "restless"):
+    if has("sleep", "slept", "nap", "bed", "insomnia", "awake", "restless"):
         intents.extend(["sleep", "recovery", "heart"])
     if has("heart", "hrv", "bpm", "pulse", "resting", "cardio"):
         intents.extend(["heart", "recovery", "activity_load"])
@@ -2271,6 +2278,7 @@ def _answer_rubric_for_intents(intents: list[str]) -> list[str]:
     rubric = [
         "Start with the direct answer, then name the strongest supporting signals.",
         "Keep labels like HRV, RPE, AZM, Readiness, and Resting HR, but explain each one in simple words the first time it appears.",
+        "When steps or movement totals are used, name the date/window and explain why they matter or do not matter for this decision.",
         "Separate wearable evidence, user-reported context, and missing data.",
         "Mention freshness when the user asks about today, latest data, or real-time decisions.",
         "Match the user's situation; do not assume fatigue, soreness, or an off-day unless the user or data says so.",

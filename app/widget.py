@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 
 
-WIDGET_URI = "ui://mehair/today-v11.html"
+WIDGET_URI = "ui://mehair/today-v12.html"
 LEGACY_WIDGET_URIS = (
     "ui://mehair/today-v1.html",
     "ui://mehair/today-v2.html",
@@ -15,6 +15,7 @@ LEGACY_WIDGET_URIS = (
     "ui://mehair/today-v8.html",
     "ui://mehair/today-v9.html",
     "ui://mehair/today-v10.html",
+    "ui://mehair/today-v11.html",
 )
 WIDGET_RESOURCE_URIS = (WIDGET_URI, *LEGACY_WIDGET_URIS)
 WIDGET_MIME_TYPE = "text/html;profile=mcp-app"
@@ -765,6 +766,8 @@ TODAY_WIDGET_HTML = """
         const goalDetail = goal.remaining_sessions != null
           ? `${goal.remaining_sessions} goal sessions left`
           : goal.target || "";
+        const activityWindow = data.activity_date || data.data_used?.activity_date || data.latest_date || "today";
+        const activityWindowLabel = activityWindow === "today" ? "today so far" : `${activityWindow} so far`;
         return {
           accent: readinessAccent(label),
           title: "Today's Workout",
@@ -785,8 +788,8 @@ TODAY_WIDGET_HTML = """
           focus: coach.session_blueprint || coach.what_to_do || data.next_actions || [],
           labels: coach.labels_explained || defaultLabelKey(["Readiness", "RPE", "HRV", "Resting HR", "AZM"]),
           metrics: [
-            ["Move Today", intText(today.steps ?? data.data_used?.steps_today ?? 0), "today so far", "Light movement context, not the whole decision."],
-            ["AZM Today", intText(today.active_zone_minutes ?? data.data_used?.active_zone_minutes_today ?? 0), "today so far", "AZM = Fitbit hard-work minutes."],
+            ["Move Today", intText(today.steps ?? data.data_used?.steps_today ?? 0), activityWindowLabel, "Light movement context, not the whole decision."],
+            ["AZM Today", intText(today.active_zone_minutes ?? data.data_used?.active_zone_minutes_today ?? 0), activityWindowLabel, "AZM = Fitbit hard-work minutes."],
             ["Sleep", sleepHours != null ? `${num(sleepHours, 1)}h` : null],
             ["HRV", data.data_used?.hrv_ms != null ? `${num(data.data_used.hrv_ms, 1)} ms` : null],
             ["Soreness", subjective.soreness != null ? `${subjective.soreness}/10` : null, subjective.energy != null ? `energy ${subjective.energy}/10` : ""],

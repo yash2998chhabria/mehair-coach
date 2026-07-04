@@ -35,6 +35,8 @@ SERVER_INSTRUCTIONS = (
     "Mehair Coach provides read-only Google Health/Fitbit context for a connected user. "
     "Use plain English before statistics. Keep metric labels such as HRV, RPE, AZM, and resting "
     "heart rate, but briefly explain what they mean when they appear in user-facing advice. "
+    "When mentioning steps or other movement totals, include the date/window and explain why that "
+    "total does or does not matter for the decision. "
     "When a tool returns coach_response, use it as the answer skeleton: direct human answer first, "
     "then the session_blueprint or what_to_do, then the explained metric labels, then stop conditions "
     "or caveats. Avoid leading with raw tables or unexplained evidence logs. "
@@ -1335,6 +1337,41 @@ def _coach_metric_glossary(labels: list[str] | tuple[str, ...] | None = None) ->
     ]
 
 
+SUBJECTIVE_LIMITER_PHRASES = (
+    "feel off",
+    "off today",
+    "not fresh",
+    "run down",
+    "rundown",
+    "under-recovered",
+    "under recovered",
+    "not recovered",
+    "not fully recovered",
+    "fatigue",
+    "fatigued",
+    "tired",
+    "drained",
+    "cooked",
+    "heavy",
+    "heavy legs",
+    "low energy",
+    "sore",
+    "soreness",
+    "pain",
+    "ache",
+    "tight",
+)
+
+
+def _evidence_item_has_subjective_limiter(item: str) -> bool:
+    if "do not feel fully right" in item or "not feel 100" in item:
+        return True
+    if not item.startswith("current user-stated feeling"):
+        return False
+    _, _, feeling = item.partition(":")
+    return _subjective_limiter_from_text(feeling.strip())
+
+
 def _coach_data_story(readiness: dict[str, Any], evidence: list[str]) -> str:
     label = readiness.get("label")
     evidence_items = [str(item).lower() for item in evidence]
@@ -1369,36 +1406,7 @@ def _coach_data_story(readiness: dict[str, Any], evidence: list[str]) -> str:
             and any(term in item for term in ("fever", "chills", "flu", "sore throat", "vomit", "nausea"))
         )
     ]
-    subjective_items = []
-    for item in evidence_items:
-        if "do not feel fully right" in item or "not feel 100" in item:
-            subjective_items.append(item)
-            continue
-        if item.startswith("current user-stated feeling") and any(
-            term in item
-            for term in (
-                "feel off",
-                "off today",
-                "not fresh",
-                "run down",
-                "rundown",
-                "under-recovered",
-                "under recovered",
-                "not recovered",
-                "fatigue",
-                "fatigued",
-                "drained",
-                "cooked",
-                "heavy",
-                "low energy",
-                "sore",
-                "soreness",
-                "pain",
-                "ache",
-                "tight",
-            )
-        ):
-            subjective_items.append(item)
+    subjective_items = [item for item in evidence_items if _evidence_item_has_subjective_limiter(item)]
     preserve_items = [
         item
         for item in evidence_items
@@ -2006,23 +2014,12 @@ def _subjective_limiter_from_text(text: str) -> bool:
     lower = text.lower()
     not_right_patterns = (
         r"\b(?:do not|don't|dont|not)\s+feel(?:ing)?\s+(?:my\s+)?(?:100|one hundred|great|right|normal|fresh)\b",
-        r"\b(?:feel|feeling)\s+(?:a\s+little\s+|kind\s+of\s+|sort\s+of\s+)?(?:off|not fresh|run down|rundown|under[- ]?recovered|cooked|drained|fatigued|heavy)\b",
-        r"\b(?:low energy|heavy legs|not recovered|not fully recovered)\b",
     )
     if any(re.search(pattern, lower) for pattern in not_right_patterns):
         return True
     return any(
         _has_unnegated_phrase(lower, term)
-        for term in (
-            "tired",
-            "fatigue",
-            "fatigued",
-            "drained",
-            "cooked",
-            "run down",
-            "low energy",
-            "heavy legs",
-        )
+        for term in SUBJECTIVE_LIMITER_PHRASES
     )
 
 
@@ -2110,8 +2107,21 @@ def _active_workout_safety_flags(
 
 def _has_unnegated_phrase(text: str, phrase: str) -> bool:
     for match in re.finditer(rf"\b{re.escape(phrase)}\b", text):
-        prefix = text[max(0, match.start() - 28) : match.start()]
+        prefix = text[max(0, match.start() - 64) : match.start()]
+        local_prefix = re.split(r"[.!?;]", prefix)[-1]
         if re.search(r"\b(no|not|without|denies|deny|none)\b[\s,;:.-]{0,12}$", prefix):
+            continue
+        if re.search(
+            r"\b(?:not|never)\s+"
+            r"(?:saying|claiming|reporting|telling(?:\s+you)?|indicating|mentioning)\b",
+            local_prefix,
+        ):
+            continue
+        if re.search(r"\b(?:do not|don't|dont)\s+(?:feel|have)\b", local_prefix) and re.search(
+            r"\b(?:or|and|,)\s*$", local_prefix
+        ):
+            continue
+        if re.search(r"\b(?:do not|don't|dont)\s+(?:have\s+|feel\s+|feeling\s+)?$", prefix):
             continue
         return True
     return False

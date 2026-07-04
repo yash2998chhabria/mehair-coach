@@ -448,6 +448,36 @@ def test_eval_natural_prompt_mix_is_not_biased_to_off_day_language(tmp_path, mon
             {"active_workout", "workout_decision"},
             {"guide_active_workout"},
         ),
+        (
+            "I feel good and want to push my run today. What data would make you say yes or no?",
+            {"workout_decision", "recovery", "heart", "sleep"},
+            {"recommend_workout_today", "get_recovery_signal_comparison"},
+        ),
+        (
+            "I am busy today and only have 20 minutes after work. What should I do?",
+            {"daily_plan", "general_overview", "workout_decision"},
+            {"get_health_overview", "recommend_workout_today"},
+        ),
+        (
+            "I walked a lot this morning. Does my step count matter for training later?",
+            {"activity_load", "workout_decision"},
+            {"get_activity_load", "recommend_workout_today"},
+        ),
+        (
+            "I slept great and my heart numbers look good. Should I add intervals?",
+            {"sleep", "heart", "workout_decision"},
+            {"recommend_workout_today", "get_recovery_signal_comparison"},
+        ),
+        (
+            "I want to stay consistent with my weekly goal but not overdo it. What is today's useful move?",
+            {"daily_plan", "goal", "workout_decision"},
+            {"get_health_overview", "recommend_workout_today"},
+        ),
+        (
+            "I am not saying I feel off or sore. What should I focus on today from the data?",
+            {"daily_plan", "general_overview", "workout_decision"},
+            {"get_health_overview", "recommend_workout_today"},
+        ),
     ]
 
     for question, expected_intents, expected_tools in scenarios:
@@ -458,6 +488,7 @@ def test_eval_natural_prompt_mix_is_not_biased_to_off_day_language(tmp_path, mon
         assert expected_tools <= set(clues["recommended_tool_sequence"])
         assert "symptom_safety" not in clues["intent_hints"]
         assert any("match the user's situation" in item.lower() for item in clues["answer_rubric"])
+        assert any("date/window" in item.lower() for item in clues["answer_rubric"])
         assert "i feel a little off" not in joined
         assert "feel cooked" not in joined
 
