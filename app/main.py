@@ -717,6 +717,7 @@ def workout_recommendation(
     stated_soreness = _rating_from_text(current_feeling_lower, ("soreness", "sore", "tightness", "tight"))
     stated_pain = _rating_from_text(current_feeling_lower, ("pain", "ache", "tightness", "tight"))
     subjective_limiter = _subjective_limiter_from_text(current_feeling_lower)
+    stated_high_movement = _high_movement_from_text(current_feeling_lower)
     soreness_rating = _first_present(stated_soreness, stated_pain, _latest_rating(checkins or [], "soreness"))
     energy_rating = _first_present(stated_energy, _latest_rating(checkins or [], "energy"))
     stress_rating = _latest_rating(checkins or [], "stress")
@@ -745,6 +746,10 @@ def workout_recommendation(
     if freshness.get("needs_sync_before_time_sensitive_advice"):
         next_actions.append("Sync latest Fitbit data before making a time-sensitive hard training decision.")
         plan = f"{freshness.get('recommendation', 'Sync latest Fitbit data first')} Based on stored data only: {plan}"
+        if intensity == "moderate-to-hard":
+            intensity = "moderate"
+        rpe_cap = min(rpe_cap, 7)
+        avoid.append("All-out intervals, max attempts, or PR work before a fresh sync")
     if subjective_limiter:
         if label == "green":
             plan = (
@@ -766,6 +771,20 @@ def workout_recommendation(
         plan += " You already have a high zone-minute load today, so avoid stacking another hard effort."
         avoid.append("Another hard conditioning block today")
         rpe_cap = min(rpe_cap, 7)
+    steps_today = _safe_int(today.get("steps"))
+    high_step_load = steps_today is not None and steps_today >= 15000
+    if stated_high_movement or high_step_load:
+        plan += (
+            " Treat today's walking/step volume as leg-load context: keep lower-body intensity controlled "
+            "and avoid stacking hard conditioning on top of it."
+        )
+        if intensity == "moderate-to-hard":
+            intensity = "moderate"
+        rpe_cap = min(rpe_cap, 7)
+        next_actions.append(
+            "Because movement volume is already high, choose upper body, technique, mobility, or short controlled intervals before adding lower-body volume."
+        )
+        avoid.append("Stacking hard lower-body work on top of a high-step or high-walking day")
     if sleep_hours is not None and sleep_hours < 5:
         plan += " Keep impact low because the latest sleep block was short."
         avoid.append("High-impact or max-effort work on short sleep")
@@ -891,6 +910,7 @@ def workout_recommendation(
             "stated_energy": stated_energy,
             "stated_soreness": stated_soreness,
             "stated_pain": stated_pain,
+            "stated_high_movement": stated_high_movement,
             "illness_flags": illness_flags,
             "goal": goal,
             "recent_workouts": workout_count,
@@ -1386,6 +1406,11 @@ def _coach_data_story(readiness: dict[str, Any], evidence: list[str]) -> str:
         for item in evidence_items
         if "active zone minutes" in item or "training load" in item or "zone minutes" in item
     ]
+    movement_items = [
+        item
+        for item in evidence_items
+        if "high movement" in item or "high-step" in item or "high walking" in item or "step volume" in item
+    ]
     freshness_items = [item for item in evidence_items if "data freshness" in item or "sync latest" in item]
     checkin_items = [item for item in evidence_items if "check-in" in item]
     safety_items = [
@@ -1444,6 +1469,9 @@ def _coach_data_story(readiness: dict[str, Any], evidence: list[str]) -> str:
             constraints.append("recent training load matters today")
         else:
             supports.append("recent load is manageable")
+
+    if movement_items:
+        constraints.append("movement volume may affect legs")
 
     limiting_checkins = any(
         "soreness check-in is high" in item
@@ -1639,12 +1667,19 @@ def _today_workout_coach_response(
 ) -> dict[str, Any]:
     evidence_text = " ".join(evidence).lower()
     has_stale_data = "data freshness is stale" in evidence_text or "sync latest fitbit data" in evidence_text
+    has_high_movement = (
+        "high-step movement context" in evidence_text
+        or "high walking or step volume" in evidence_text
+        or "step volume" in evidence_text
+    )
     if has_stale_data:
         short_answer = "Sync latest Fitbit data before a time-sensitive hard workout decision. If you train before syncing, keep it controlled."
     elif illness_flags:
         short_answer = "Skip hard training today. If symptoms are mild and improving, keep it to a short easy walk or mobility."
     elif intensity == "easy":
         short_answer = "Make today recovery-biased: useful movement is fine, but do not chase fitness today."
+    elif has_high_movement:
+        short_answer = "Train, but keep lower-body work and hard conditioning controlled because today's movement volume already adds load."
     elif intensity == "moderate":
         short_answer = "Do a controlled session that helps you feel better, not a workout you have to survive."
     else:
@@ -1915,6 +1950,18 @@ def _workout_evidence(
             "(AZM, Fitbit hard-work minutes)."
         )
 
+    steps_today = _safe_int(today.get("steps"))
+    activity_date = context.get("activity_date") or context.get("latest_date") or "today"
+    if steps_today is not None and steps_today >= 15000:
+        evidence.append(
+            f"High-step movement context: {steps_today:,} steps on {activity_date} so far. "
+            "Steps are leg/load context, not a standalone recovery score."
+        )
+    if current_feeling and _high_movement_from_text(current_feeling.lower()):
+        evidence.append(
+            "User-stated high walking or step volume today; treat this as leg fatigue/load context."
+        )
+
     sleep = today.get("sleep") or {}
     sleep_hours = sleep.get("asleep_hours") or sleep.get("duration_hours")
     if sleep_hours is not None:
@@ -2021,6 +2068,32 @@ def _subjective_limiter_from_text(text: str) -> bool:
         _has_unnegated_phrase(lower, term)
         for term in SUBJECTIVE_LIMITER_PHRASES
     )
+
+
+def _high_movement_from_text(text: str) -> bool:
+    if not text:
+        return False
+    lower = text.lower()
+    phrases = (
+        "walked a ton",
+        "walked a lot",
+        "walked so much",
+        "lots of walking",
+        "lot of walking",
+        "ton of walking",
+        "high steps",
+        "lots of steps",
+        "lot of steps",
+        "many steps",
+        "step count is high",
+        "on my feet all day",
+        "been on my feet",
+        "standing all day",
+        "long walk",
+        "long hike",
+        "hiked a lot",
+    )
+    return any(_has_unnegated_phrase(lower, phrase) for phrase in phrases)
 
 
 def _workout_stop_conditions(
@@ -2514,6 +2587,15 @@ def _number_or_none(value: Any) -> float | None:
     except (TypeError, ValueError):
         return None
     return number
+
+
+def _safe_int(value: Any) -> int | None:
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _fmt_num(value: float, digits: int = 1) -> str:

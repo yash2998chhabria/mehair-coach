@@ -891,6 +891,110 @@ def test_today_recommendation_for_normal_green_day_does_not_assume_off_day() -> 
     assert "do not feel fully right" not in negated_joined
 
 
+def test_today_recommendation_downshifts_stale_green_data_before_hard_work() -> None:
+    context = {
+        "status": "ok",
+        "latest_date": "2026-07-03",
+        "activity_date": "2026-07-03",
+        "recovery_date": "2026-07-03",
+        "data_freshness": {
+            "freshness_level": "stale",
+            "freshness_label": "sync recommended",
+            "needs_sync_before_time_sensitive_advice": True,
+            "recommendation": "Run sync_latest_fitbit_data before time-sensitive workout decisions.",
+        },
+        "readiness": {
+            "score": 84,
+            "label": "green",
+            "recommendation": "A normal training day is reasonable.",
+            "evidence": [
+                "Latest sleep is strong at 8.0h.",
+                "HRV is above recent baseline.",
+                "Resting heart rate is steady.",
+            ],
+        },
+        "today": {
+            "steps": 5200,
+            "active_minutes": 36,
+            "active_zone_minutes": 12,
+            "hrv_ms": 60,
+            "resting_heart_rate": 56,
+            "sleep": {"asleep_hours": 8.0, "sessions_count": 1},
+            "latest_training_load": {"date": "2026-07-03", "active_zone_minutes": 12},
+        },
+        "sections": {
+            "heart": {
+                "latest_hrv_ms": 60,
+                "average_hrv_ms": 52,
+                "latest_resting_heart_rate": 56,
+                "average_resting_heart_rate": 59,
+            }
+        },
+    }
+
+    recommendation = workout_recommendation(
+        context=context,
+        current_feeling="I slept great, feel good, and only have 20 minutes after work.",
+    )
+
+    assert recommendation["intensity"] == "moderate"
+    assert recommendation["rpe_cap"] == 7
+    assert recommendation["coach_response"]["short_answer"].startswith("Sync latest Fitbit data")
+    assert any("RPE <= 7/10" in item for item in recommendation["coach_response"]["session_blueprint"])
+    assert any("All-out intervals" in item for item in recommendation["avoid"])
+
+
+def test_today_recommendation_uses_high_steps_as_leg_load_context() -> None:
+    context = {
+        "status": "ok",
+        "latest_date": "2026-07-03",
+        "activity_date": "2026-07-03",
+        "recovery_date": "2026-07-03",
+        "readiness": {
+            "score": 84,
+            "label": "green",
+            "recommendation": "A normal training day is reasonable.",
+            "evidence": [
+                "Latest sleep is strong at 8.0h.",
+                "HRV is above recent baseline.",
+                "Resting heart rate is steady.",
+            ],
+        },
+        "today": {
+            "steps": 18500,
+            "active_minutes": 120,
+            "active_zone_minutes": 8,
+            "hrv_ms": 60,
+            "resting_heart_rate": 56,
+            "sleep": {"asleep_hours": 8.0, "sessions_count": 1},
+            "latest_training_load": {"date": "2026-07-03", "active_zone_minutes": 8},
+        },
+        "sections": {
+            "heart": {
+                "latest_hrv_ms": 60,
+                "average_hrv_ms": 52,
+                "latest_resting_heart_rate": 56,
+                "average_resting_heart_rate": 59,
+            }
+        },
+    }
+
+    recommendation = workout_recommendation(
+        context=context,
+        current_feeling="I walked a ton today. Does that change my lift tonight?",
+    )
+    coach = recommendation["coach_response"]
+    joined = " ".join([coach["short_answer"], coach["data_story"], *coach["why"], *recommendation["avoid"]]).lower()
+
+    assert recommendation["intensity"] == "moderate"
+    assert recommendation["rpe_cap"] == 7
+    assert "movement volume already adds load" in coach["short_answer"]
+    assert "movement volume may affect legs" in coach["data_story"]
+    assert "18,500 steps on 2026-07-03 so far" in " ".join(coach["why"])
+    assert "not a standalone recovery score" in joined
+    assert "hard lower-body work" in joined
+
+
 def test_workout_plan_does_not_flag_negated_illness_terms() -> None:
     context = {
         "status": "ok",

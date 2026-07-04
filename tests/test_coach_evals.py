@@ -517,6 +517,7 @@ def test_eval_stale_data_for_time_sensitive_workout_pushes_sync_first(tmp_path, 
     assert "sync_latest_fitbit_data" in clues["recommended_tool_sequence"]
     assert recommendation["data_used"]["freshness_level"] == "stale"
     assert recommendation["next_actions"][0] == "Sync latest Fitbit data before making a time-sensitive hard training decision."
+    assert recommendation["rpe_cap"] <= 7
     assert any("Data freshness is stale" in item for item in recommendation["evidence"])
 
 
