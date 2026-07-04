@@ -118,6 +118,16 @@ INTENT_METRICS = {
         "daily-sleep-temperature-derivations",
         "daily-oxygen-saturation",
     ],
+    "breathing_recovery": [
+        "daily-oxygen-saturation",
+        "oxygen-saturation",
+        "daily-respiratory-rate",
+        "respiratory-rate-sleep-summary",
+        "daily-sleep-temperature-derivations",
+        "sleep",
+        "daily-heart-rate-variability",
+        "daily-resting-heart-rate",
+    ],
     "heart": [
         "daily-heart-rate-variability",
         "daily-resting-heart-rate",
@@ -180,6 +190,29 @@ INTENT_METRICS = {
         "steps",
         "active-minutes",
         "distance",
+        "exercise",
+        "daily-respiratory-rate",
+        "respiratory-rate-sleep-summary",
+        "daily-oxygen-saturation",
+        "oxygen-saturation",
+        "daily-sleep-temperature-derivations",
+        "daily-vo2-max",
+    ],
+    "metric_discovery": [
+        "sleep",
+        "daily-heart-rate-variability",
+        "daily-resting-heart-rate",
+        "heart-rate",
+        "heart-rate-variability",
+        "active-zone-minutes",
+        "time-in-heart-rate-zone",
+        "calories-in-heart-rate-zone",
+        "activity-level",
+        "active-minutes",
+        "steps",
+        "distance",
+        "floors",
+        "sedentary-period",
         "exercise",
         "daily-respiratory-rate",
         "respiratory-rate-sleep-summary",
@@ -1645,6 +1678,8 @@ class HealthStore:
         watchouts = safety_flags + watchouts
         if context.get("data_freshness", {}).get("needs_sync_before_time_sensitive_advice"):
             next_actions.insert(0, "Run sync_latest_fitbit_data before answering time-sensitive training questions.")
+        conversation_flows = _conversation_flow_options(context.get("data_freshness", {}))
+        primary_flows = _primary_conversation_flows(intents, conversation_flows)
 
         return {
             "status": "ok",
@@ -1653,8 +1688,13 @@ class HealthStore:
             "window_days": safe_days,
             "headline": _question_clue_headline(intents, context, comparison),
             "intent_hints": intents,
-            "recommended_tool_sequence": _recommended_tool_sequence(intents, context.get("data_freshness", {})),
-            "conversation_flow_options": _conversation_flow_options(context.get("data_freshness", {})),
+            "primary_conversation_flows": primary_flows,
+            "recommended_tool_sequence": _recommended_tool_sequence(
+                intents,
+                context.get("data_freshness", {}),
+                primary_flows=primary_flows,
+            ),
+            "conversation_flow_options": conversation_flows,
             "relevant_metrics": relevant_metrics,
             "available_metric_ids": [item["id"] for item in relevant_metrics if item["records"] > 0],
             "missing_metric_ids": [item["id"] for item in relevant_metrics if item["records"] == 0],
@@ -1681,6 +1721,7 @@ class HealthStore:
             "data_freshness": context["data_freshness"],
             "answering_guidance": [
                 "Use the relevant_metrics list to decide which synced signals to inspect next.",
+                "Prefer primary_conversation_flows over raw intent_hints when choosing tools for a natural user question.",
                 "Use conversation_flow_options when the user's wording is informal, broad, or not well captured by intent_hints.",
                 "Use available_signal_snapshot for broad, all-data, oxygen, breathing, or unusual-pattern questions so secondary signals are not ignored.",
                 "Use decision_frame.model_decision_policy to choose data by safety, recovery, load, capacity, and user-context axes rather than by brittle wording alone.",
@@ -2985,6 +3026,12 @@ def _question_intents(question: str) -> list[str]:
         "all metrics",
         "available data",
         "available metrics",
+        "data are you using",
+        "data you're using",
+        "data you are using",
+        "what are you ignoring",
+        "what you are ignoring",
+        "what you're ignoring",
         "whole picture",
         "full picture",
         "other stats",
@@ -3018,6 +3065,8 @@ def _question_intents(question: str) -> list[str]:
         "easy miles",
         "quality session",
         "hard session",
+        "big session",
+        "talk me out",
         "send it",
         "green light",
     )
@@ -3037,6 +3086,11 @@ def _question_intents(question: str) -> list[str]:
             "daily brief",
             "coach me today",
             "what should i focus on",
+            "make the call",
+            "make a call",
+            "call for my body",
+            "body can absorb",
+            "build the day",
             "best use of it",
             "best use of my time",
             "best use of today",
@@ -3097,11 +3151,11 @@ def _question_intents(question: str) -> list[str]:
     if has("heart", "hrv", "bpm", "pulse", "resting", "cardio"):
         intents.extend(["heart", "recovery", "activity_load"])
     if has("oxygen", "spo2", "sp02", "breathing", "breath", "respiratory", "temperature", "temp"):
-        intents.extend(["recovery", "sleep", "heart", "workout_decision"])
+        intents.extend(["breathing_recovery", "recovery", "sleep", "heart", "workout_decision"])
     if has("vo2", "capacity", "endurance", "aerobic", "cardio fitness"):
         intents.extend(["general_overview", "activity_load", "heart", "goal"])
     if broad_data_context:
-        intents.extend(["general_overview", "recovery", "heart", "sleep", "activity_load"])
+        intents.extend(["metric_discovery", "general_overview", "recovery", "heart", "sleep", "activity_load"])
     if has("sore", "soreness", "pain", "injury", "ache", "stress", "energy", "feel"):
         intents.extend(["subjective", "recovery", "activity_load", "sleep"])
     if has(
@@ -3237,10 +3291,20 @@ def _metric_reason(metric_id: str, intents: list[str], catalog_item: dict[str, A
     return reason
 
 
-def _recommended_tool_sequence(intents: list[str], freshness: dict[str, Any]) -> list[str]:
+def _recommended_tool_sequence(
+    intents: list[str],
+    freshness: dict[str, Any],
+    *,
+    primary_flows: list[dict[str, Any]] | None = None,
+) -> list[str]:
     tools: list[str] = ["get_health_question_clues"]
     if freshness.get("needs_sync_before_time_sensitive_advice"):
         tools.extend(["get_data_freshness", "sync_latest_fitbit_data"])
+    for flow in (primary_flows or [])[:3]:
+        tools.extend(flow.get("primary_tools") or [])
+        tools.extend(flow.get("supporting_tools") or [])
+    if "metric_discovery" in intents:
+        tools.extend(["list_available_health_metrics", "query_health_metrics"])
     if "general_overview" in intents or "daily_plan" in intents or "goal" in intents:
         tools.append("get_health_overview")
     if "active_workout" in intents:
@@ -3435,6 +3499,58 @@ def _conversation_flow_options(
             "model_instruction": "Let the user's question choose the metrics; use missing metrics as unknown, never as zero.",
             "freshness_policy": freshness_policy,
         },
+    ]
+
+
+def _primary_conversation_flows(
+    intents: list[str],
+    conversation_flows: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    flows_by_name = {flow["flow"]: flow for flow in conversation_flows}
+    ranked_names: list[tuple[str, str]] = []
+
+    def add(flow_name: str, reason: str) -> None:
+        if flow_name in flows_by_name and all(name != flow_name for name, _ in ranked_names):
+            ranked_names.append((flow_name, reason))
+
+    if "active_workout" in intents:
+        add("active_workout_pacing", "The user is asking for an in-session hold, push, downshift, or stop decision.")
+    if "symptom_safety" in intents:
+        add("sleep_breathing_recovery_question", "Symptoms or abnormal-heart-rate concerns should use recovery and safety surfaces first.")
+    if "breathing_recovery" in intents:
+        add("sleep_breathing_recovery_question", "Oxygen, respiratory-rate, or sleep-temperature questions need recovery comparison before training permission.")
+    if "metric_discovery" in intents:
+        add("metric_discovery_or_unusual_question", "The user is asking which data matters, what is available, or what is being ignored.")
+    if "daily_plan" in intents or "workout_decision" in intents:
+        add("daily_training_decision", "The user needs a concrete today/session decision, not only a metric explanation.")
+    if "goal" in intents and ("daily_plan" in intents or "activity_load" in intents):
+        add("weekly_training_planning", "Goal or consistency language needs load and workout-history context.")
+    if "workout_decision" in intents and "subjective" in intents:
+        add("specific_activity_plan", "The answer may need to adapt a named activity, body area, soreness, time limit, or constraint.")
+    if any(intent in intents for intent in ("recovery", "sleep", "heart")):
+        add("sleep_breathing_recovery_question", "Sleep, heart, breathing, oxygen, or temperature signals need comparison context.")
+    if "activity_load" in intents or "goal" in intents:
+        add("weekly_training_planning", "Recent steps, AZM, workouts, and goals need a named data window.")
+    if "general_overview" in intents:
+        add("daily_training_decision", "A broad health question can still end with the smallest useful next move.")
+        add("metric_discovery_or_unusual_question", "Broad wording may need the metric catalog and model-selected query path.")
+
+    if not ranked_names:
+        add("daily_training_decision", "Default to a practical health-coaching decision flow.")
+        add("metric_discovery_or_unusual_question", "Use metric discovery if the question does not map cleanly to a known flow.")
+
+    return [
+        {
+            "rank": rank,
+            "flow": flow_name,
+            "why_selected": reason,
+            "primary_tools": flows_by_name[flow_name].get("primary_tools", []),
+            "supporting_tools": flows_by_name[flow_name].get("supporting_tools", []),
+            "data_surfaces_to_use": flows_by_name[flow_name].get("data_surfaces_to_use", []),
+            "model_instruction": flows_by_name[flow_name].get("model_instruction", ""),
+            "freshness_policy": flows_by_name[flow_name].get("freshness_policy", ""),
+        }
+        for rank, (flow_name, reason) in enumerate(ranked_names[:4], start=1)
     ]
 
 

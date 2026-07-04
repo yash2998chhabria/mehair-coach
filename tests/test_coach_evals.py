@@ -519,7 +519,7 @@ def test_eval_natural_prompt_mix_is_not_biased_to_off_day_language(tmp_path, mon
         ),
         (
             "My oxygen looked a little lower last night. What does that change for training?",
-            {"recovery", "sleep", "heart", "workout_decision"},
+            {"breathing_recovery", "recovery", "sleep", "heart", "workout_decision"},
             {"get_recovery_signal_comparison", "recommend_workout_today"},
         ),
         (
@@ -632,8 +632,26 @@ def test_eval_natural_prompt_mix_is_not_biased_to_off_day_language(tmp_path, mon
         assert "breathing_oxygen_temperature_caution" in prompt_axes
         assert "activity_load_window" in prompt_axes
         assert "capacity_progress" in prompt_axes
+        assert clues["primary_conversation_flows"][0]["flow"] == "daily_training_decision"
+        assert "recommend_workout_today" in clues["recommended_tool_sequence"]
         assert any("Human answer first" in item for item in prompt_policy["answer_style"])
         assert "i feel a little off" not in json.dumps(clues).lower()
+
+    data_audit = store.health_question_clues(user_id, "What data are you using and what are you ignoring?", days=7)
+    assert data_audit["primary_conversation_flows"][0]["flow"] == "metric_discovery_or_unusual_question"
+    assert "metric_discovery" in data_audit["intent_hints"]
+    assert "list_available_health_metrics" in data_audit["recommended_tool_sequence"]
+    assert "query_health_metrics" in data_audit["recommended_tool_sequence"]
+    assert any("Prefer primary_conversation_flows" in item for item in data_audit["answering_guidance"])
+
+    oxygen_question = store.health_question_clues(
+        user_id,
+        "My oxygen looked a little lower last night. What does that change for training?",
+        days=7,
+    )
+    assert oxygen_question["primary_conversation_flows"][0]["flow"] == "sleep_breathing_recovery_question"
+    assert "daily-oxygen-saturation" in metric_ids(oxygen_question)
+    assert "daily-respiratory-rate" in metric_ids(oxygen_question)
 
 
 def test_eval_question_clues_include_human_decision_frame_for_life_constraints(tmp_path, monkeypatch) -> None:
