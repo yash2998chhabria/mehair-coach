@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 
 
-WIDGET_URI = "ui://mehair/today-v9.html"
+WIDGET_URI = "ui://mehair/today-v10.html"
 LEGACY_WIDGET_URIS = (
     "ui://mehair/today-v1.html",
     "ui://mehair/today-v2.html",
@@ -13,6 +13,7 @@ LEGACY_WIDGET_URIS = (
     "ui://mehair/today-v6.html",
     "ui://mehair/today-v7.html",
     "ui://mehair/today-v8.html",
+    "ui://mehair/today-v9.html",
 )
 WIDGET_RESOURCE_URIS = (WIDGET_URI, *LEGACY_WIDGET_URIS)
 WIDGET_MIME_TYPE = "text/html;profile=mcp-app"
@@ -588,6 +589,8 @@ TODAY_WIDGET_HTML = """
         const freshness = data.data_freshness || {};
         const dateRange = data.date_range || {};
         const range = dateRange.start && dateRange.end ? `${dateRange.start} to ${dateRange.end}` : "";
+        const windowDays = finiteNumber(data.window_days, 0) || dateRangeDays(dateRange.start, dateRange.end);
+        const rangeLabel = compactRangeLabel(dateRange, windowDays);
         const today = data.today || {};
         const latestActivity = activity.latest || {};
         const latestLoad = today.latest_training_load || activity.highest_load_day || {};
@@ -597,7 +600,24 @@ TODAY_WIDGET_HTML = """
         const todaySteps = today.steps ?? latestActivity.steps;
         const windowSteps = activity.totals?.steps;
         const latestLoadAzm = latestLoad.active_zone_minutes ?? today.active_zone_minutes ?? latestActivity.active_zone_minutes;
-        const latestLoadDetail = latestLoad.date ? `latest ${latestLoad.date}` : (range ? `window ${range}` : "latest");
+        const windowAzm = activity.totals?.active_zone_minutes;
+        const latestLoadDetail = latestLoad.date
+          ? [ `latest ${latestLoad.date}`, windowAzm != null && rangeLabel ? `${intText(windowAzm)} AZM over ${rangeLabel}` : "" ].filter(Boolean).join("; ")
+          : (rangeLabel ? `${rangeLabel} total` : "latest");
+        const stepAverage = activity.averages?.steps_per_day;
+        const moveMetric = todaySteps != null
+          ? [
+              "Move Today",
+              intText(todaySteps),
+              stepAverage != null && rangeLabel ? `today so far; ${intText(stepAverage)}/day avg over ${rangeLabel}` : "today so far",
+              "Movement load context; useful for fatigue, not a workout score.",
+            ]
+          : [
+              "Movement Window",
+              windowSteps != null ? intText(windowSteps) : null,
+              [rangeLabel, stepAverage != null ? `${intText(stepAverage)}/day avg` : ""].filter(Boolean).join("; "),
+              "Movement load context; useful for fatigue, not a workout score.",
+            ];
         const sleepDelta = sleep.latest_vs_average_hours;
         const hrvDelta = hrv != null && heart.average_hrv_ms ? ((Number(hrv) - Number(heart.average_hrv_ms)) / Number(heart.average_hrv_ms)) * 100 : null;
         const rhrDelta = rhr != null && heart.average_resting_heart_rate ? Number(rhr) - Number(heart.average_resting_heart_rate) : null;
@@ -640,13 +660,13 @@ TODAY_WIDGET_HTML = """
           focus: primaryActions,
           labels: defaultLabelKey(["Readiness", "HRV", "Resting HR", "AZM"]),
           metrics: [
-            ["Move Today", todaySteps != null ? intText(todaySteps) : null, windowSteps != null && range ? `${intText(windowSteps)} in window` : "today so far"],
+            moveMetric,
             ["Training Load", latestLoadAzm != null ? `${intText(latestLoadAzm)} AZM` : null, latestLoadDetail, "AZM = Fitbit hard-work minutes."],
             ["Sleep vs Avg", sleepDelta != null ? `${signed(sleepDelta)}h` : (sleepHours != null ? `${num(sleepHours, 1)}h` : null), sleepHours != null ? `latest ${num(sleepHours, 1)}h` : ""],
             ["HRV vs Avg", hrvDelta != null ? `${signed(hrvDelta)}%` : (hrv != null ? `${num(hrv, 1)} ms` : null), hrv != null && heart.average_hrv_ms ? `${num(hrv, 1)} vs ${num(heart.average_hrv_ms, 1)} ms` : "", "HRV = recovery stress signal."],
             ["RHR vs Avg", rhrDelta != null ? `${signed(rhrDelta)} bpm` : (rhr != null ? `${num(rhr, 1)} bpm` : null), rhr != null && heart.average_resting_heart_rate ? `${num(rhr, 0)} vs ${num(heart.average_resting_heart_rate, 0)} bpm` : "", "RHR = resting heart rate."],
             workouts.workout_count > 0
-              ? ["Workouts", intText(workouts.workout_count), range || "window"]
+              ? ["Workouts", intText(workouts.workout_count), rangeLabel || range || "synced window"]
               : vitalsValue
                 ? ["Vitals", vitalsValue, vitalsDetail]
                 : ["Freshness", titleCase(freshness.freshness_level || "unknown"), freshness.latest_observed_date ? `latest ${freshness.latest_observed_date}` : ""],
@@ -1324,6 +1344,22 @@ TODAY_WIDGET_HTML = """
         return `${days[0].date} to ${days[days.length - 1].date}`;
       }
 
+      function dateRangeDays(start, end) {
+        if (!start || !end) return 0;
+        const startDate = new Date(`${start}T00:00:00Z`);
+        const endDate = new Date(`${end}T00:00:00Z`);
+        if (Number.isNaN(startDate.getTime()) || Number.isNaN(endDate.getTime())) return 0;
+        return Math.max(1, Math.round((endDate - startDate) / 86400000) + 1);
+      }
+
+      function compactRangeLabel(dateRange, days) {
+        const safeDays = finiteNumber(days, 0);
+        if (safeDays > 1) return `last ${safeDays} days`;
+        if (dateRange?.start && dateRange?.end && dateRange.start !== dateRange.end) return `${dateRange.start} to ${dateRange.end}`;
+        if (dateRange?.end || dateRange?.start) return dateRange.end || dateRange.start;
+        return "";
+      }
+
       function sumDistance(days) {
         const km = (days || []).reduce((total, day) => total + Number(day.distance_km || 0), 0);
         return km ? `${num(km, 1)} km` : null;
@@ -1444,6 +1480,7 @@ WIDGET_PREVIEW_STATES: dict[str, dict] = {
             "activity": {
                 "status": "ok",
                 "totals": {"steps": 41200, "active_zone_minutes": 72},
+                "averages": {"steps_per_day": 5886, "active_zone_minutes_per_day": 10.3},
                 "highest_load_day": {"date": "2026-07-02", "active_zone_minutes": 72},
             },
             "sleep": {

@@ -2355,7 +2355,16 @@ def _question_clue_takeaways(
         if active_zone_minutes > 45:
             watchouts.append("Recent zone-minute load is high, so avoid stacking hard conditioning.")
     if activity.get("totals", {}).get("steps") is not None:
-        clues.append(f"Window step volume is {activity['totals']['steps']} steps.")
+        step_total = int(activity["totals"]["steps"])
+        step_avg = activity.get("averages", {}).get("steps_per_day")
+        window_days = overview.get("window_days")
+        day_word = "day" if window_days == 1 else "days"
+        window_text = f"over the last {window_days} {day_word}" if window_days else "in the synced window"
+        average_text = f" (~{int(step_avg):,}/day)" if step_avg is not None else ""
+        clues.append(
+            f"Movement context: {step_total:,} steps {window_text}{average_text}. "
+            "Use this as background fatigue/load context, not as a standalone reason to train or rest."
+        )
     if workouts.get("workout_count"):
         clues.append(f"{workouts['workout_count']} recent workout(s) are available for context.")
         hardest = workouts.get("hardest_workout") or {}

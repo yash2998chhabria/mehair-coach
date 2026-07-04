@@ -596,6 +596,8 @@ def test_question_clues_choose_recovery_heart_and_load_metrics(tmp_path, monkeyp
     )
     assert any("intensity" in item.lower() for item in clues["answer_rubric"])
     assert any("HRV" in item for item in clues["clues"] + clues["watchouts"])
+    assert any("Movement context: 27,000 steps over the last 7 days" in item for item in clues["clues"])
+    assert any("not as a standalone reason to train or rest" in item for item in clues["clues"])
 
     day_plan = store.health_question_clues(user_id, "What should I do today?", days=7)
 
