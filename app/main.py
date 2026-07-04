@@ -713,6 +713,7 @@ def workout_recommendation(
     freshness = context.get("data_freshness", {})
     current_feeling_text = (current_feeling or "").strip()
     current_feeling_lower = current_feeling_text.lower()
+    time_limit_minutes = _time_limit_minutes_from_text(current_feeling_lower)
     stated_energy = _rating_from_text(current_feeling_lower, ("energy", "energy level"))
     stated_soreness = _rating_from_text(current_feeling_lower, ("soreness", "sore", "tightness", "tight"))
     stated_pain = _rating_from_text(current_feeling_lower, ("pain", "ache", "tightness", "tight"))
@@ -821,6 +822,10 @@ def workout_recommendation(
             )
         else:
             next_actions.append("Weekly workout target is already covered; prioritize quality and recovery.")
+    if time_limit_minutes is not None and intensity != "easy":
+        next_actions.append(
+            f"Use the {time_limit_minutes} minutes for one focused block: warm-up, main work, then a short cooldown."
+        )
     if context_gaps and intensity in {"moderate", "moderate-to-hard"}:
         next_actions.append("Before hard work, tell me your energy, soreness, stress, and pain right now.")
 
@@ -864,6 +869,8 @@ def workout_recommendation(
         stop_conditions=stop_conditions,
         subjective_limiter=subjective_limiter,
         illness_flags=illness_flags,
+        current_feeling=current_feeling_text,
+        time_limit_minutes=time_limit_minutes,
     )
 
     return {
@@ -888,6 +895,7 @@ def workout_recommendation(
             "stress": stress_rating,
             "illness_flags": illness_flags,
             "current_feeling": current_feeling_text or None,
+            "time_limit_minutes": time_limit_minutes,
             "subjective_limiter": subjective_limiter,
             "latest_checkins": checkins or [],
         },
@@ -906,6 +914,7 @@ def workout_recommendation(
             "soreness_checkin": soreness_rating,
             "stress_checkin": stress_rating,
             "current_feeling": current_feeling_text or None,
+            "time_limit_minutes": time_limit_minutes,
             "subjective_limiter": subjective_limiter,
             "stated_energy": stated_energy,
             "stated_soreness": stated_soreness,
@@ -1531,6 +1540,7 @@ def _today_session_blueprint(
     rpe_cap: int,
     subjective_limiter: bool,
     illness_flags: list[str],
+    time_limit_minutes: int | None = None,
 ) -> list[str]:
     if illness_flags:
         return [
@@ -1540,23 +1550,56 @@ def _today_session_blueprint(
         ]
 
     if intensity == "easy":
-        blueprint = [
-            "Start with 10 minutes easy walking, cycling, or mobility to see if you feel better.",
-            f"Then do 10-25 minutes easy movement at RPE <= {rpe_cap}/10; stop before it feels like work.",
-            "Finish while you feel better than when you started.",
-        ]
+        if time_limit_minutes is not None and time_limit_minutes <= 25:
+            blueprint = [
+                "Start with 3-5 minutes easy walking, cycling, or mobility.",
+                f"Then use the remaining minutes for easy movement at RPE <= {rpe_cap}/10; stop before it feels like work.",
+                "Finish with energy in reserve.",
+            ]
+        else:
+            blueprint = [
+                "Start with 10 minutes easy walking, cycling, or mobility to see how your body responds.",
+                f"Then do 10-25 minutes easy movement at RPE <= {rpe_cap}/10; stop before it feels like work.",
+                "Finish with energy in reserve.",
+            ]
     elif intensity == "moderate":
-        blueprint = [
-            "Start with a 10-15 minute gradual warm-up.",
-            f"Main work: 20-40 minutes of zone 2, technique, or submax strength at RPE <= {rpe_cap}/10.",
-            "Cool down for 5 minutes and leave 2-3 reps or one more interval in reserve.",
-        ]
+        if time_limit_minutes is not None and time_limit_minutes <= 25:
+            blueprint = [
+                "Start with a 3-5 minute gradual warm-up.",
+                f"Main work: 12-18 minutes of zone 2, technique, or submax strength at RPE <= {rpe_cap}/10.",
+                "Use the final 2-3 minutes to cool down; leave one more set or interval in reserve.",
+            ]
+        elif time_limit_minutes is not None and time_limit_minutes <= 35:
+            blueprint = [
+                "Start with a 5-8 minute gradual warm-up.",
+                f"Main work: 18-25 minutes of zone 2, technique, or submax strength at RPE <= {rpe_cap}/10.",
+                "Cool down briefly and leave 2-3 reps or one more interval in reserve.",
+            ]
+        else:
+            blueprint = [
+                "Start with a 10-15 minute gradual warm-up.",
+                f"Main work: 20-40 minutes of zone 2, technique, or submax strength at RPE <= {rpe_cap}/10.",
+                "Cool down for 5 minutes and leave 2-3 reps or one more interval in reserve.",
+            ]
     else:
-        blueprint = [
-            "Start with a 10-15 minute warm-up and check breathing, form, and pain.",
-            f"Main work can be challenging, but keep the ceiling at RPE <= {rpe_cap}/10.",
-            "Skip max attempts if the warm-up feels off; cool down before you feel cooked.",
-        ]
+        if time_limit_minutes is not None and time_limit_minutes <= 25:
+            blueprint = [
+                "Start with a 3-5 minute warm-up and check breathing, form, and pain.",
+                f"Main work can be challenging for 12-18 minutes, but keep the ceiling at RPE <= {rpe_cap}/10.",
+                "Skip max attempts; finish before form or breathing changes.",
+            ]
+        elif time_limit_minutes is not None and time_limit_minutes <= 35:
+            blueprint = [
+                "Start with a 5-8 minute warm-up and check breathing, form, and pain.",
+                f"Main work can be challenging for 18-25 minutes, but keep the ceiling at RPE <= {rpe_cap}/10.",
+                "Skip max attempts if the warm-up feels off; cool down before form fades.",
+            ]
+        else:
+            blueprint = [
+                "Start with a 10-15 minute warm-up and check breathing, form, and pain.",
+                f"Main work can be challenging, but keep the ceiling at RPE <= {rpe_cap}/10.",
+                "Skip max attempts if the warm-up feels off; cool down before form fades.",
+            ]
 
     if subjective_limiter:
         blueprint.insert(
@@ -1686,6 +1729,8 @@ def _today_workout_coach_response(
     stop_conditions: list[str],
     subjective_limiter: bool,
     illness_flags: list[str],
+    current_feeling: str | None = None,
+    time_limit_minutes: int | None = None,
 ) -> dict[str, Any]:
     evidence_text = " ".join(evidence).lower()
     has_stale_data = "data freshness is stale" in evidence_text or "sync latest fitbit data" in evidence_text
@@ -1699,16 +1744,21 @@ def _today_workout_coach_response(
     elif illness_flags:
         short_answer = "Skip hard training today. If symptoms are mild and improving, keep it to a short easy walk or mobility."
     elif intensity == "easy":
-        short_answer = "Make today recovery-biased: useful movement is fine, but do not chase fitness today."
+        short_answer = "Make today recovery-biased: useful movement is fine, but keep it easy and finish with energy in reserve."
     elif has_high_movement:
         short_answer = "Train, but keep lower-body work and hard conditioning controlled because today's movement volume already adds load."
     elif intensity == "moderate":
-        short_answer = "Do a controlled session that helps you feel better, not a workout you have to survive."
+        short_answer = "Do a focused controlled session today: useful work, not all-out intensity."
     else:
-        short_answer = "Training is available today if the warm-up feels normal and your breathing, form, and pain stay calm."
+        if _positive_or_neutral_feeling_from_text(current_feeling or ""):
+            short_answer = "Training is available today; if the warm-up matches how good or normal you feel, you can make it challenging."
+        else:
+            short_answer = "Training is available today if the warm-up feels normal and your breathing, form, and pain stay calm."
 
     if subjective_limiter and not illness_flags:
         short_answer += " Because you do not feel fully right, let the first 10-15 minutes decide whether to continue."
+    if time_limit_minutes is not None and time_limit_minutes <= 35 and not has_stale_data:
+        short_answer += f" Since you have {time_limit_minutes} minutes, make the plan compact instead of adding extra volume."
 
     what_to_do = list(next_actions[:3])
     rpe_line = f"Keep RPE (how hard it feels) at or below {rpe_cap}/10, which means {_rpe_plain(rpe_cap)}."
@@ -1718,6 +1768,7 @@ def _today_workout_coach_response(
         rpe_cap=rpe_cap,
         subjective_limiter=subjective_limiter,
         illness_flags=illness_flags,
+        time_limit_minutes=time_limit_minutes,
     )
 
     return {
@@ -2090,6 +2141,40 @@ def _subjective_limiter_from_text(text: str) -> bool:
         _has_unnegated_phrase(lower, term)
         for term in SUBJECTIVE_LIMITER_PHRASES
     )
+
+
+def _positive_or_neutral_feeling_from_text(text: str) -> bool:
+    if not text:
+        return False
+    lower = text.lower()
+    phrases = (
+        "feel good",
+        "feeling good",
+        "feel great",
+        "feeling great",
+        "feel normal",
+        "feeling normal",
+        "feel fresh",
+        "feeling fresh",
+        "feel strong",
+        "feeling strong",
+        "slept great",
+        "slept well",
+    )
+    return any(_has_unnegated_phrase(lower, phrase) for phrase in phrases)
+
+
+def _time_limit_minutes_from_text(text: str) -> int | None:
+    if not text:
+        return None
+    matches = re.findall(
+        r"\b(?:only\s+have|have|got|with|for|about|around|approximately|under)?\s*(\d{1,3})\s*(?:min|mins|minute|minutes)\b",
+        text.lower(),
+    )
+    if not matches:
+        return None
+    minutes = int(matches[0])
+    return max(5, min(minutes, 180))
 
 
 def _high_movement_from_text(text: str) -> bool:

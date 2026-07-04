@@ -870,6 +870,7 @@ def test_today_recommendation_for_normal_green_day_does_not_assume_off_day() -> 
         current_feeling="I feel good and want to run today.",
     )
     positive_story = positive_feeling["coach_response"]["data_story"]
+    assert "if the warm-up matches how good or normal you feel" in positive_feeling["coach_response"]["short_answer"]
     assert "current body feel caps the ceiling" not in positive_story
     assert "sleep supports training" in positive_story
 
@@ -889,6 +890,67 @@ def test_today_recommendation_for_normal_green_day_does_not_assume_off_day() -> 
     assert "training is available today" in negated_coach["short_answer"].lower()
     assert "current body feel caps the ceiling" not in negated_joined
     assert "do not feel fully right" not in negated_joined
+
+
+def test_today_recommendation_for_busy_normal_day_is_compact_without_off_day_bias() -> None:
+    context = {
+        "status": "ok",
+        "latest_date": "2026-07-03",
+        "activity_date": "2026-07-03",
+        "recovery_date": "2026-07-03",
+        "data_freshness": {
+            "freshness_level": "fresh",
+            "needs_sync_before_time_sensitive_advice": False,
+        },
+        "readiness": {
+            "score": 68,
+            "label": "yellow",
+            "recommendation": "Choose moderate cardio, technique, or strength without max efforts.",
+            "evidence": [
+                "Latest sleep is moderate at 6.7h.",
+                "HRV is slightly below recent baseline.",
+                "Resting heart rate is slightly elevated.",
+            ],
+        },
+        "today": {
+            "steps": 5400,
+            "active_minutes": 32,
+            "active_zone_minutes": 18,
+            "hrv_ms": 47,
+            "resting_heart_rate": 60,
+            "sleep": {"asleep_hours": 6.7, "sessions_count": 1},
+            "latest_training_load": {"date": "2026-07-03", "active_zone_minutes": 18},
+        },
+        "sections": {
+            "heart": {
+                "latest_hrv_ms": 47,
+                "average_hrv_ms": 52,
+                "latest_resting_heart_rate": 60,
+                "average_resting_heart_rate": 57,
+            }
+        },
+    }
+
+    recommendation = workout_recommendation(
+        context=context,
+        current_feeling="I feel normal today and only have 20 minutes after work.",
+    )
+    coach = recommendation["coach_response"]
+    joined = " ".join([coach["short_answer"], *coach["session_blueprint"], *coach["what_to_do"]]).lower()
+
+    assert recommendation["intensity"] == "moderate"
+    assert recommendation["data_used"]["time_limit_minutes"] == 20
+    assert "focused controlled session" in coach["short_answer"]
+    assert "20 minutes" in coach["short_answer"]
+    assert any("3-5 minute gradual warm-up" in item for item in coach["session_blueprint"])
+    assert any("12-18 minutes" in item for item in coach["session_blueprint"])
+    assert any("Use the 20 minutes" in item for item in recommendation["next_actions"])
+    assert "feel better" not in joined
+    assert "survive" not in joined
+    assert "not-100" not in joined
+    assert "do not feel fully right" not in joined
+    assert any(item["label"] == "RPE" for item in coach["labels_explained"])
+    assert any(item["label"] == "HRV" for item in coach["labels_explained"])
 
 
 def test_today_recommendation_downshifts_stale_green_data_before_hard_work() -> None:

@@ -795,7 +795,7 @@ TODAY_WIDGET_HTML = """
             ["Soreness", subjective.soreness != null ? `${subjective.soreness}/10` : null, subjective.energy != null ? `energy ${subjective.energy}/10` : ""],
             ["Goal", goal.remaining_sessions != null ? intText(goal.remaining_sessions) : "No goal", goalDetail],
           ],
-          evidenceTitle: "Why",
+          evidenceTitle: "What This Means",
           evidence: [coach.data_story, ...(coach.why || prioritizeWorkoutEvidence(data.evidence || data.why || []))].filter(Boolean),
           secondaryTitle: coach.stop_if ? "Stop If" : "Avoid",
           secondary: coach.stop_if || coach.avoid || data.avoid || [],
@@ -896,7 +896,7 @@ TODAY_WIDGET_HTML = """
             ["Resting HR", dataUsed.resting_heart_rate ? `${dataUsed.resting_heart_rate} bpm` : null],
             ["Latest load", dataUsed.latest_training_load?.active_zone_minutes != null ? `${dataUsed.latest_training_load.active_zone_minutes} AZM` : null, dataUsed.latest_training_load?.date || "", "AZM = Fitbit hard-work minutes."],
           ],
-          evidenceTitle: "Why This Plan",
+          evidenceTitle: "What This Means",
           evidence: [coach.data_story, ...(coach.why || data.limiting_factors || data.why || [])].filter(Boolean).slice(0, 5),
           secondaryTitle: substitutions.length ? "Substitutions" : "Avoid",
           secondary: (substitutions.length ? substitutions : coach.avoid || data.avoid || []).slice(0, 5),
@@ -1228,7 +1228,7 @@ TODAY_WIDGET_HTML = """
         const intensity = titleCase(data.recommended_intensity || data.intensity || "guided");
         const cap = data.rpe_cap != null ? ` Keep it at RPE ${data.rpe_cap}/10, which means ${rpePlain(data.rpe_cap)}.` : "";
         if (String(data.recommended_intensity || data.intensity || "").includes("easy")) {
-          return `Make this an easy session that leaves you feeling better.${cap}`;
+          return `Make this an easy session that supports recovery and leaves energy in reserve.${cap}`;
         }
         if (String(data.recommended_intensity || data.intensity || "").includes("moderate")) {
           return `Do a useful ${intensity.toLowerCase()} session, not a prove-it workout.${cap}`;
