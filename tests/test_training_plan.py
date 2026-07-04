@@ -1745,6 +1745,7 @@ def test_generic_workout_before_class_renders_as_minimum_useful_movement() -> No
     assert "smallest useful dose" in joined
     assert "breathing calm" in joined
     assert "20 minutes" in joined
+    assert "walk" not in joined
     assert "40 minutes including warm-up" not in joined
     assert "moderate-to-hard" not in joined
     assert "normal session" not in joined
@@ -2318,6 +2319,7 @@ def test_today_recommendation_before_class_uses_minimum_effective_dose() -> None
     assert "smallest useful dose" in joined
     assert "20 minutes" in joined
     assert "switch contexts" in joined
+    assert "walk" not in joined
     assert "movement-load window already adds leg stress" not in joined
     assert "lower-body work" not in joined
     assert any("next obligation" in item for item in recommendation["avoid"])

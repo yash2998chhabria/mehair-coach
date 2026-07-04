@@ -1606,7 +1606,7 @@ def workout_recommendation(
         intensity = "moderate"
         rpe_cap = 7
     else:
-        plan = "Make today recovery-biased: walking, mobility, breath work, and an earlier bedtime."
+        plan = "Make today recovery-biased: mobility, breath work, low-impact easy movement, and an earlier bedtime."
         intensity = "easy"
         rpe_cap = 6
 
@@ -1728,11 +1728,11 @@ def workout_recommendation(
         else:
             primary_action = "Do one controlled main block: easy zone 2 if no plan, or submax planned training with reps in reserve."
     else:
-        primary_action = "Make today recovery-biased: walk, mobility, easy cardio, or rest."
+        primary_action = "Make today recovery-biased: mobility, easy low-impact cardio, or rest."
     if oxygen_constraint:
         primary_action = oxygen_constraint["primary_action"]
     if illness_flags:
-        primary_action = "Rest today, or keep movement to a short easy walk if symptoms are mild and improving."
+        primary_action = "Rest today, or keep movement to gentle mobility if symptoms are mild and improving."
     next_actions.insert(1 if freshness.get("needs_sync_before_time_sensitive_advice") else 0, primary_action)
     evidence = _workout_evidence(
         context=context,
@@ -2104,7 +2104,7 @@ def workout_plan_for_activity(
             [
                 "Standing press -> seated machine or dumbbell press.",
                 "Bent-over row -> chest-supported row.",
-                "Conditioning finisher -> easy walk or mobility cooldown.",
+                "Conditioning finisher -> mobility cooldown or easy low-impact reset.",
             ]
         )
     if preserving_next_session:
@@ -2400,7 +2400,7 @@ def active_workout_guidance(
         headline = "End the working session because pain is high."
         immediate_actions = [
             "Stop loading the painful area now.",
-            "Switch to easy walking, gentle mobility, or end the workout.",
+            "Switch to gentle mobility, very easy movement, or end the workout.",
             "Consider clinical advice if pain is sharp, worsening, or changes how you move.",
         ]
         modifications = ["Do not test heavy variations today."]
@@ -2946,7 +2946,7 @@ def _today_session_blueprint(
     if illness_flags:
         return [
             "Today: skip hard training.",
-            "If symptoms are mild and improving, do 10-20 minutes of easy walking or mobility only.",
+            "If symptoms are mild and improving, do 10-20 minutes of gentle mobility or very easy movement only.",
             "End the session if symptoms worsen, breathing feels unusual, or energy drops.",
         ]
 
@@ -2967,13 +2967,13 @@ def _today_session_blueprint(
     if intensity == "easy":
         if time_limit_minutes is not None and time_limit_minutes <= 25:
             blueprint = [
-                "Start with 3-5 minutes easy walking, cycling, or mobility.",
+                "Start with 3-5 minutes easy mobility, easy cycling, or low-impact movement.",
                 f"Then use the remaining minutes for easy movement at RPE <= {rpe_cap}/10; stop before it feels like work.",
                 "Finish with energy in reserve.",
             ]
         else:
             blueprint = [
-                "Start with 10 minutes easy walking, cycling, or mobility to see how your body responds.",
+                "Start with 10 minutes easy mobility, easy cycling, or low-impact movement to see how your body responds.",
                 f"Then do 10-25 minutes easy movement at RPE <= {rpe_cap}/10; stop before it feels like work.",
                 "Finish with energy in reserve.",
             ]
@@ -3040,7 +3040,7 @@ def _workout_session_blueprint(
     if illness_flags:
         return [
             "Do not do the planned workout hard today.",
-            "Use rest, fluids, and at most very easy walking or mobility while symptoms are present.",
+            "Use rest, fluids, and at most gentle mobility or very easy movement while symptoms are present.",
             "Come back to the plan after symptoms improve and normal daily movement feels okay.",
         ]
 
@@ -3203,7 +3203,7 @@ def _today_workout_coach_response(
     if has_stale_data:
         short_answer = "Sync latest Fitbit data before a time-sensitive hard workout decision. If you train before syncing, keep it controlled."
     elif illness_flags:
-        short_answer = "Skip hard training today. If symptoms are mild and improving, keep it to a short easy walk or mobility."
+        short_answer = "Skip hard training today. If symptoms are mild and improving, keep it to gentle mobility or very easy movement."
     elif intensity == "easy":
         short_answer = "Make today recovery-biased: useful movement is fine, but keep it easy and finish with energy in reserve."
     elif reserve_energy_obligation:
@@ -3253,6 +3253,9 @@ def _today_workout_coach_response(
             "Use this as a flexible coaching contract, not wording to copy. Answer like a personal "
             "coach: direct recommendation first, concrete next move second, then explain the kept "
             "metric labels in one short why section. Match the current user-stated situation exactly. "
+            "Do not default to walking, hiking, or running language unless the user brought up that "
+            "activity; for generic low-dose advice, say easy movement, mobility, low-impact cardio, "
+            "or light technique instead. "
             "Separate source types: Fitbit/Google Health signals are wearable evidence; goals, "
             "injuries, preferences, and prior details are user-stated or conversation context unless "
             "a tool result explicitly marks them as synced data."
@@ -3306,7 +3309,7 @@ def _training_decision_frame(
         hard_training = "conditional"
 
     if intensity == "easy":
-        best_session_type = "recovery movement, mobility, walking, or rest"
+        best_session_type = "recovery movement, mobility, low-impact easy movement, or rest"
     elif intensity == "moderate":
         best_session_type = "controlled strength, zone 2, technique, or submax intervals"
     else:
@@ -3745,6 +3748,9 @@ def _workout_plan_coach_response(
             "conversation context unless a tool result explicitly marks them as synced data. Prefer a "
             "usable session blueprint over a stats recap. Use readiness_attribution to explain what "
             "moved the score versus what only caps intensity."
+            " Do not default to walking, hiking, or running language unless the user brought up that "
+            "activity; for generic low-dose advice, say easy movement, mobility, low-impact cardio, "
+            "or light technique instead."
             + (
                 " This result supersedes any older visible card in the thread: because the user has a "
                 "near-term obligation, do not present this as a normal RPE 8 workout, and do not suggest "
@@ -4133,7 +4139,7 @@ def _oxygen_training_constraint(context: dict[str, Any]) -> dict[str, Any] | Non
             "primary_action": (
                 "Re-check the SpO2 reading and sensor fit first. If it repeats low, skip training; "
                 "if it looks like a sensor error and you feel completely normal, keep movement to "
-                "very easy mobility or walking only."
+                "very easy mobility only."
             ),
             "next_action": (
                 "Re-check oxygen/sensor fit before training; if the reading repeats low or you have "
@@ -5041,7 +5047,7 @@ def _exercise_prescription(
             "1",
             "8-12 min",
             "Nasal/easy breathing; use this as the readiness check.",
-            "Brisk walk or bike.",
+            "Easy bike or technique-only warm-up.",
         )
         add(
             "Technique block",
@@ -5087,7 +5093,7 @@ def _exercise_prescription(
             "1",
             "8-10 min",
             "Use breathing, coordination, and pain as the readiness screen.",
-            "Walk, bike, or mobility flow.",
+            "Easy bike, mobility flow, or low-impact movement.",
         )
         add(
             "Main movement",
