@@ -1308,6 +1308,10 @@ def test_generic_workout_before_class_renders_as_minimum_useful_movement() -> No
     assert "smallest useful dose" in joined
     assert "breathing calm" in joined
     assert "moderate-to-hard" not in joined
+    assert "normal session" not in joined
+    assert "rpe 8" not in joined
+    assert "main movement" not in joined
+    assert "accessory circuit" not in joined
     assert not plan["exercise_blocks"]
 
 

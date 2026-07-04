@@ -1897,6 +1897,8 @@ class HealthStore:
                 "Use available_signal_snapshot for broad, all-data, oxygen, breathing, or unusual-pattern questions so secondary signals are not ignored.",
                 "Use unusual_signals.ranked_watchouts first for questions like 'anything weird?' or 'what changed?' before falling back to a raw metric list.",
                 "Use decision_frame.model_decision_policy to choose data by safety, recovery, load, capacity, and user-context axes rather than by brittle wording alone.",
+                "If the user asks to use tools, rerun, update the card, check latest data again, or show a card, make a new call from recommended_tool_sequence; do not answer from an older visible card or prior tool result.",
+                "When a new tool result is returned, mention the freshness/date window from data_freshness and write the answer from the new result, not from conversation memory.",
                 "Mention normal secondary signals briefly as context when they do not change the workout call.",
                 "Treat missing metrics as absent, not zero.",
                 "For workout decisions, combine readiness, sleep, HRV, resting HR, oxygen/breathing/temperature context, load, recent workouts, goals, and check-ins.",

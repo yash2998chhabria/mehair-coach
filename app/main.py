@@ -64,7 +64,8 @@ SERVER_INSTRUCTIONS = (
     "look at my data, use my data, or what should I do today as already-synced reads unless the user "
     "literally asks to sync, refresh, pull, or update Fitbit/Google Health data now. Sync only when "
     "the user explicitly asks for a fresh sync/refresh/pull/update, or when a freshness result says "
-    "the data is stale for time-sensitive advice. For explicit requests to sync or refresh and then "
+    "needs_sync_before_time_sensitive_advice, including aging or stale data for a hard, risky, or "
+    "time-sensitive call. For explicit requests to sync or refresh and then "
     "summarize freshness, show a card, analyze all available metrics, explain changes, or give an overview, call "
     "sync_and_get_health_overview directly; this is a non-destructive, idempotent pull of the user's "
     "cloud-synced Fitbit data into their private store, so do not describe it as blocked, dangerous, "
@@ -95,6 +96,11 @@ SERVER_INSTRUCTIONS = (
     "for the workout the user actually wants to do; keep constraints like 'don't want tired legs' "
     "or 'hike tomorrow' in constraints, not as leg target_areas. Label prior conversation facts as user-stated context, not synced Fitbit evidence, "
     "and do not treat earlier symptoms as current unless the user says they are still present. "
+    "In long threads, do not answer from an old visible card or prior tool result when the user asks "
+    "to use tools, check my data again, update the card, rerun, refresh, or show a card. Make a fresh "
+    "relevant tool call and base the answer on the newest tool result. Treat older cards as historical "
+    "context only because they may not include the user's new constraint, especially time limits, "
+    "class/meeting/work/travel obligations, pain, symptoms, or in-workout reports. "
     "During an active workout, call guide_active_workout when the user reports live RPE, heart rate, "
     "pain, symptoms, elapsed time, or asks whether to keep going, push, hold steady, back off, slow "
     "down, or stop. Call guide_active_workout directly for these in-session questions because it "
@@ -387,7 +393,8 @@ def create_server(settings_override: Settings | None = None) -> ServerBundle:
             "changed, or recommend today's intensity. Runs one sync, then returns a card-ready "
             "all-data overview with sync freshness. For normal current/latest/today questions, use "
             "get_health_overview instead because it is faster and includes freshness metadata. Leave force "
-            "false unless the user explicitly asks to force a refresh."
+            "false unless the user explicitly asks to force a refresh. Use this to create a new current "
+            "card in long threads when the user explicitly asks to sync/refresh/pull/update and show a card."
         ),
         annotations=SYNC,
         meta=WIDGET_META,
@@ -411,7 +418,8 @@ def create_server(settings_override: Settings | None = None) -> ServerBundle:
             "sync_skipped": sync.get("sync_skipped", False),
             "skip_reason": sync.get("skip_reason"),
             "records_upserted": sync.get("records_upserted"),
-            "total_records": sync.get("total_records"),
+            "total_records": sync.get("total_records")
+            or overview.get("data_freshness", {}).get("records"),
             "partial_sync": sync.get("partial_sync", False),
             "time_budget_exhausted": sync.get("time_budget_exhausted", False),
             "metrics_synced": sync.get("metrics_synced", []),
@@ -423,7 +431,7 @@ def create_server(settings_override: Settings | None = None) -> ServerBundle:
             "sync_diagnostics": sync.get("sync_diagnostics", {}),
             "lookback_days": sync.get("lookback_days"),
             "sync_window": sync.get("sync_window"),
-            "freshness": sync.get("freshness"),
+            "freshness": sync.get("freshness") or overview.get("data_freshness"),
         }
         return overview
 
@@ -466,7 +474,8 @@ def create_server(settings_override: Settings | None = None) -> ServerBundle:
             "my data', or 'what other signals matter?'. Returns a card-ready overview across readiness, "
             "activity, sleep, heart, oxygen/breathing/temperature/capacity context when available, "
             "workouts, goals, check-ins, data coverage, freshness, and concrete next actions without "
-            "starting a sync."
+            "starting a sync. Use this to create a new current card in long threads when the user asks "
+            "to use tools, check latest data again, rerun analysis, or show a card, but does not explicitly ask to sync."
         ),
         annotations=READ_ONLY,
         meta=WIDGET_META,
@@ -548,6 +557,8 @@ def create_server(settings_override: Settings | None = None) -> ServerBundle:
             "context, goals, check-ins, recent workouts, and optional current_feeling text to produce "
             "a direct decision, session blueprint, RPE cap, evidence, labels explained, and stop "
             "conditions. Does not start a sync."
+            " If the user asks to use tools, show the card, or asks the same day-of question again with "
+            "new context, call this tool again rather than answering from an older card in the thread."
         ),
         annotations=READ_ONLY,
         meta=WIDGET_META,
@@ -583,8 +594,11 @@ def create_server(settings_override: Settings | None = None) -> ServerBundle:
             "sleep, HRV, resting heart rate, oxygen/breathing context, activity load, goals, check-ins, "
             "the available signal snapshot, and user-stated constraints. Use for concrete plans like "
             "'upper body but save my legs for a hike', '30-minute run after work', or 'chest day with "
-            "back soreness'. It returns a card-ready plan with exercises, substitutions, avoid-list, "
+            "back soreness'. Put near-term class, meeting, work, travel, social plans, and 'I need energy "
+            "after this' context in constraints so the plan preserves energy. It returns a card-ready plan with exercises, substitutions, avoid-list, "
             "RPE cap, label explanations, and a plain-English coaching contract."
+            " If the user says to use tools or show a workout card, call this tool for the current turn "
+            "instead of reusing an older visible card."
         ),
         annotations=READ_ONLY,
         meta=WIDGET_META,
@@ -653,7 +667,8 @@ def create_server(settings_override: Settings | None = None) -> ServerBundle:
             "readiness/load context. Use this for during-workout prompts like 'HR 150, RPE 7, "
             "pain 0/10, should I push or back off?', 'my chest feels tight', or 'keep going?'. "
             "Live inputs are user-reported, not direct band telemetry. Do not substitute "
-            "get_health_overview for active in-session decisions; this returns the active workout card."
+            "get_health_overview for active in-session decisions; this returns the active workout card. "
+            "Always call this again for each new in-session update; do not reuse earlier active-workout guidance."
         ),
         annotations=READ_ONLY,
         meta=WIDGET_META,
@@ -1447,7 +1462,12 @@ def workout_plan_for_activity(
             ]
         )
         substitutions.append("Leg-heavy plan -> upper-body lift, core, mobility, or very easy recovery movement.")
-    if readiness_label == "red":
+    if reserve_energy_obligation:
+        session.insert(
+            0,
+            "This is not a full normal-session window; treat it as minimum useful movement before your next obligation.",
+        )
+    elif readiness_label == "red":
         session.insert(0, "Do not chase PRs; keep every compound lift 3-4 reps in reserve.")
     elif readiness_label == "yellow":
         session.insert(0, "Use a controlled session and stop 2-3 reps before failure.")
@@ -2689,6 +2709,13 @@ def _workout_plan_coach_response(
             "Use this as a flexible workout-plan contract. Keep the workout name and metric labels, "
             "translate each label in simple words, and match the user's stated situation instead of "
             "assuming they feel off. Prefer a usable session blueprint over a stats recap."
+            + (
+                " This result supersedes any older visible card in the thread: because the user has a "
+                "near-term obligation, do not present this as a normal RPE 8 workout, and do not suggest "
+                "main/accessory strength blocks unless the returned exercise blocks include them."
+                if has_reserve_obligation
+                else ""
+            )
         ),
         "realistic_follow_ups": [
             "I only have 30 minutes. What should I actually do?",

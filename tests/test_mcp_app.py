@@ -59,6 +59,7 @@ async def test_mcp_tool_list_matches_private_beta_plan() -> None:
     assert "Fast all-context path" in by_name["get_health_overview"].description
     assert "should I run today" in by_name["get_health_overview"].description
     assert "get fitter without feeling wrecked" in by_name["get_health_overview"].description
+    assert "create a new current card in long threads" in by_name["get_health_overview"].description
     assert "Prefer get_health_overview for broad everyday coaching prompts" in by_name[
         "get_today_context"
     ].description
@@ -72,6 +73,9 @@ async def test_mcp_tool_list_matches_private_beta_plan() -> None:
     assert "I want to get fitter but not feel wrecked" in by_name[
         "recommend_workout_today"
     ].description
+    assert "call this tool again rather than answering from an older card" in by_name[
+        "recommend_workout_today"
+    ].description
     assert "Pass only current user-stated context" in by_name["recommend_workout_today"].inputSchema[
         "properties"
     ]["current_feeling"]["description"]
@@ -80,6 +84,7 @@ async def test_mcp_tool_list_matches_private_beta_plan() -> None:
     ].description
     assert "Live inputs are user-reported" in by_name["guide_active_workout"].description
     assert "not direct band telemetry" in by_name["guide_active_workout"].description
+    assert "do not reuse earlier active-workout guidance" in by_name["guide_active_workout"].description
     planned_activity = by_name["guide_active_workout"].inputSchema["properties"]["planned_activity"]
     assert planned_activity["default"] == "current workout"
     assert "Use 'current workout'" in planned_activity["description"]
@@ -112,6 +117,8 @@ def test_server_instructions_keep_normal_latest_questions_fast() -> None:
     assert "call recommend_workout_today directly" in SERVER_INSTRUCTIONS
     assert "use planned_activity and target_areas only for the workout the user actually wants to do" in SERVER_INSTRUCTIONS
     assert "not as leg target_areas" in SERVER_INSTRUCTIONS
+    assert "do not answer from an old visible card" in SERVER_INSTRUCTIONS
+    assert "Treat older cards as historical context only" in SERVER_INSTRUCTIONS
     assert "use list_available_health_metrics to inspect the per-user metric catalog" in SERVER_INSTRUCTIONS
     assert "query_health_metrics to fetch the specific signals you choose" in SERVER_INSTRUCTIONS
     assert "call get_health_overview" in SERVER_INSTRUCTIONS
@@ -130,10 +137,10 @@ async def test_widget_resource_is_registered() -> None:
 
     assert str(resources[0].uri) == WIDGET_URI
     assert resources[0].mimeType == "text/html;profile=mcp-app"
-    assert WIDGET_URI == "ui://mehair/today-v21.html"
-    assert "ui://mehair/today-v20.html" in LEGACY_WIDGET_URIS
+    assert WIDGET_URI == "ui://mehair/today-v22.html"
+    assert "ui://mehair/today-v21.html" in LEGACY_WIDGET_URIS
     assert "Preparing card" in html
-    assert 'appInfo: { name: "mehair coach", version: "0.7.2" }' in html
+    assert 'appInfo: { name: "mehair coach", version: "0.7.3" }' in html
     assert "mehair-coach-widget" not in html
     assert 'renderEmpty("Preparing the health card from the latest tool result.", "waiting")' in html
     assert "function hasCardData(data)" in html

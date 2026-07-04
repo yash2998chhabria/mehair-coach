@@ -580,6 +580,8 @@ def test_eval_natural_prompt_mix_is_not_biased_to_off_day_language(tmp_path, mon
     assert "training_decision" in daily_flow["data_surfaces_to_use"]
     assert any("conversation_flow_options" in item for item in informal_training["answering_guidance"])
     assert any("model_decision_policy" in item for item in informal_training["answering_guidance"])
+    assert any("older visible card" in item for item in informal_training["answering_guidance"])
+    assert any("freshness/date window" in item for item in informal_training["answering_guidance"])
     assert {
         "daily-vo2-max",
         "oxygen-saturation",

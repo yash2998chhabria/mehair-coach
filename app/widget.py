@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 
 
-WIDGET_URI = "ui://mehair/today-v21.html"
+WIDGET_URI = "ui://mehair/today-v22.html"
 LEGACY_WIDGET_URIS = (
     "ui://mehair/today-v1.html",
     "ui://mehair/today-v2.html",
@@ -25,6 +25,7 @@ LEGACY_WIDGET_URIS = (
     "ui://mehair/today-v18.html",
     "ui://mehair/today-v19.html",
     "ui://mehair/today-v20.html",
+    "ui://mehair/today-v21.html",
 )
 WIDGET_RESOURCE_URIS = (WIDGET_URI, *LEGACY_WIDGET_URIS)
 WIDGET_MIME_TYPE = "text/html;profile=mcp-app"
@@ -378,6 +379,31 @@ TODAY_WIDGET_HTML = """
         line-height: 1.38;
       }
 
+      .dose-cue {
+        display: flex;
+        align-items: flex-start;
+        gap: 7px;
+        border: 1px solid #f0a9c9;
+        border-radius: 8px;
+        background: #fff0f7;
+        color: var(--brand-ink);
+        padding: 7px 8px;
+        font-size: 12px;
+        font-weight: 760;
+        line-height: 1.3;
+      }
+
+      .dose-cue::before {
+        content: "";
+        flex: 0 0 auto;
+        width: 8px;
+        height: 8px;
+        margin-top: 4px;
+        border-radius: 999px;
+        background: var(--brand);
+        box-shadow: 0 0 0 2px #fff;
+      }
+
       .focus-list {
         display: grid;
         gap: 6px;
@@ -705,7 +731,7 @@ TODAY_WIDGET_HTML = """
       async function initialize() {
         try {
           await rpcRequest("ui/initialize", {
-            appInfo: { name: "mehair coach", version: "0.7.2" },
+            appInfo: { name: "mehair coach", version: "0.7.3" },
             appCapabilities: {},
             protocolVersion: "2026-01-26",
           });
@@ -1514,6 +1540,7 @@ TODAY_WIDGET_HTML = """
             </div>
             <div class="plan-box">
               <h2>${escapeHtml(model.focusTitle || "Coach Take")}</h2>
+              ${renderDoseCue(model)}
               <ul class="focus-list">${primaryFocus}</ul>
             </div>
           </div>
@@ -1541,6 +1568,33 @@ TODAY_WIDGET_HTML = """
         const label = dataWindow.levelLabel || "Fitbit timing";
         const text = [dataWindow.pull, dataWindow.latest].filter(Boolean).join(" · ");
         return `<div class="data-window" aria-label="Fitbit data timing"><b>${escapeHtml(label)}</b><span>${escapeHtml(text)}</span></div>`;
+      }
+
+      function renderDoseCue(model) {
+        const cue = model?.doseCue || minimumDoseCue(model);
+        if (!cue) return "";
+        return `<div class="dose-cue">${escapeHtml(cue)}</div>`;
+      }
+
+      function minimumDoseCue(model) {
+        const text = [
+          model?.title,
+          model?.headline,
+          ...(model?.chips || []),
+          ...(model?.focus || []),
+          ...(model?.evidence || []),
+          ...(model?.secondary || []),
+        ].filter(Boolean).join(" ").toLowerCase();
+        const isWorkout = /workout|session|movement|training|rpe|intensity|planned/.test(text);
+        const hasMinimumDose = /smallest useful dose|minimum useful|minimum effective|leave energy|finish with energy|before class|before work|next obligation|what comes next|breathing calm|focus intact|not wrecked|compact and useful/.test(text);
+        if (!isWorkout || !hasMinimumDose) return "";
+        if (/class|meeting|work|shift|obligation|what comes next|breathing calm|focus intact|cool down and reset/.test(text)) {
+          return "Minimum useful dose: leave energy for what comes next.";
+        }
+        if (/short|compact|time box|between meetings|not wrecked/.test(text)) {
+          return "Compact useful dose: finish with one gear unused.";
+        }
+        return "Minimum useful dose: enough work to feel better, not a workout to recover from.";
       }
 
       function renderLabelKey(labels) {
