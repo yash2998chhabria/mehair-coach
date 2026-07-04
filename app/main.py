@@ -38,6 +38,9 @@ SERVER_INSTRUCTIONS = (
     "When a tool returns coach_response, use it as the answer skeleton: direct human answer first, "
     "then the session_blueprint or what_to_do, then the explained metric labels, then stop conditions "
     "or caveats. Avoid leading with raw tables or unexplained evidence logs. "
+    "Match the user's actual situation: do not default to 'I feel off', fatigue, soreness, or recovery "
+    "framing unless the user says it or the synced/check-in signals support it. For neutral or positive "
+    "questions, give normal training permission with clear guardrails and the data that would change the call. "
     "If connection or synced data is missing, call status/freshness tools and explain setup; "
     "never invent health data. Use already-synced local data for normal current/latest/today questions, "
     "because every overview includes freshness metadata. Treat phrases like check my Fitbit context, "
@@ -392,7 +395,8 @@ def create_server(settings_override: Settings | None = None) -> ServerBundle:
             Field(
                 description=(
                     "The user's current plain-language feeling, symptoms, soreness, energy, time limit, "
-                    "or concern, for example 'I feel a little off but want to work out'."
+                    "or concern, for example 'I have 30 minutes after work', 'I feel good and want to run', "
+                    "or 'I feel a little off but want to work out'."
                 )
             ),
         ] = None,
@@ -1365,11 +1369,36 @@ def _coach_data_story(readiness: dict[str, Any], evidence: list[str]) -> str:
             and any(term in item for term in ("fever", "chills", "flu", "sore throat", "vomit", "nausea"))
         )
     ]
-    subjective_items = [
-        item
-        for item in evidence_items
-        if "do not feel fully right" in item or "not feel 100" in item or "current user-stated feeling" in item
-    ]
+    subjective_items = []
+    for item in evidence_items:
+        if "do not feel fully right" in item or "not feel 100" in item:
+            subjective_items.append(item)
+            continue
+        if item.startswith("current user-stated feeling") and any(
+            term in item
+            for term in (
+                "feel off",
+                "off today",
+                "not fresh",
+                "run down",
+                "rundown",
+                "under-recovered",
+                "under recovered",
+                "not recovered",
+                "fatigue",
+                "fatigued",
+                "drained",
+                "cooked",
+                "heavy",
+                "low energy",
+                "sore",
+                "soreness",
+                "pain",
+                "ache",
+                "tight",
+            )
+        ):
+            subjective_items.append(item)
     preserve_items = [
         item
         for item in evidence_items
@@ -1636,11 +1665,7 @@ def _today_workout_coach_response(
         "stop_if": stop_conditions[:5],
         "avoid": avoid[:5],
         "answer_style": "Answer like a personal coach: direct recommendation first, then explain the kept metric labels in one short why section.",
-        "realistic_follow_ups": [
-            "I feel a little off today but still want to move. What is the safest useful session?",
-            "Can I train hard today, or should I keep it controlled?",
-            "What would make you tell me to stop during the workout?",
-        ],
+        "realistic_follow_ups": _today_realistic_followups(subjective_limiter, illness_flags),
     }
 
 
@@ -1702,9 +1727,13 @@ def _workout_plan_coach_response(
         "stop_if": stop_conditions[:5],
         "avoid": avoid[:5],
         "substitutions": substitutions[:5],
-        "answer_style": "Keep the workout name and labels, but translate each label in simple words before giving the plan.",
+        "answer_style": (
+            "Keep the workout name and metric labels, translate each label in simple words, and match the "
+            "user's stated situation instead of assuming they feel off."
+        ),
         "realistic_follow_ups": [
             "I only have 30 minutes. What should I actually do?",
+            "Can I make this harder if the warm-up feels great?",
             "My legs feel heavy but I want to run. How should I adjust?",
             "Which part of this plan changes if my warm-up feels bad?",
         ],
@@ -1769,6 +1798,20 @@ def _active_workout_coach_response(
         "avoid": avoid[:5],
         "answer_style": "Use urgent, plain language first; explain HR, RPE, AZM, and readiness only after the action is clear.",
     }
+
+
+def _today_realistic_followups(subjective_limiter: bool, illness_flags: list[str]) -> list[str]:
+    prompts = [
+        "Can I train hard today, or should I keep it controlled?",
+        "I only have 30 minutes. What is the best use of it?",
+        "What would make you change the plan during my warm-up?",
+        "How should I adjust if my heart rate or breathing feels unusual?",
+    ]
+    if subjective_limiter:
+        prompts.append("If I still feel off after the warm-up, what should I switch to?")
+    if illness_flags:
+        prompts.insert(0, "What easy movement is okay while I have symptoms?")
+    return _dedupe(prompts)[:5]
 
 
 def _humanized_evidence(items: list[str]) -> list[str]:

@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 
 
-WIDGET_URI = "ui://mehair/today-v10.html"
+WIDGET_URI = "ui://mehair/today-v11.html"
 LEGACY_WIDGET_URIS = (
     "ui://mehair/today-v1.html",
     "ui://mehair/today-v2.html",
@@ -14,6 +14,7 @@ LEGACY_WIDGET_URIS = (
     "ui://mehair/today-v7.html",
     "ui://mehair/today-v8.html",
     "ui://mehair/today-v9.html",
+    "ui://mehair/today-v10.html",
 )
 WIDGET_RESOURCE_URIS = (WIDGET_URI, *LEGACY_WIDGET_URIS)
 WIDGET_MIME_TYPE = "text/html;profile=mcp-app"
@@ -1454,7 +1455,8 @@ WIDGET_PREVIEW_STATES: dict[str, dict] = {
                 },
             ],
             "prompt_suggestions": [
-                "I feel a little off today but still want to move. What should I do?",
+                "What should I focus on today based on my data?",
+                "I only have 30 minutes. What is the best use of it?",
                 "Compare sleep, HRV, resting heart rate, and load.",
                 "My body feels sore. Plan around that.",
             ],

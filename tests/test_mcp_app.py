@@ -52,6 +52,7 @@ def test_server_instructions_keep_normal_latest_questions_fast() -> None:
     assert "Use plain English before statistics" in SERVER_INSTRUCTIONS
     assert "Keep metric labels such as HRV, RPE, AZM" in SERVER_INSTRUCTIONS
     assert "When a tool returns coach_response" in SERVER_INSTRUCTIONS
+    assert "do not default to 'I feel off'" in SERVER_INSTRUCTIONS
     assert "Use already-synced local data for normal current/latest/today questions" in SERVER_INSTRUCTIONS
     assert "Sync only when the user explicitly asks for a fresh sync" in SERVER_INSTRUCTIONS
     assert "Treat phrases like check my Fitbit context" in SERVER_INSTRUCTIONS

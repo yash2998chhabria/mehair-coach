@@ -33,8 +33,10 @@ The core UX is:
 Example questions:
 
 ```text
-I feel a little off today but still want to move. What should I do?
+What should I focus on today based on my data?
 Can I train hard today, or should I keep it controlled?
+I only have 30 minutes after work. What is the best use of it?
+How did sleep, HRV, and resting heart rate affect today's plan?
 Why do I feel more tired than usual?
 I want to lift tonight but my lower back is tight. What should I change?
 I am halfway through intervals, HR 150, RPE 7, legs feel heavy, no pain. Keep going?

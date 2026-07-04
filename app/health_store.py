@@ -1983,8 +1983,14 @@ def _question_intents(question: str) -> list[str]:
             "daily brief",
             "coach me today",
             "what should i focus on",
+            "best use of it",
+            "best use of my time",
+            "best use of today",
+            "quick useful",
         )
-    ) or ("today" in text and any(word in text for word in ("recommend", "suggest", "plan", "focus")))
+    ) or ("today" in text and any(word in text for word in ("recommend", "suggest", "plan", "focus", "best use")))
+    if not asks_for_today_plan and has("minutes", "quick", "short on time", "only have"):
+        asks_for_today_plan = has("today", "workout", "work out", "train", "training", "session", "exercise")
     if asks_for_today_plan:
         intents.extend(
             [
@@ -2185,7 +2191,7 @@ def _recommended_tool_sequence(intents: list[str], freshness: dict[str, Any]) ->
     tools: list[str] = ["get_health_question_clues"]
     if freshness.get("needs_sync_before_time_sensitive_advice"):
         tools.extend(["get_data_freshness", "sync_latest_fitbit_data"])
-    if "general_overview" in intents or "daily_plan" in intents:
+    if "general_overview" in intents or "daily_plan" in intents or "goal" in intents:
         tools.append("get_health_overview")
     if "active_workout" in intents:
         tools.append("guide_active_workout")
@@ -2267,6 +2273,7 @@ def _answer_rubric_for_intents(intents: list[str]) -> list[str]:
         "Keep labels like HRV, RPE, AZM, Readiness, and Resting HR, but explain each one in simple words the first time it appears.",
         "Separate wearable evidence, user-reported context, and missing data.",
         "Mention freshness when the user asks about today, latest data, or real-time decisions.",
+        "Match the user's situation; do not assume fatigue, soreness, or an off-day unless the user or data says so.",
     ]
     if "workout_decision" in intents or "daily_plan" in intents:
         rubric.append("For training advice, convert the signals into intensity, RPE cap, session type, and avoid-list.")
@@ -2917,10 +2924,13 @@ def _daily_coaching_brief(
         summary = f"{summary} Main support: {positives[0]}"
 
     prompt_suggestions = [
-        "I feel a little off today but still want to move. What should I do?",
+        "What should I focus on today based on my data?",
         "Can I train hard today, or should I keep it controlled?",
+        "I only have 30 minutes. What is the best use of it?",
         "What are the main reasons behind today's plan?",
     ]
+    if training_bias in {"controlled", "recovery-first"}:
+        prompt_suggestions.append("I feel off but still want to move. What is the safest useful option?")
     if not checkins or energy is None or soreness is None or stress is None:
         prompt_suggestions.append("Log how my energy, soreness, and stress feel right now.")
     if not goal_payload:
@@ -2948,7 +2958,7 @@ def _daily_coaching_brief(
         "today_plan": _dedupe(next_actions)[:5],
         "priority_signals": priority_signals[:9],
         "context_gaps": _dedupe(context_gaps)[:5],
-        "prompt_suggestions": _dedupe(prompt_suggestions)[:5],
+        "prompt_suggestions": _dedupe(prompt_suggestions)[:6],
         "confidence": confidence,
         "data_used": {
             "activity_date": context.get("activity_date"),

@@ -396,6 +396,72 @@ def test_eval_green_day_keeps_training_available_but_grounded_in_data(tmp_path, 
     assert "Hardest recent workout: Easy run (24 Active Zone Minutes, 2026-07-01)." in recommendation["evidence"]
 
 
+def test_eval_natural_prompt_mix_is_not_biased_to_off_day_language(tmp_path, monkeypatch) -> None:
+    freeze_now(monkeypatch)
+    db, store = make_store(tmp_path)
+    user_id = create_user(db, "natural_prompt_mix")
+
+    for day, sleep, hrv, resting, azm, steps in [
+        ("2026-06-30", 7.2, 51, 59, 18, 7100),
+        ("2026-07-01", 7.5, 53, 58, 22, 7800),
+        ("2026-07-02", 7.6, 54, 58, 24, 8200),
+        ("2026-07-03", 8.0, 60, 56, 16, 5200),
+    ]:
+        seed_day(
+            store,
+            user_id,
+            day,
+            sleep_hours=sleep,
+            hrv_ms=hrv,
+            resting_hr=resting,
+            active_zone_minutes=azm,
+            steps=steps,
+        )
+    seed_workout(store, user_id, "2026-07-01", "Easy run", azm=22)
+    seed_workout(store, user_id, "2026-07-02", "Lift", azm=24)
+    store.save_goal(user_id, {"goal_type": "fitness", "target": "Train four days per week", "days_per_week": 4})
+    store.save_checkin(user_id, {"energy": 8, "soreness": 2, "stress": 3, "notes": "Normal day"})
+
+    scenarios = [
+        (
+            "Can I train hard today or should I keep it controlled?",
+            {"workout_decision", "recovery", "activity_load"},
+            {"recommend_workout_today"},
+        ),
+        (
+            "I only have 30 minutes today. What is the best use of it?",
+            {"daily_plan", "general_overview", "workout_decision"},
+            {"get_health_overview", "recommend_workout_today"},
+        ),
+        (
+            "How did sleep, HRV, and resting heart rate affect today's plan?",
+            {"sleep", "heart", "recovery"},
+            {"get_recovery_signal_comparison"},
+        ),
+        (
+            "How am I doing on my weekly training goal?",
+            {"goal"},
+            {"get_health_overview"},
+        ),
+        (
+            "During my workout HR 150, RPE 7, pain 0/10, no dizziness. Keep going?",
+            {"active_workout", "workout_decision"},
+            {"guide_active_workout"},
+        ),
+    ]
+
+    for question, expected_intents, expected_tools in scenarios:
+        clues = store.health_question_clues(user_id, question, days=7)
+        joined = json.dumps(clues).lower()
+
+        assert expected_intents <= set(clues["intent_hints"])
+        assert expected_tools <= set(clues["recommended_tool_sequence"])
+        assert "symptom_safety" not in clues["intent_hints"]
+        assert any("match the user's situation" in item.lower() for item in clues["answer_rubric"])
+        assert "i feel a little off" not in joined
+        assert "feel cooked" not in joined
+
+
 def test_eval_stale_data_for_time_sensitive_workout_pushes_sync_first(tmp_path, monkeypatch) -> None:
     freeze_now(monkeypatch)
     db, store = make_store(tmp_path)

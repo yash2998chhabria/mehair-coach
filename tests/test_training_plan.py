@@ -805,7 +805,73 @@ def test_today_recommendation_returns_human_coach_response_without_losing_labels
     assert any("RPE (how hard it feels)" in item for item in recommendation["coach_response"]["what_to_do"])
     assert any("HRV (recovery stress signal)" in item for item in recommendation["coach_response"]["why"])
     assert any("Resting HR" in item for item in recommendation["coach_response"]["why"])
-    assert any("I feel a little off" in item for item in recommendation["coach_response"]["realistic_follow_ups"])
+    assert any("I only have 30 minutes" in item for item in recommendation["coach_response"]["realistic_follow_ups"])
+    assert any("If I still feel off" in item for item in recommendation["coach_response"]["realistic_follow_ups"])
+
+
+def test_today_recommendation_for_normal_green_day_does_not_assume_off_day() -> None:
+    context = {
+        "status": "ok",
+        "latest_date": "2026-07-03",
+        "activity_date": "2026-07-03",
+        "recovery_date": "2026-07-03",
+        "readiness": {
+            "score": 86,
+            "label": "green",
+            "recommendation": "A normal training day is reasonable if you feel good.",
+            "evidence": [
+                "Latest sleep is strong at 8.1h.",
+                "HRV is above recent baseline.",
+                "Resting heart rate is steady.",
+            ],
+        },
+        "today": {
+            "steps": 7200,
+            "active_minutes": 46,
+            "active_zone_minutes": 18,
+            "hrv_ms": 64,
+            "resting_heart_rate": 56,
+            "sleep": {"asleep_hours": 8.1, "sessions_count": 1},
+            "latest_training_load": {"date": "2026-07-03", "active_zone_minutes": 18},
+        },
+        "sections": {
+            "heart": {
+                "latest_hrv_ms": 64,
+                "average_hrv_ms": 54,
+                "latest_resting_heart_rate": 56,
+                "average_resting_heart_rate": 58,
+            }
+        },
+    }
+
+    recommendation = workout_recommendation(context=context)
+    coach = recommendation["coach_response"]
+    joined = " ".join(
+        [
+            coach["short_answer"],
+            coach["data_story"],
+            *coach["realistic_follow_ups"],
+            *coach["session_blueprint"],
+        ]
+    ).lower()
+
+    assert recommendation["intensity"] == "moderate-to-hard"
+    assert "training is available today" in coach["short_answer"].lower()
+    assert "feel off" not in joined
+    assert "not-100" not in joined
+    assert "do not feel fully right" not in joined
+    assert any("Can I train hard today" in item for item in coach["realistic_follow_ups"])
+    assert any("I only have 30 minutes" in item for item in coach["realistic_follow_ups"])
+    assert any(item["label"] == "Readiness" for item in coach["labels_explained"])
+    assert any("HRV (recovery stress signal)" in item for item in coach["why"])
+
+    positive_feeling = workout_recommendation(
+        context=context,
+        current_feeling="I feel good and want to run today.",
+    )
+    positive_story = positive_feeling["coach_response"]["data_story"]
+    assert "current body feel caps the ceiling" not in positive_story
+    assert "sleep supports training" in positive_story
 
 
 def test_workout_plan_does_not_flag_negated_illness_terms() -> None:

@@ -483,6 +483,8 @@ def test_overview_flags_stale_data_before_time_sensitive_advice(tmp_path, monkey
     assert any("No recent subjective check-in" in item for item in overview["daily_brief"]["context_gaps"])
     assert any("No coaching goal" in item for item in overview["daily_brief"]["context_gaps"])
     assert any("Heart recovery data is missing" in item for item in overview["daily_brief"]["context_gaps"])
+    assert "What should I focus on today based on my data?" in overview["daily_brief"]["prompt_suggestions"]
+    assert "I only have 30 minutes. What is the best use of it?" in overview["daily_brief"]["prompt_suggestions"]
     assert "Log how my energy, soreness, and stress feel right now." in overview["daily_brief"]["prompt_suggestions"]
 
 
