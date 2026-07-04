@@ -60,6 +60,9 @@ async def test_mcp_tool_list_matches_private_beta_plan() -> None:
     assert "should I run today" in by_name["get_health_overview"].description
     assert "get fitter without feeling wrecked" in by_name["get_health_overview"].description
     assert "create a new current card in long threads" in by_name["get_health_overview"].description
+    assert "preparatory sync tool" in by_name["sync_latest_fitbit_data"].description
+    assert "not the final workout-card tool" in by_name["sync_and_get_health_overview"].description
+    assert "call recommend_workout_today" in by_name["sync_and_get_health_overview"].description
     assert "Prefer get_health_overview for broad everyday coaching prompts" in by_name[
         "get_today_context"
     ].description
@@ -115,6 +118,9 @@ def test_server_instructions_keep_normal_latest_questions_fast() -> None:
     assert "Sync only when the user explicitly asks for a fresh sync" in SERVER_INSTRUCTIONS
     assert "non-destructive, idempotent pull" in SERVER_INSTRUCTIONS
     assert "do not describe it as blocked" in SERVER_INSTRUCTIONS
+    assert "Sync tools are preparatory for workout/run/lift/card" in SERVER_INSTRUCTIONS
+    assert "final card-rendering call for day-of workout advice" in SERVER_INSTRUCTIONS
+    assert "Do not answer a workout-card request from a sync or overview result alone" in SERVER_INSTRUCTIONS
     assert "Treat phrases like check my Fitbit context" in SERVER_INSTRUCTIONS
     assert "call recommend_workout_today directly" in SERVER_INSTRUCTIONS
     assert "use planned_activity and target_areas only for the workout the user actually wants to do" in SERVER_INSTRUCTIONS

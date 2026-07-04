@@ -448,6 +448,10 @@ async def test_private_beta_oauth_mcp_sync_and_coaching_flow(tmp_path, monkeypat
             assert sync["sync_window"]["mode"] == "recent_skip"
             assert sync["context"]["today"]["steps"] == 9200
             assert sync["readiness"]["label"] == "green"
+            assert sync["post_sync_routing_guidance"]["role"] == "preparatory_sync_result"
+            assert "recommend_workout_today" in sync["post_sync_routing_guidance"][
+                "next_tool_for_workout_card"
+            ]
 
             skipped_sync = tool_content(
                 await mcp_request(
@@ -498,6 +502,10 @@ async def test_private_beta_oauth_mcp_sync_and_coaching_flow(tmp_path, monkeypat
             assert fresh_overview["fresh_sync"]["sync_skipped"] is True
             assert fresh_overview["fresh_sync"]["sync_window"]["mode"] == "recent_skip"
             assert fresh_overview["fresh_sync"]["records_upserted"] == 0
+            assert fresh_overview["post_sync_routing_guidance"]["role"] == "preparatory_sync_result"
+            assert "plan_workout_with_health_context" in fresh_overview["post_sync_routing_guidance"][
+                "next_tool_for_specific_activity"
+            ]
 
             catalog = tool_content(
                 await mcp_request(

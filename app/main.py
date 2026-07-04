@@ -72,7 +72,10 @@ SERVER_INSTRUCTIONS = (
     "summarize freshness, show a card, analyze all available metrics, explain changes, or give an overview, call "
     "sync_and_get_health_overview directly; this is a non-destructive, idempotent pull of the user's "
     "cloud-synced Fitbit data into their private store, so do not describe it as blocked, dangerous, "
-    "or unsafe when the user requested it. For broad "
+    "or unsafe when the user requested it. Sync tools are preparatory for workout/run/lift/card "
+    "requests: after syncing, the final card-rendering call for day-of workout advice must be "
+    "recommend_workout_today, plan_workout_with_health_context, or guide_active_workout. Do not answer "
+    "a workout-card request from a sync or overview result alone. For broad "
     "health, fitness, recovery, current/latest/today, or 'use all my data' overview questions that "
     "do not explicitly request sync/refresh, call get_health_overview before answering. Use the "
     "available_signal_snapshot returned by overview/clue/comparison tools for broad, oxygen, breathing, "
@@ -126,6 +129,34 @@ APP_ICON_SVG = """
   <circle cx="73" cy="24" r="8" fill="#fff0f6"/>
 </svg>
 """.strip()
+
+POST_SYNC_ROUTING_GUIDANCE = {
+    "role": "preparatory_sync_result",
+    "use_this_result_for": [
+        "freshness status",
+        "latest synced dates",
+        "overview context",
+        "available Fitbit/Google Health signals",
+    ],
+    "do_not_use_as_final_for": [
+        "workout card",
+        "run/lift/go-hard decision",
+        "active in-session guidance",
+    ],
+    "next_tool_for_workout_card": (
+        "If the user asked for a workout card, day-of training decision, run/lift advice, "
+        "or enough movement before an obligation, call recommend_workout_today next and pass "
+        "the user's current plain-language context in current_feeling."
+    ),
+    "next_tool_for_specific_activity": (
+        "If the user named a specific activity, sport, muscle group, or constraints, call "
+        "plan_workout_with_health_context next."
+    ),
+    "next_tool_for_active_workout": (
+        "If the user is mid-workout and reports live heart rate, RPE, pain, symptoms, or elapsed time, "
+        "call guide_active_workout next."
+    ),
+}
 ILLNESS_PHRASES = (
     "fever",
     "flu",
@@ -378,7 +409,10 @@ def create_server(settings_override: Settings | None = None) -> ServerBundle:
         description=(
             "Pull the latest available cloud-synced Fitbit data from Google Health into the local user store. "
             "By default, skips redundant network syncs when data was already synced very recently; set force "
-            "true only when the user explicitly asks to force a refresh now."
+            "true only when the user explicitly asks to force a refresh now. This is a preparatory sync "
+            "tool, not the final workout-card tool. If the user asked for a workout card, run/lift advice, "
+            "or enough movement today, call recommend_workout_today or plan_workout_with_health_context "
+            "after this sync completes."
         ),
         annotations=SYNC,
     )
@@ -386,7 +420,10 @@ def create_server(settings_override: Settings | None = None) -> ServerBundle:
         user_id = current_user_id()
         if not user_id:
             return setup_required()
-        return await health_store.sync_latest(user_id, force=force)
+        result = await health_store.sync_latest(user_id, force=force)
+        if result.get("status") == "ok":
+            result["post_sync_routing_guidance"] = POST_SYNC_ROUTING_GUIDANCE
+        return result
 
     @mcp.tool(
         title="Sync and get health overview",
@@ -397,7 +434,10 @@ def create_server(settings_override: Settings | None = None) -> ServerBundle:
             "all-data overview with sync freshness. For normal current/latest/today questions, use "
             "get_health_overview instead because it is faster and includes freshness metadata. Leave force "
             "false unless the user explicitly asks to force a refresh. Use this to create a new current "
-            "card in long threads when the user explicitly asks to sync/refresh/pull/update and show a card."
+            "overview card in long threads when the user explicitly asks to sync/refresh/pull/update and "
+            "show a broad card. This is not the final workout-card tool. If the user asked for a workout "
+            "card, run/lift advice, or enough movement today, call recommend_workout_today or "
+            "plan_workout_with_health_context after this sync/overview completes."
         ),
         annotations=SYNC,
         meta=WIDGET_META,
@@ -436,6 +476,7 @@ def create_server(settings_override: Settings | None = None) -> ServerBundle:
             "sync_window": sync.get("sync_window"),
             "freshness": sync.get("freshness") or overview.get("data_freshness"),
         }
+        overview["post_sync_routing_guidance"] = POST_SYNC_ROUTING_GUIDANCE
         return overview
 
     @mcp.tool(
