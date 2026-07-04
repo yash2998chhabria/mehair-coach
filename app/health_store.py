@@ -1535,10 +1535,6 @@ class HealthStore:
         safe_days = max(1, min(int(days or 14), 30))
         question_text = str(question or "").strip()
         intents = _question_intents(question_text)
-        catalog = self.available_metrics(user_id)
-        catalog_by_id = {item["id"]: item for item in catalog.get("metrics", [])}
-        metric_ids = _metric_ids_for_intents(intents)
-        relevant_metrics = _relevant_metric_cards(metric_ids, catalog_by_id, intents)
         overview = self.health_overview(
             user_id,
             safe_days,
@@ -1552,12 +1548,6 @@ class HealthStore:
             _summary=summary,
             _context=context,
         )
-        clues, positives, watchouts, next_actions = _question_clue_takeaways(
-            intents=intents,
-            context=context,
-            overview=overview,
-            comparison=comparison,
-        )
         personal_context = overview.get("personal_context", {}) if overview.get("status") == "ok" else {}
         workout_context = overview.get("sections", {}).get("workouts", {}) if overview.get("status") == "ok" else {}
         signal_snapshot = overview.get("available_signal_snapshot", {}) if overview.get("status") == "ok" else {}
@@ -1565,6 +1555,16 @@ class HealthStore:
         if illness_flags:
             intents = _dedupe(["symptom_safety", *intents])
         safety_flags = _dedupe(_question_safety_flags(question_text, context) + illness_flags)
+        catalog = self.available_metrics(user_id)
+        catalog_by_id = {item["id"]: item for item in catalog.get("metrics", [])}
+        metric_ids = _metric_ids_for_intents(intents)
+        relevant_metrics = _relevant_metric_cards(metric_ids, catalog_by_id, intents)
+        clues, positives, watchouts, next_actions = _question_clue_takeaways(
+            intents=intents,
+            context=context,
+            overview=overview,
+            comparison=comparison,
+        )
         watchouts = safety_flags + watchouts
         if context.get("data_freshness", {}).get("needs_sync_before_time_sensitive_advice"):
             next_actions.insert(0, "Run sync_latest_fitbit_data before answering time-sensitive training questions.")
@@ -1606,6 +1606,7 @@ class HealthStore:
                 "Use the relevant_metrics list to decide which synced signals to inspect next.",
                 "Use conversation_flow_options when the user's wording is informal, broad, or not well captured by intent_hints.",
                 "Use available_signal_snapshot for broad, all-data, oxygen, breathing, or unusual-pattern questions so secondary signals are not ignored.",
+                "Use decision_frame.model_decision_policy to choose data by safety, recovery, load, capacity, and user-context axes rather than by brittle wording alone.",
                 "Mention normal secondary signals briefly as context when they do not change the workout call.",
                 "Treat missing metrics as absent, not zero.",
                 "For workout decisions, combine readiness, sleep, HRV, resting HR, oxygen/breathing/temperature context, load, recent workouts, goals, and check-ins.",
@@ -2417,6 +2418,132 @@ def _available_signal_snapshot(
     }
 
 
+def _model_decision_policy(snapshot: dict[str, Any] | None = None) -> dict[str, Any]:
+    snapshot = snapshot or {}
+    available = set(snapshot.get("available_signal_ids") or [])
+
+    def present(signal_ids: list[str]) -> list[str]:
+        return [signal_id for signal_id in signal_ids if signal_id in available]
+
+    axes = [
+        {
+            "axis": "safety_override",
+            "plain_language_question": "Is there anything that should stop or downshift training regardless of good-looking stats?",
+            "signals_to_check": [
+                "user-reported symptoms",
+                "pain",
+                "dizziness",
+                "chest symptoms",
+                "resting_heart_rate",
+                "heart_rate_samples",
+                "respiratory_rate",
+                "spo2",
+                "sleep_temperature",
+            ],
+            "available_signal_ids": present(
+                ["resting_heart_rate", "heart_rate_samples", "respiratory_rate", "spo2", "sleep_temperature"]
+            ),
+            "decision_effect": "Symptoms, pain, unusual breathing/oxygen/temperature, or unusual heart signals cap intensity before recovery scoring matters.",
+            "missing_data_behavior": "Ask about symptoms or current feeling when needed; do not assume the wearable can diagnose safety.",
+        },
+        {
+            "axis": "freshness_confidence",
+            "plain_language_question": "Is the synced context current enough for a time-sensitive decision?",
+            "signals_to_check": ["data_freshness", "last_sync", "latest_observed_date"],
+            "available_signal_ids": [],
+            "decision_effect": "Fresh data supports normal coaching. Aging data can guide controlled choices. Stale data should sync before hard or risky calls.",
+            "missing_data_behavior": "If no data exists, return setup or empty-state guidance instead of inventing context.",
+        },
+        {
+            "axis": "recovery_capacity",
+            "plain_language_question": "How much training room does the body appear to have today?",
+            "signals_to_check": ["sleep_duration", "hrv", "resting_heart_rate", "active_zone_minutes"],
+            "available_signal_ids": present(["sleep_duration", "hrv", "resting_heart_rate", "active_zone_minutes"]),
+            "decision_effect": "Good alignment supports normal training; short sleep, low HRV, elevated resting HR, or high recent load lowers volume/RPE.",
+            "missing_data_behavior": "Use the available recovery signals and label low-confidence baselines clearly.",
+        },
+        {
+            "axis": "breathing_oxygen_temperature_caution",
+            "plain_language_question": "Do overnight breathing, oxygen, or temperature signals add a caution clue?",
+            "signals_to_check": ["spo2", "respiratory_rate", "sleep_temperature"],
+            "available_signal_ids": present(["spo2", "respiratory_rate", "sleep_temperature"]),
+            "decision_effect": "Normal values are reassuring background. Low/unusual oxygen, elevated breathing rate, or changed sleep temperature should bias toward controlled work, especially with symptoms.",
+            "missing_data_behavior": "Say the signal is not available; do not treat missing SpO2, respiratory rate, or temperature as normal.",
+        },
+        {
+            "axis": "activity_load_window",
+            "plain_language_question": "What load has already accumulated, and over what window?",
+            "signals_to_check": [
+                "active_zone_minutes",
+                "heart_rate_zones",
+                "exercise",
+                "steps",
+                "distance",
+                "floors",
+                "active_minutes",
+                "activity_levels",
+                "sedentary_minutes",
+                "active_energy",
+            ],
+            "available_signal_ids": present(
+                [
+                    "active_zone_minutes",
+                    "heart_rate_zones",
+                    "steps",
+                    "distance",
+                    "floors",
+                    "active_minutes",
+                    "activity_levels",
+                    "sedentary_minutes",
+                    "active_energy",
+                ]
+            ),
+            "decision_effect": "High zone minutes, hard workouts, high movement volume, hills/floors, or leg-heavy days reduce the next hard effort; low load may support training if recovery agrees.",
+            "missing_data_behavior": "When using load, name the date/window and avoid treating steps as useful without explaining why they matter for this decision.",
+        },
+        {
+            "axis": "capacity_progress",
+            "plain_language_question": "What does longer-term fitness capacity suggest, without overusing it for today's readiness?",
+            "signals_to_check": ["vo2_max", "exercise_history", "heart_rate_zones"],
+            "available_signal_ids": present(["vo2_max", "heart_rate_zones"]),
+            "decision_effect": "Use VO2 max and workout history for endurance planning and progress, not as a same-day green light for max intensity.",
+            "missing_data_behavior": "If VO2 max is absent, plan from sleep, heart, load, and goals instead.",
+        },
+        {
+            "axis": "user_context_and_goal",
+            "plain_language_question": "What does the person actually want to accomplish today, and what constraints matter?",
+            "signals_to_check": ["goal", "checkins", "energy", "soreness", "stress", "time_budget", "future_plans"],
+            "available_signal_ids": [],
+            "decision_effect": "Goals and check-ins tune the plan: preserve energy for later, avoid sore areas, or choose the smallest useful session that keeps consistency.",
+            "missing_data_behavior": "Ask one short follow-up only if the answer would materially change the recommendation.",
+        },
+        {
+            "axis": "in_session_control",
+            "plain_language_question": "If the user is already exercising, should they continue, hold, downshift, or stop?",
+            "signals_to_check": ["user-reported current HR", "RPE", "pain", "symptoms", "elapsed time", "planned session purpose"],
+            "available_signal_ids": present(["heart_rate_samples", "heart_rate_zones"]),
+            "decision_effect": "Use live user-reported HR/RPE/pain/symptoms as the primary in-session data; synced Fitbit context is background only.",
+            "missing_data_behavior": "Do not imply direct live band telemetry; ask the user for current HR/RPE/pain if missing.",
+        },
+    ]
+    return {
+        "purpose": "A compact, generalizable map for choosing health signals for any natural coaching question.",
+        "question_parsing_steps": [
+            "Identify the actual decision: train/rest, session plan, active-workout pacing, recovery explanation, trend/progress, or metric discovery.",
+            "Identify constraints the user states: symptoms, pain, time, future plans, energy preservation, soreness, goals, or preferred activity.",
+            "Select the smallest useful set of axes below, then use the matching available signals and tools.",
+            "Convert the data into a plain-language action, intensity/RPE cap, duration or next block, avoid-list, and what would change the call.",
+        ],
+        "decision_axes": axes,
+        "answer_style": [
+            "Human answer first, stats second.",
+            "Show labels like HRV, RPE, AZM, SpO2, and VO2 max when used, but explain them in one plain sentence.",
+            "Say when a checked signal is normal background and did not change the recommendation.",
+            "Avoid raw metric dumps unless the user asks for a data table.",
+        ],
+    }
+
+
 def model_signal_context(snapshot: dict[str, Any]) -> dict[str, Any]:
     signals = snapshot.get("signals") or []
     if snapshot.get("status") != "ok" or not signals:
@@ -2426,6 +2553,7 @@ def model_signal_context(snapshot: dict[str, Any]) -> dict[str, Any]:
                 "No synced signal snapshot is available. Answer with setup or empty-state guidance "
                 "instead of inventing health data."
             ),
+            "decision_policy": _model_decision_policy(snapshot),
         }
 
     by_id = {str(signal.get("id") or ""): signal for signal in signals}
@@ -2455,6 +2583,7 @@ def model_signal_context(snapshot: dict[str, Any]) -> dict[str, Any]:
         "status": "ok",
         "date_range": snapshot.get("date_range"),
         "all_available_signal_ids": snapshot.get("available_signal_ids", []),
+        "decision_policy": _model_decision_policy(snapshot),
         "decision_order": [
             "Start from the user's actual goal, current feeling, symptoms, time budget, and future plans.",
             "Use readiness, sleep, HRV, resting heart rate, and recent load as the primary train-hard-or-control call.",
@@ -3328,6 +3457,7 @@ def _decision_frame_for_question(
     comparison: dict[str, Any],
 ) -> dict[str, Any]:
     freshness = context.get("data_freshness", {})
+    signal_snapshot = overview.get("available_signal_snapshot") or {}
     return {
         "primary_decision": _primary_decision_for_intents(intents),
         "model_role": (
@@ -3335,10 +3465,9 @@ def _decision_frame_for_question(
             "then turn the data into one practical coaching call."
         ),
         "user_context_cues": _question_context_cues(question),
+        "model_decision_policy": _model_decision_policy(signal_snapshot),
         "signal_roles": _signal_roles_for_intents(intents, overview, comparison),
-        "available_signal_ids": (overview.get("available_signal_snapshot") or {}).get(
-            "available_signal_ids", []
-        )
+        "available_signal_ids": signal_snapshot.get("available_signal_ids", [])
         if overview.get("status") == "ok"
         else [],
         "output_contract": _output_contract_for_intents(intents, freshness),

@@ -57,6 +57,8 @@ def seed_day(
     active_minutes: int | None = None,
     respiratory_rate: float | None = None,
     spo2: float | None = None,
+    sleep_temperature_delta_c: float | None = None,
+    vo2_max: float | None = None,
 ) -> None:
     year, month, day_num = [int(part) for part in day.split("-")]
     if steps is not None:
@@ -167,6 +169,39 @@ def seed_day(
                 {
                     "name": f"spo2-{day}",
                     "dailyOxygenSaturation": {"averagePercentage": spo2},
+                    "date": {"year": year, "month": month, "day": day_num},
+                }
+            ],
+        )
+    if sleep_temperature_delta_c is not None:
+        baseline_c = 36.5
+        store.upsert_records(
+            user_id,
+            "daily-sleep-temperature-derivations",
+            [
+                {
+                    "name": f"temp-{day}",
+                    "dailySleepTemperatureDerivations": {
+                        "nightlyTemperatureCelsius": baseline_c + sleep_temperature_delta_c,
+                        "baselineTemperatureCelsius": baseline_c,
+                        "relativeNightlyStddev30dCelsius": abs(sleep_temperature_delta_c) / 0.2,
+                    },
+                    "date": {"year": year, "month": month, "day": day_num},
+                }
+            ],
+        )
+    if vo2_max is not None:
+        store.upsert_records(
+            user_id,
+            "daily-vo2-max",
+            [
+                {
+                    "name": f"vo2-{day}",
+                    "dailyVo2Max": {
+                        "vo2Max": vo2_max,
+                        "estimated": True,
+                        "cardioFitnessLevel": "GOOD",
+                    },
                     "date": {"year": year, "month": month, "day": day_num},
                 }
             ],
@@ -401,12 +436,12 @@ def test_eval_natural_prompt_mix_is_not_biased_to_off_day_language(tmp_path, mon
     db, store = make_store(tmp_path)
     user_id = create_user(db, "natural_prompt_mix")
 
-    for day, sleep, hrv, resting, azm, steps in [
+    for offset, (day, sleep, hrv, resting, azm, steps) in enumerate([
         ("2026-06-30", 7.2, 51, 59, 18, 7100),
         ("2026-07-01", 7.5, 53, 58, 22, 7800),
         ("2026-07-02", 7.6, 54, 58, 24, 8200),
         ("2026-07-03", 8.0, 60, 56, 16, 5200),
-    ]:
+    ]):
         seed_day(
             store,
             user_id,
@@ -418,6 +453,8 @@ def test_eval_natural_prompt_mix_is_not_biased_to_off_day_language(tmp_path, mon
             steps=steps,
             respiratory_rate=15.4 + (resting % 3) * 0.3,
             spo2=97.4 - (azm % 3) * 0.2,
+            sleep_temperature_delta_c=0.03 + offset * 0.01,
+            vo2_max=45.5 + offset * 0.2,
         )
     seed_workout(store, user_id, "2026-07-01", "Easy run", azm=22)
     seed_workout(store, user_id, "2026-07-02", "Lift", azm=24)
@@ -535,6 +572,24 @@ def test_eval_natural_prompt_mix_is_not_biased_to_off_day_language(tmp_path, mon
     assert "available_signal_snapshot" in daily_flow["data_surfaces_to_use"]
     assert "training_decision" in daily_flow["data_surfaces_to_use"]
     assert any("conversation_flow_options" in item for item in informal_training["answering_guidance"])
+    assert any("model_decision_policy" in item for item in informal_training["answering_guidance"])
+    policy = informal_training["decision_frame"]["model_decision_policy"]
+    axes = {item["axis"]: item for item in policy["decision_axes"]}
+    assert {
+        "safety_override",
+        "recovery_capacity",
+        "breathing_oxygen_temperature_caution",
+        "activity_load_window",
+        "capacity_progress",
+        "user_context_and_goal",
+        "in_session_control",
+    } <= set(axes)
+    assert {"spo2", "respiratory_rate", "sleep_temperature"} <= set(
+        axes["breathing_oxygen_temperature_caution"]["available_signal_ids"]
+    )
+    assert "vo2_max" in axes["capacity_progress"]["available_signal_ids"]
+    assert any("Select the smallest useful set of axes" in item for item in policy["question_parsing_steps"])
+    assert informal_training["model_signal_context"]["decision_policy"]["decision_axes"]
 
     multi_day_plan = store.health_question_clues(
         user_id,
@@ -551,6 +606,22 @@ def test_eval_natural_prompt_mix_is_not_biased_to_off_day_language(tmp_path, mon
     } <= multi_day_metric_ids
     assert {"daily-oxygen-saturation", "daily-respiratory-rate"} <= set(multi_day_plan["available_metric_ids"])
     assert any(item["purpose"] == "recovery" for item in multi_day_plan["query_suggestions"])
+
+    generalizable_prompts = [
+        "Make the call for my body today; I want something useful without being dumb.",
+        "What clues from the band would talk me out of a big session?",
+        "Build the day around what my body can absorb.",
+    ]
+    for question in generalizable_prompts:
+        clues = store.health_question_clues(user_id, question, days=7)
+        prompt_policy = clues["decision_frame"]["model_decision_policy"]
+        prompt_axes = {item["axis"]: item for item in prompt_policy["decision_axes"]}
+        assert "recovery_capacity" in prompt_axes
+        assert "breathing_oxygen_temperature_caution" in prompt_axes
+        assert "activity_load_window" in prompt_axes
+        assert "capacity_progress" in prompt_axes
+        assert any("Human answer first" in item for item in prompt_policy["answer_style"])
+        assert "i feel a little off" not in json.dumps(clues).lower()
 
 
 def test_eval_question_clues_include_human_decision_frame_for_life_constraints(tmp_path, monkeypatch) -> None:
@@ -677,6 +748,52 @@ def test_eval_heart_safety_question_returns_caution_not_just_training_advice(tmp
     assert any("medical" in item.lower() or "urgent care" in item.lower() for item in clues["safety_flags"])
     assert any("92 bpm" in item for item in clues["watchouts"])
     assert any("clinical" in item.lower() or "diagnos" in item.lower() for item in clues["answering_guidance"])
+
+
+def test_eval_illness_safety_intent_selects_the_matching_health_surfaces(tmp_path, monkeypatch) -> None:
+    freeze_now(monkeypatch)
+    db, store = make_store(tmp_path)
+    user_id = create_user(db, "illness_safety")
+
+    for offset, day in enumerate(["2026-07-01", "2026-07-02", "2026-07-03"]):
+        seed_day(
+            store,
+            user_id,
+            day,
+            sleep_hours=7.2 - offset * 0.3,
+            hrv_ms=52 - offset * 6,
+            resting_hr=58 + offset * 4,
+            active_zone_minutes=18,
+            steps=6800,
+            respiratory_rate=15.8 + offset * 0.7,
+            spo2=97.2 - offset * 0.5,
+            sleep_temperature_delta_c=0.05 + offset * 0.18,
+        )
+
+    clues = store.health_question_clues(
+        user_id,
+        "I have chills and a sore throat but want to keep momentum. What should I do?",
+        days=7,
+    )
+
+    assert "symptom_safety" in clues["intent_hints"]
+    assert {
+        "daily-resting-heart-rate",
+        "heart-rate",
+        "daily-heart-rate-variability",
+        "sleep",
+        "daily-respiratory-rate",
+        "daily-oxygen-saturation",
+        "daily-sleep-temperature-derivations",
+    } <= metric_ids(clues)
+    assert any(item["purpose"] == "symptom_safety" for item in clues["query_suggestions"])
+    assert clues["safety_flags"]
+    safety_axis = {
+        item["axis"]: item for item in clues["decision_frame"]["model_decision_policy"]["decision_axes"]
+    }["safety_override"]
+    assert {"resting_heart_rate", "respiratory_rate", "spo2", "sleep_temperature"} <= set(
+        safety_axis["available_signal_ids"]
+    )
 
 
 def test_eval_large_synced_dataset_keeps_question_clues_fast_and_compact(tmp_path, monkeypatch) -> None:
