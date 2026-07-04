@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 
 
-WIDGET_URI = "ui://mehair/today-v12.html"
+WIDGET_URI = "ui://mehair/today-v13.html"
 LEGACY_WIDGET_URIS = (
     "ui://mehair/today-v1.html",
     "ui://mehair/today-v2.html",
@@ -16,6 +16,7 @@ LEGACY_WIDGET_URIS = (
     "ui://mehair/today-v9.html",
     "ui://mehair/today-v10.html",
     "ui://mehair/today-v11.html",
+    "ui://mehair/today-v12.html",
 )
 WIDGET_RESOURCE_URIS = (WIDGET_URI, *LEGACY_WIDGET_URIS)
 WIDGET_MIME_TYPE = "text/html;profile=mcp-app"
