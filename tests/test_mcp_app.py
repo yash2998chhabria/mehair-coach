@@ -61,7 +61,9 @@ def test_server_instructions_keep_normal_latest_questions_fast() -> None:
     assert "Use plain English before statistics" in SERVER_INSTRUCTIONS
     assert "Keep metric labels such as HRV, RPE, AZM" in SERVER_INSTRUCTIONS
     assert "include the date/window" in SERVER_INSTRUCTIONS
+    assert "recorded step days" in SERVER_INSTRUCTIONS
     assert "When a tool returns coach_response" in SERVER_INSTRUCTIONS
+    assert "Do not say a tool was blocked unless the tool result itself has an error" in SERVER_INSTRUCTIONS
     assert "decision, do now, why the data matters" in SERVER_INSTRUCTIONS
     assert "do not default to 'I feel off'" in SERVER_INSTRUCTIONS
     assert "Use already-synced local data for normal current/latest/today questions" in SERVER_INSTRUCTIONS
@@ -145,14 +147,16 @@ async def test_widget_preview_route_renders_real_card_state() -> None:
     assert "I feel cooked today" in response.text
     assert "state.data =" in response.text
     assert "initialize();" not in response.text
-    assert "Health Clues" in response.text
+    assert "Signals That Matter" in response.text
+    assert "Why I Checked These" in response.text
     assert "Latest energy check-in is 3/10." in response.text
     assert "Goal progress in this window: 1/4 workout sessions logged." in response.text
     assert overview.status_code == 200
     assert "Health Overview" in overview.text
     assert "Movement load context; mostly useful for leg fatigue and total day load." in overview.text
     assert "steps_per_day" in overview.text
-    assert "today so far; ${intText(stepAverage)}/day avg over ${rangeLabel}" in overview.text
+    assert "today so far\", stepAverageLabel, stepRecordedLabel" in overview.text
+    assert "/day avg on recorded step days" in overview.text
     assert "Movement load context; mostly useful for leg fatigue and total day load." in overview.text
     assert "Training Load" in overview.text
     assert "AZM over ${rangeLabel}" in overview.text
@@ -160,6 +164,9 @@ async def test_widget_preview_route_renders_real_card_state() -> None:
     assert "RHR vs Avg" in overview.text
     assert "HRV = recovery stress signal" in overview.text
     assert "AZM = Fitbit hard-work minutes" in overview.text
+    assert "Signals checked" in overview.text
+    assert "signal-strip" in overview.text
+    assert "&lt;55 red" in overview.text
     assert "Vitals" in overview.text
     assert "recovery-first" in overview.text
     assert "Priority Signals" in overview.text
@@ -168,13 +175,14 @@ async def test_widget_preview_route_renders_real_card_state() -> None:
     assert safety.status_code == 200
     assert "Should I worry about my high heart rate and dizziness?" in safety.text
     assert "Health Check" in safety.text
-    assert "Safety Context" in safety.text
+    assert "Mehair Coach" in safety.text
     assert active_workout.status_code == 200
     assert "Active Workout" in active_workout.text
     assert "stop_and_assess" in active_workout.text
     assert "Stop + Assess" in active_workout.text
     assert recovery_comparison.status_code == 200
-    assert "Recovery Comparison" in recovery_comparison.text
+    assert "Recovery Signals" in recovery_comparison.text
+    assert "What This Means For Training" in recovery_comparison.text
     assert "Latest recovery comparison" in recovery_comparison.text
     assert "dizzy during the interval" in active_workout.text
     assert "green today; yellow is 55-74, red is below 55" in active_workout.text

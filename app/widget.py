@@ -194,9 +194,9 @@ TODAY_WIDGET_HTML = """
         width: min(150px, 100%);
         aspect-ratio: 1;
         min-height: 128px;
-        border: 1px solid var(--state-soft);
+        border: 1px solid #f0d5e1;
         border-radius: 50%;
-        background: conic-gradient(var(--state) calc(var(--score, 0) * 1%), #f8dce9 0);
+        background: conic-gradient(var(--brand) calc(var(--score, 0) * 1%), #f8dce9 0);
         overflow: hidden;
       }
 
@@ -233,6 +233,41 @@ TODAY_WIDGET_HTML = """
         font-weight: 650;
         line-height: 1.3;
         text-align: center;
+      }
+
+      .score-state {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 23px;
+        border: 1px solid var(--state);
+        border-radius: 999px;
+        background: var(--state-soft);
+        color: var(--state);
+        font-size: 11px;
+        font-weight: 820;
+        line-height: 1.1;
+        padding: 4px 8px;
+        text-align: center;
+      }
+
+      .band-legend {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 3px;
+        width: 100%;
+        color: #667078;
+        font-size: 9px;
+        font-weight: 760;
+        line-height: 1.15;
+        text-align: center;
+      }
+
+      .band-legend span {
+        border: 1px solid #f0d5e1;
+        border-radius: 999px;
+        background: #fffafd;
+        padding: 4px 3px;
       }
 
       .plan-box {
@@ -406,6 +441,46 @@ TODAY_WIDGET_HTML = """
         line-height: 1.3;
       }
 
+      .signal-strip {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 8px;
+        border-top: 1px solid #f7deea;
+        padding: 0 14px 14px;
+      }
+
+      .signal-card {
+        min-width: 0;
+        border: 1px solid #f0d5e1;
+        border-left: 3px solid var(--brand);
+        border-radius: 8px;
+        background: #fffafd;
+        padding: 9px 10px;
+      }
+
+      .signal-card b {
+        display: block;
+        overflow-wrap: anywhere;
+        color: #20272e;
+        font-size: 12px;
+        font-weight: 820;
+        line-height: 1.2;
+      }
+
+      .signal-card span,
+      .signal-card small {
+        display: block;
+        margin-top: 3px;
+        color: #59636b;
+        font-size: 11px;
+        line-height: 1.3;
+      }
+
+      .signal-card span {
+        color: var(--brand-ink);
+        font-weight: 760;
+      }
+
       .details {
         display: grid;
         grid-template-columns: 1fr 1fr;
@@ -462,12 +537,14 @@ TODAY_WIDGET_HTML = """
         .workout-block { grid-template-columns: 1fr; }
         .workout-block span { white-space: normal; }
         .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+        .signal-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
         .details { grid-template-columns: 1fr; }
       }
 
       @media (max-width: 340px) {
         .metrics { grid-template-columns: 1fr; }
         .label-key { grid-template-columns: 1fr; }
+        .signal-strip { grid-template-columns: 1fr; }
       }
     </style>
   </head>
@@ -615,6 +692,8 @@ TODAY_WIDGET_HTML = """
       function healthOverviewModel(data) {
         const readiness = data.readiness || {};
         const label = readiness.label || "pending";
+        const score = finiteNumber(readiness.score, 0);
+        const band = readinessBand(score, label);
         const brief = data.daily_brief || {};
         const sections = data.sections || {};
         const activity = sections.activity || {};
@@ -644,17 +723,23 @@ TODAY_WIDGET_HTML = """
           ? [ `latest ${latestLoad.date}`, windowAzm != null && rangeLabel ? `${intText(windowAzm)} AZM over ${rangeLabel}` : "" ].filter(Boolean).join("; ")
           : (rangeLabel ? `${rangeLabel} total` : "latest");
         const stepAverage = activity.averages?.steps_per_day;
+        const stepCoverage = activity.coverage || {};
+        const stepSummary = activity.step_window_summary || {};
+        const stepAverageLabel = stepSummary.average_display || (stepAverage != null ? `${intText(stepAverage)}/day avg on recorded step days` : "");
+        const stepRecordedLabel = stepCoverage.days_with_steps != null && stepCoverage.days_in_lookback != null
+          ? `${stepCoverage.days_with_steps}/${stepCoverage.days_in_lookback} days with steps`
+          : rangeLabel;
         const moveMetric = todaySteps != null
           ? [
               "Steps",
               `${intText(todaySteps)} steps`,
-              stepAverage != null && rangeLabel ? `today so far; ${intText(stepAverage)}/day avg over ${rangeLabel}` : "today so far",
+              [ "today so far", stepAverageLabel, stepRecordedLabel ].filter(Boolean).join("; "),
               "Movement load context; mostly useful for leg fatigue and total day load.",
             ]
           : [
               "Steps window",
               windowSteps != null ? `${intText(windowSteps)} steps` : null,
-              [rangeLabel, stepAverage != null ? `${intText(stepAverage)}/day avg` : ""].filter(Boolean).join("; "),
+              [stepSummary.display || rangeLabel, stepAverageLabel].filter(Boolean).join("; "),
               "Movement load context; mostly useful for leg fatigue and total day load.",
             ];
         const sleepDelta = sleep.latest_vs_average_hours;
@@ -672,6 +757,7 @@ TODAY_WIDGET_HTML = """
             : "";
         const breathingSignal = signalById.spo2 || signalById.respiratory_rate || signalById.sleep_temperature;
         const capacitySignal = signalById.vo2_max;
+        const checkedSignals = prioritySignalStrip(signalSnapshot.signals || []);
         const primaryActions = (brief.today_plan || data.next_actions || []).slice(0, 4);
         const contextGaps = brief.context_gaps || [];
         const watchoutsAndGaps = [
@@ -684,17 +770,18 @@ TODAY_WIDGET_HTML = """
           return detail ? `${label}: ${detail}` : label;
         });
         return {
-          accent: readinessAccent(label),
+          accent: readinessAccent(band),
+          stateLabel: band,
           title: "Health Overview",
           eyebrow: "Mehair Coach",
           date: range || data.data_freshness?.latest_observed_date || "",
           chips: [
-            readinessChip(label),
+            readinessChip(label, score),
             brief.training_bias ? titleCase(brief.training_bias) : "",
             `${dataUsed.synced_metric_count || 0} metrics`,
             freshnessChip(freshness),
           ].filter(Boolean),
-          score: finiteNumber(readiness.score, 0),
+          score,
           primaryLabel: "Readiness",
           headline: brief.summary || data.headline || readiness.recommendation || "All synced health data summarized.",
           focusTitle: "Today Plan",
@@ -718,6 +805,7 @@ TODAY_WIDGET_HTML = """
                 ? ["Vitals", vitalsValue, vitalsDetail]
                 : ["Freshness", titleCase(freshness.freshness_level || "unknown"), freshness.latest_observed_date ? `latest ${freshness.latest_observed_date}` : ""],
           ].filter(Boolean),
+          signalStrip: checkedSignals,
           evidenceTitle: prioritySignals.length ? "Priority Signals" : "Positives",
           evidence: prioritySignals.length ? prioritySignals : data.positives || [],
           secondaryTitle: contextGaps.length ? "Watchouts & Gaps" : "Watchouts",
@@ -727,6 +815,8 @@ TODAY_WIDGET_HTML = """
 
       function questionCluesModel(data) {
         const readiness = data.readiness || {};
+        const score = finiteNumber(readiness.score, 0);
+        const band = readinessBand(score, readiness.label || "pending");
         const metrics = data.relevant_metrics || [];
         const available = metrics.filter((item) => Number(item.records || 0) > 0);
         const intents = data.intent_hints || [];
@@ -737,8 +827,9 @@ TODAY_WIDGET_HTML = """
         const hasSafetyFlags = (data.safety_flags || []).length > 0;
         return {
           accent: hasSafetyFlags ? "#a94f43" : "#d63384",
-          title: hasSafetyFlags ? "Health Check" : "Health Clues",
-          eyebrow: hasSafetyFlags ? "Safety Context" : "Metric Finder",
+          stateLabel: band,
+          title: hasSafetyFlags ? "Health Check" : "Signals That Matter",
+          eyebrow: "Mehair Coach",
           date: data.today?.activity_date && data.today?.recovery_date && data.today.activity_date !== data.today.recovery_date
             ? `Activity ${data.today.activity_date}; recovery ${data.today.recovery_date}`
             : data.today?.activity_date || freshness.latest_observed_date || "",
@@ -747,10 +838,10 @@ TODAY_WIDGET_HTML = """
             `${available.length}/${metrics.length || 0} metrics`,
             freshnessChip(freshness),
           ].filter(Boolean),
-          score: finiteNumber(readiness.score, 0),
+          score,
           primaryLabel: "Readiness",
           headline: data.headline || "Useful Fitbit signals selected for this question.",
-          focusTitle: hasSafetyFlags ? "Safety First" : "Best Clues",
+          focusTitle: hasSafetyFlags ? "Safety First" : "Why I Checked These",
           focus: hasSafetyFlags ? data.safety_flags || [] : data.clues || [],
           metrics: snapshotSignals.length
             ? snapshotSignals.map((item) => signalMetric(item, "latest synced"))
@@ -774,21 +865,24 @@ TODAY_WIDGET_HTML = """
         const baseline = data.baseline || {};
         const deltas = data.current_vs_baseline || {};
         const label = readiness.label || "pending";
+        const score = finiteNumber(readiness.score, 0);
+        const band = readinessBand(score, label);
         const sleepTemp = latest.sleep_temperature || {};
         return {
-          accent: readinessAccent(label),
-          title: "Recovery Comparison",
-          eyebrow: "Sleep + Heart",
+          accent: readinessAccent(band),
+          stateLabel: band,
+          title: "Recovery Signals",
+          eyebrow: "Mehair Coach",
           date: data.date_range?.start && data.date_range?.end ? `${data.date_range.start} to ${data.date_range.end}` : latest.date || "",
           chips: [
-            label,
+            readinessChip(label, score),
             `${data.data_used?.days_compared || data.window_days || 14} days`,
             freshnessChip(data.data_freshness || {}),
           ].filter(Boolean),
-          score: finiteNumber(readiness.score, 0),
+          score,
           primaryLabel: "Readiness",
           headline: data.headline || "Sleep, heart, and load compared against baseline.",
-          focusTitle: "Pattern",
+          focusTitle: "What This Means For Training",
           focus: data.insights || [],
           metrics: [
             ["Sleep", latest.sleep_hours != null ? `${num(latest.sleep_hours, 1)}h` : null, baseline.sleep_hours != null ? `base ${num(baseline.sleep_hours, 1)}h` : ""],
@@ -811,6 +905,8 @@ TODAY_WIDGET_HTML = """
       function todayWorkoutModel(data) {
         const readiness = data.readiness || {};
         const label = readiness.label || data.data_used?.readiness_label || "pending";
+        const score = finiteNumber(readiness.score, 0);
+        const band = readinessBand(score, label);
         const today = data.today || {};
         const sleep = today.sleep || {};
         const goal = data.goal_context || {};
@@ -824,7 +920,8 @@ TODAY_WIDGET_HTML = """
         const activityWindow = data.activity_date || data.data_used?.activity_date || data.latest_date || "today";
         const activityWindowLabel = activityWindow === "today" ? "today so far" : `${activityWindow} so far`;
         return {
-          accent: readinessAccent(label),
+          accent: readinessAccent(band),
+          stateLabel: band,
           title: "Today's Workout",
           eyebrow: "Coach Recommendation",
           date: data.activity_date && data.recovery_date && data.activity_date !== data.recovery_date
@@ -833,10 +930,10 @@ TODAY_WIDGET_HTML = """
           chips: [
             intensityChip(data.intensity),
             rpeChip(data.rpe_cap),
-            readinessChip(label),
+            readinessChip(label, score),
             freshnessChip(freshness),
           ].filter(Boolean),
-          score: finiteNumber(readiness.score, 0),
+          score,
           primaryLabel: "Readiness",
           headline: coach.short_answer || workoutHeadline(data),
           focusTitle: coach.session_blueprint ? "Next Session" : "What To Do",
@@ -889,6 +986,7 @@ TODAY_WIDGET_HTML = """
         const heart = today.heart || {};
         const label = readiness.label || "pending";
         const score = finiteNumber(readiness.score, 0);
+        const band = readinessBand(score, label);
         const activityDate = context.activity_date || today.activity_date || context.latest_date || data.latest_date;
         const recoveryDate = context.recovery_date || today.recovery_date || activityDate;
         const latestLoad = today.latest_training_load || {};
@@ -897,11 +995,12 @@ TODAY_WIDGET_HTML = """
           ? `Activity ${activityDate}; recovery ${recoveryDate}.`
           : activityDate ? `Health context from ${activityDate}.` : "Waiting for synced health context.";
         return {
-          accent: readinessAccent(label),
+          accent: readinessAccent(band),
+          stateLabel: band,
           title: "Readiness",
           eyebrow: "Mehair Coach",
           date: source,
-          chips: [label, activityDate].filter(Boolean),
+          chips: [readinessChip(label, score), activityDate].filter(Boolean),
           score,
           primaryLabel: "Readiness",
           headline: readiness.recommendation || data.recommendation || "Health context synced.",
@@ -924,6 +1023,8 @@ TODAY_WIDGET_HTML = """
         const readiness = data.readiness || {};
         const label = readiness.label || data.data_used?.readiness_label || "pending";
         const dataUsed = data.data_used || {};
+        const score = finiteNumber(readiness.score ?? dataUsed.readiness_score, 0);
+        const band = readinessBand(score, label);
         const coach = data.coach_response || {};
         const substitutions = data.substitutions || [];
         const planFocus = [
@@ -931,12 +1032,13 @@ TODAY_WIDGET_HTML = """
           ...(data.focus || []).slice(0, 2),
         ];
         return {
-          accent: readinessAccent(label),
+          accent: readinessAccent(band),
+          stateLabel: band,
           title: workoutTitle(data.planned_activity, data.recommended_intensity),
           eyebrow: "Workout Plan",
           date: data.planned_date ? `Planned for ${data.planned_date}` : "Next planned session",
-          chips: [intensityChip(data.recommended_intensity), rpeChip(data.rpe_cap), readinessChip(label)].filter(Boolean),
-          score: finiteNumber(readiness.score ?? dataUsed.readiness_score, 0),
+          chips: [intensityChip(data.recommended_intensity), rpeChip(data.rpe_cap), readinessChip(label, score)].filter(Boolean),
+          score,
           primaryLabel: "Readiness",
           headline: coach.short_answer || workoutHeadline(data),
           focusTitle: coach.session_blueprint ? "Session Blueprint" : "What To Do",
@@ -967,8 +1069,10 @@ TODAY_WIDGET_HTML = """
         const evidence = coach.why || (safety.length ? safety : data.evidence || []);
         const readinessScore = finiteNumber(readiness.score ?? dataUsed.readiness_score, 0);
         const readinessLabel = readiness.label || dataUsed.readiness_label;
+        const readinessBandLabel = readinessBand(readinessScore, readinessLabel);
         return {
-          accent: safety.length ? "#a94f43" : readinessAccent(readinessLabel),
+          accent: safety.length ? "#a94f43" : readinessAccent(readinessBandLabel),
+          stateLabel: readinessBandLabel,
           title: "Active Workout",
           eyebrow: data.planned_activity || "In-Session Check",
           date: live.elapsed_minutes != null ? `${live.elapsed_minutes} min elapsed` : data.activity_date || "",
@@ -977,6 +1081,7 @@ TODAY_WIDGET_HTML = """
             live.current_heart_rate_bpm != null ? `${live.current_heart_rate_bpm} bpm` : "",
             live.current_rpe != null ? rpeChip(live.current_rpe) : "",
             live.pain_level != null ? `Pain ${live.pain_level}/10` : "",
+            readinessChip(readinessLabel, readinessScore),
           ].filter(Boolean),
           score: readinessScore,
           primaryLabel: "Readiness",
@@ -1138,6 +1243,8 @@ TODAY_WIDGET_HTML = """
         const secondary = model.secondary || model.evidence || [];
         const blocks = renderBlocks(model.blocks);
         const scoreContext = scoreNote(model.primaryLabel, score);
+        const isReadinessScore = String(model.primaryLabel || "").toLowerCase().includes("readiness");
+        const stateLabel = isReadinessScore ? readinessStateLabel(model.stateLabel || readinessBand(score, "")) : "";
         root.innerHTML = `
           <div class="mast">
             <div class="identity">
@@ -1158,7 +1265,9 @@ TODAY_WIDGET_HTML = """
                   <span>${escapeHtml(model.primaryLabel || "Score")}</span>
                 </div>
               </div>
+              ${stateLabel ? `<span class="score-state">${escapeHtml(stateLabel)}</span>` : ""}
               ${scoreContext ? `<p class="score-note">${escapeHtml(scoreContext)}</p>` : ""}
+              ${isReadinessScore ? `<div class="band-legend" aria-label="Readiness bands"><span>&lt;55 red</span><span>55-74 yellow</span><span>75+ green</span></div>` : ""}
             </div>
             <div class="plan-box">
               <h2>${escapeHtml(model.focusTitle || "Coach Take")}</h2>
@@ -1169,6 +1278,7 @@ TODAY_WIDGET_HTML = """
           <div class="metrics">
             ${(model.metrics || []).slice(0, 6).map((item) => metric(item[0], item[1], item[2], item[3])).join("")}
           </div>
+          ${renderSignalStrip(model.signalStrip)}
           ${renderLabelKey(model.labels)}
           <div class="details">
             <div class="section">
@@ -1198,6 +1308,22 @@ TODAY_WIDGET_HTML = """
         `;
       }
 
+      function renderSignalStrip(signals) {
+        const usable = (signals || []).filter((item) => item && item.label).slice(0, 6);
+        if (!usable.length) return "";
+        return `
+          <div class="signal-strip" aria-label="Signals checked">
+            ${usable.map((item) => `
+              <div class="signal-card">
+                <b>${escapeHtml(item.label)}</b>
+                <span>${escapeHtml(item.display || item.latest || "synced")}</span>
+                <small>${escapeHtml(item.coaching_use || item.why_it_matters || metricHint(item.label))}</small>
+              </div>
+            `).join("")}
+          </div>
+        `;
+      }
+
       function metric(label, value, detail, explanation) {
         const detailHtml = detail ? `<small>${escapeHtml(detail)}</small>` : "";
         const explain = explanation || metricHint(label);
@@ -1210,6 +1336,35 @@ TODAY_WIDGET_HTML = """
         const detail = signal.latest_date || signal.window || signal.category || fallbackDate || "";
         const explanation = signal.coaching_use || signal.why_it_matters || metricHint(label);
         return [label, signal.display ?? signal.latest, detail, explanation];
+      }
+
+      function prioritySignalStrip(signals) {
+        const priority = [
+          "sleep",
+          "hrv",
+          "resting_heart_rate",
+          "active_zone_minutes",
+          "heart_rate_zones",
+          "spo2",
+          "respiratory_rate",
+          "sleep_temperature",
+          "vo2_max",
+          "steps",
+        ];
+        const rank = (signal) => {
+          const id = String(signal.id || "").toLowerCase();
+          const index = priority.indexOf(id);
+          return index >= 0 ? index : priority.length;
+        };
+        return (signals || [])
+          .filter((item) => item && (item.display || item.latest != null))
+          .sort((a, b) => rank(a) - rank(b))
+          .slice(0, 6)
+          .map((item) => ({
+            label: item.label || titleCase(item.id || "Signal"),
+            display: item.display ?? item.latest,
+            coaching_use: item.coaching_use || item.why_it_matters || metricHint(item.label || item.id),
+          }));
       }
 
       function activeWorkoutFocus(data, coach, safety) {
@@ -1291,12 +1446,13 @@ TODAY_WIDGET_HTML = """
         return label;
       }
 
-      function readinessChip(label) {
-        const clean = titleCase(label || "pending");
-        const lower = String(label || "").toLowerCase();
-        if (lower === "green") return `${clean}: 75+ recovery supports training`;
-        if (lower === "yellow") return `${clean}: 55-74 keep controlled`;
-        if (lower === "red") return `${clean}: <55 recovery first`;
+      function readinessChip(label, score) {
+        const band = readinessBand(score, label);
+        const scoreText = Number.isFinite(Number(score)) && Number(score) > 0 ? `${Math.round(Number(score))}/100: ` : "";
+        const clean = titleCase(band || label || "pending");
+        if (band === "green") return `${scoreText}${clean} 75+ training available`;
+        if (band === "yellow") return `${scoreText}${clean} 55-74 keep controlled`;
+        if (band === "red") return `${scoreText}${clean} <55 recovery first`;
         return clean;
       }
 
@@ -1465,10 +1621,31 @@ TODAY_WIDGET_HTML = """
         return `${text} (${rpePlain(match[1])})`;
       }
 
+      function readinessBand(score, label) {
+        const number = Number(score);
+        if (Number.isFinite(number) && number > 0) {
+          if (number >= 75) return "green";
+          if (number >= 55) return "yellow";
+          return "red";
+        }
+        const lower = String(label || "").toLowerCase();
+        if (["green", "yellow", "red"].includes(lower)) return lower;
+        return lower || "pending";
+      }
+
+      function readinessStateLabel(label) {
+        const lower = String(label || "").toLowerCase();
+        if (lower === "green") return "Train available";
+        if (lower === "yellow") return "Keep controlled";
+        if (lower === "red") return "Recovery first";
+        return "";
+      }
+
       function readinessAccent(label) {
-        if (label === "green") return "#2f7a5f";
-        if (label === "yellow") return "#9b741c";
-        if (label === "red") return "#a94f43";
+        const band = readinessBand(null, label);
+        if (band === "green") return "#2f7a5f";
+        if (band === "yellow") return "#9b741c";
+        if (band === "red") return "#a94f43";
         return "#d63384";
       }
 

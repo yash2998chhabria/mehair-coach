@@ -1211,11 +1211,11 @@ class HealthStore:
             for metric_id, count in sorted(metric_counts.items())
         ]
         missing_supported_metrics = sorted(SYNC_DATA_TYPE_IDS - set(metric_counts))
-        activity = _overview_activity(daily_rows)
+        activity = _overview_activity(daily_rows, lookback_days=safe_days)
         sleep = _overview_sleep(daily_rows)
         heart = _overview_heart(daily_rows)
         recovery = _overview_recovery(daily_rows)
-        signal_snapshot = _available_signal_snapshot(daily_rows)
+        signal_snapshot = _available_signal_snapshot(daily_rows, lookback_days=safe_days)
         workouts = _overview_workouts(
             [
                 item
@@ -1403,9 +1403,10 @@ class HealthStore:
             context = _context
         if context.get("status") != "ok":
             return context
-        recent_days = sorted(summary["daily"].items())[-max(1, min(days, 30)):]
+        safe_days = max(1, min(days, 30))
+        recent_days = sorted(summary["daily"].items())[-safe_days:]
         daily_rows = [{"date": day, **_public_daily_values(values)} for day, values in recent_days]
-        signal_snapshot = _available_signal_snapshot(daily_rows)
+        signal_snapshot = _available_signal_snapshot(daily_rows, lookback_days=safe_days)
         rows = [_recovery_row(day, values) for day, values in recent_days]
         rows = [row for row in rows if _has_recovery_comparison_signal(row)]
         if not rows:
@@ -1779,7 +1780,11 @@ def freshness_details(latest_observed_date: str | None, last_sync: str | None) -
     }
 
 
-def _overview_activity(daily_rows: list[dict[str, Any]]) -> dict[str, Any]:
+def _overview_activity(
+    daily_rows: list[dict[str, Any]],
+    *,
+    lookback_days: int | None = None,
+) -> dict[str, Any]:
     step_days = [day for day in daily_rows if day.get("steps") is not None]
     active_days = [
         day
@@ -1790,6 +1795,23 @@ def _overview_activity(daily_rows: list[dict[str, Any]]) -> dict[str, Any]:
     total_active = sum(_float({"value": day.get("active_minutes")}, ["value"]) for day in daily_rows)
     total_zone = sum(_float({"value": day.get("active_zone_minutes")}, ["value"]) for day in daily_rows)
     total_distance_km = sum(_float({"value": day.get("distance_mm")}, ["value"]) for day in daily_rows) / 1_000_000
+    step_average = round(total_steps / len(step_days)) if step_days else None
+    active_average = round(total_active / len(active_days), 1) if active_days else None
+    zone_average = round(total_zone / len(active_days), 1) if active_days else None
+    step_count = len(step_days)
+    lookback_count = lookback_days or len(daily_rows) or step_count
+    step_day_word = "day" if step_count == 1 else "days"
+    step_window_text = (
+        f"{round(total_steps):,} steps across {step_count} recorded {step_day_word} "
+        f"in the {lookback_count}-day lookback"
+        if step_count
+        else None
+    )
+    step_average_text = (
+        f"{step_average:,}/day average across recorded step days"
+        if step_average is not None
+        else None
+    )
     highest_load = max(
         daily_rows,
         key=lambda day: _float({"value": day.get("active_zone_minutes")}, ["value"]),
@@ -1805,6 +1827,7 @@ def _overview_activity(daily_rows: list[dict[str, Any]]) -> dict[str, Any]:
     return {
         "status": "ok" if active_days or step_days else "missing",
         "days_with_activity": len(active_days or step_days),
+        "lookback_days": lookback_count,
         "latest": _last_with(daily_rows, ("steps", "active_minutes", "active_zone_minutes", "distance_mm")) or {},
         "totals": {
             "steps": round(total_steps),
@@ -1813,9 +1836,28 @@ def _overview_activity(daily_rows: list[dict[str, Any]]) -> dict[str, Any]:
             "distance_km": round(total_distance_km, 2),
         },
         "averages": {
-            "steps_per_day": round(total_steps / len(step_days)) if step_days else None,
-            "active_minutes_per_day": round(total_active / len(active_days), 1) if active_days else None,
-            "active_zone_minutes_per_day": round(total_zone / len(active_days), 1) if active_days else None,
+            "steps_per_day": step_average,
+            "active_minutes_per_day": active_average,
+            "active_zone_minutes_per_day": zone_average,
+        },
+        "average_denominators": {
+            "steps_per_day": "recorded_step_days",
+            "active_minutes_per_day": "recorded_activity_days",
+            "active_zone_minutes_per_day": "recorded_activity_days",
+        },
+        "coverage": {
+            "days_in_lookback": lookback_count,
+            "days_with_steps": step_count,
+            "days_with_activity": len(active_days),
+            "step_average_is_over_recorded_days": True,
+        },
+        "step_window_summary": {
+            "display": step_window_text,
+            "average_display": step_average_text,
+            "total_steps": round(total_steps),
+            "days_with_steps": step_count,
+            "lookback_days": lookback_count,
+            "average_steps_per_recorded_day": step_average,
         },
         "highest_load_day": {
             "date": highest_load.get("date"),
@@ -1920,7 +1962,11 @@ def _overview_recovery(daily_rows: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
-def _available_signal_snapshot(daily_rows: list[dict[str, Any]]) -> dict[str, Any]:
+def _available_signal_snapshot(
+    daily_rows: list[dict[str, Any]],
+    *,
+    lookback_days: int | None = None,
+) -> dict[str, Any]:
     signals: list[dict[str, Any]] = []
     date_range = {
         "start": daily_rows[0]["date"] if daily_rows else None,
@@ -2164,6 +2210,11 @@ def _available_signal_snapshot(daily_rows: list[dict[str, Any]]) -> dict[str, An
     latest_steps = _last_with(daily_rows, ("steps",))
     if latest_steps:
         step_values = [day.get("steps") for day in daily_rows if day.get("steps") is not None]
+        step_days = len(step_values)
+        step_total = round(sum(step_values))
+        step_average = round(sum(step_values) / step_days) if step_days else None
+        step_day_word = "day" if step_days == 1 else "days"
+        lookback_count = lookback_days or len(daily_rows) or step_days
         add_signal(
             signal_id="steps",
             label="Steps",
@@ -2171,7 +2222,22 @@ def _available_signal_snapshot(daily_rows: list[dict[str, Any]]) -> dict[str, An
             latest_value=latest_steps.get("steps"),
             unit="steps",
             latest_date=latest_steps.get("date"),
-            window_summary={"total_steps": round(sum(step_values)), "average_steps": round(sum(step_values) / len(step_values)) if step_values else None},
+            window_summary={
+                "total_steps": step_total,
+                "days_with_steps": step_days,
+                "lookback_days": lookback_count,
+                "average_steps_per_recorded_day": step_average,
+                "average_denominator": "recorded_step_days",
+                "display": (
+                    f"{step_total:,} steps across {step_days} recorded {step_day_word} "
+                    f"in the {lookback_count}-day lookback"
+                ),
+                "average_display": (
+                    f"{step_average:,}/day across recorded step days"
+                    if step_average is not None
+                    else None
+                ),
+            },
             why_it_matters="Steps show movement volume and leg load, especially before runs, hikes, or lower-body work.",
             coaching_use="Use high step volume as fatigue context; low steps alone do not mean the user needs hard training.",
             use_when=["walking", "running", "hiking", "leg_fatigue", "daily_load"],
@@ -3298,12 +3364,19 @@ def _question_clue_takeaways(
     if activity.get("totals", {}).get("steps") is not None:
         step_total = int(activity["totals"]["steps"])
         step_avg = activity.get("averages", {}).get("steps_per_day")
-        window_days = overview.get("window_days")
-        day_word = "day" if window_days == 1 else "days"
-        window_text = f"over the last {window_days} {day_word}" if window_days else "in the synced window"
-        average_text = f" (~{int(step_avg):,}/day)" if step_avg is not None else ""
+        step_summary = activity.get("step_window_summary") or {}
+        step_window_text = step_summary.get("display")
+        step_average_text = step_summary.get("average_display")
+        if not step_window_text:
+            window_days = overview.get("window_days")
+            day_word = "day" if window_days == 1 else "days"
+            window_text = f"over the last {window_days} {day_word}" if window_days else "in the synced window"
+            step_window_text = f"{step_total:,} steps {window_text}"
+        average_text = f"; {step_average_text}" if step_average_text else (
+            f"; {int(step_avg):,}/day average across recorded step days" if step_avg is not None else ""
+        )
         clues.append(
-            f"Movement context: {step_total:,} steps {window_text}{average_text}. "
+            f"Movement context: {step_window_text}{average_text}. "
             "Use this as background fatigue/load context, not as a standalone reason to train or rest."
         )
     if workouts.get("workout_count"):

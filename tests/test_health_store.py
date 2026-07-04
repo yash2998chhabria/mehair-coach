@@ -563,6 +563,10 @@ def test_synthetic_records_calculate_context(tmp_path, monkeypatch) -> None:
     assert overview["status"] == "ok"
     assert overview["overview_type"] == "health_overview"
     assert overview["sections"]["activity"]["totals"]["steps"] == 8500
+    assert overview["sections"]["activity"]["coverage"]["days_with_steps"] == 1
+    assert overview["sections"]["activity"]["coverage"]["days_in_lookback"] == 7
+    assert overview["sections"]["activity"]["average_denominators"]["steps_per_day"] == "recorded_step_days"
+    assert "recorded day" in overview["sections"]["activity"]["step_window_summary"]["display"]
     assert overview["sections"]["activity"]["time_in_heart_rate_zones_minutes"]["fat_burn"] == 20.0
     assert overview["sections"]["sleep"]["latest_asleep_hours"] == 8.0
     assert overview["sections"]["heart"]["latest_hrv_ms"] == 45.2
@@ -892,7 +896,11 @@ def test_question_clues_choose_recovery_heart_and_load_metrics(tmp_path, monkeyp
     assert any("SpO2" in item for item in clues["clues"])
     assert any("Respiratory rate" in item for item in clues["clues"] + clues["watchouts"])
     assert "spo2" in clues["data_used"]["available_signal_ids"]
-    assert any("Movement context: 27,000 steps over the last 7 days" in item for item in clues["clues"])
+    assert any(
+        "Movement context: 27,000 steps across 3 recorded days in the 7-day lookback" in item
+        for item in clues["clues"]
+    )
+    assert any("recorded step days" in item for item in clues["clues"])
     assert any("not as a standalone reason to train or rest" in item for item in clues["clues"])
 
     day_plan = store.health_question_clues(user_id, "What should I do today?", days=7)
