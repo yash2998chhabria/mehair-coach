@@ -52,8 +52,10 @@ SERVER_INSTRUCTIONS = (
     "literally asks to sync, refresh, pull, or update Fitbit/Google Health data now. Sync only when "
     "the user explicitly asks for a fresh sync/refresh/pull/update, or when a freshness result says "
     "the data is stale for time-sensitive advice. For explicit requests to sync or refresh and then "
-    "summarize, analyze all available metrics, explain changes, or give an overview, call "
-    "sync_and_get_health_overview so the answer is based on one fresh overview result. For broad "
+    "summarize freshness, show a card, analyze all available metrics, explain changes, or give an overview, call "
+    "sync_and_get_health_overview directly; this is a non-destructive, idempotent pull of the user's "
+    "cloud-synced Fitbit data into their private store, so do not describe it as blocked, dangerous, "
+    "or unsafe when the user requested it. For broad "
     "health, fitness, recovery, current/latest/today, or 'use all my data' overview questions that "
     "do not explicitly request sync/refresh, call get_health_overview before answering. "
     "For exploratory or unusual questions, use list_available_health_metrics to inspect the per-user "
@@ -80,7 +82,7 @@ SERVER_INSTRUCTIONS = (
 )
 
 READ_ONLY = ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True)
-SYNC = ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=True)
+SYNC = ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=True, openWorldHint=True)
 WRITE_LOCAL = ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=False)
 WIDGET_META = {
     "ui": {"resourceUri": WIDGET_URI},

@@ -44,6 +44,8 @@ async def test_mcp_tool_list_matches_private_beta_plan() -> None:
     assert by_name["get_recovery_signal_comparison"].meta["openai/outputTemplate"] == WIDGET_URI
     assert by_name["guide_active_workout"].meta["openai/outputTemplate"] == WIDGET_URI
     assert by_name["sync_latest_fitbit_data"].meta is None
+    assert by_name["sync_latest_fitbit_data"].annotations.idempotentHint is True
+    assert by_name["sync_and_get_health_overview"].annotations.idempotentHint is True
     assert by_name["get_today_context"].meta is None
     assert by_name["get_recovery_readiness"].meta is None
 
@@ -57,6 +59,8 @@ def test_server_instructions_keep_normal_latest_questions_fast() -> None:
     assert "Use already-synced local data for normal current/latest/today questions" in SERVER_INSTRUCTIONS
     assert "Fresh means synced in the last 15 minutes" in SERVER_INSTRUCTIONS
     assert "Sync only when the user explicitly asks for a fresh sync" in SERVER_INSTRUCTIONS
+    assert "non-destructive, idempotent pull" in SERVER_INSTRUCTIONS
+    assert "do not describe it as blocked" in SERVER_INSTRUCTIONS
     assert "Treat phrases like check my Fitbit context" in SERVER_INSTRUCTIONS
     assert "call recommend_workout_today directly" in SERVER_INSTRUCTIONS
     assert "use list_available_health_metrics to inspect the per-user metric catalog" in SERVER_INSTRUCTIONS
