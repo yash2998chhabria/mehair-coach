@@ -1852,20 +1852,21 @@ TODAY_WIDGET_HTML = """
         const decision = String(data.decision || "").toLowerCase();
         const hasActions = (coach.what_to_do || data.immediate_actions || []).filter(Boolean).length > 0;
         const actionText = [
-          decision,
           data.headline || "",
           coach.short_answer || "",
           ...(coach.what_to_do || []),
           ...(data.immediate_actions || []),
         ].join(" ").toLowerCase();
         if (safety.length || decision.includes("stop")) return "Stop Hard Work Now";
-        if (decision.includes("downshift") || /\\b(back off|ease up|reduce|cut|lower)\\b/.test(actionText)) return "Back Off Now";
-        if (decision.includes("modify") || /\\b(adjust|modify|substitute|change the movement)\\b/.test(actionText)) return "Adjust This Block";
         if (
           decision.includes("continue") ||
-          decision.includes("controlled") ||
-          /\\b(hold steady|hold this effort|same pace|stay at or below|keep the exact same|do not surge)\\b/.test(actionText)
+          decision.includes("controlled")
         ) return "Hold This Effort";
+        if (decision.includes("downshift")) return "Back Off Now";
+        if (decision.includes("modify")) return "Adjust This Block";
+        if (/\\b(back off|ease up|reduce|cut|lower)\\b/.test(actionText)) return "Back Off Now";
+        if (/\\b(adjust|modify|substitute|change the movement)\\b/.test(actionText)) return "Adjust This Block";
+        if (/\\b(hold steady|hold this effort|same pace|stay at or below|keep the exact same|do not surge)\\b/.test(actionText)) return "Hold This Effort";
         return hasActions ? "Next Action" : "Coach Take";
       }
 
@@ -2259,7 +2260,7 @@ TODAY_WIDGET_HTML = """
           stop_and_assess: "Stop + Assess",
           stop_session: "End Session",
           downshift_now: "Back Off Now",
-          continue_controlled: "Continue Controlled",
+          continue_controlled: "Hold Steady",
           modify: "Modify",
         };
         return labels[value] || titleCase(value || "guidance");
@@ -2650,11 +2651,11 @@ WIDGET_PREVIEW_STATES: dict[str, dict] = {
         },
         "subjective_context": {"energy": 3, "soreness": 7, "stress": 6},
         "coach_response": {
-            "short_answer": "Make today recovery-biased: useful movement is fine, but do not chase fitness today.",
+            "short_answer": "Make today recovery-biased: choose one low-dose lane and do not chase fitness today.",
             "data_story": "The useful read: sleep is limiting recovery; HRV is lower than usual; Resting HR is elevated.",
             "session_blueprint": [
-                "Start with 10 minutes easy mobility, low-impact cardio, or light technique to see if you feel better.",
-                "Then do 10-25 minutes easy movement at RPE <= 6/10; stop before it feels like work.",
+                "Start with 10 minutes of easy mobility, low-impact cardio, or light technique to see if you feel better.",
+                "Then pick one low-dose lane for 10-25 minutes: mobility flow, easy bike/elliptical, or skill practice at RPE <= 6/10.",
                 "Finish while you feel better than when you started.",
             ],
             "what_to_do": [

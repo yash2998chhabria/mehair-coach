@@ -2972,14 +2972,14 @@ def _today_session_blueprint(
     if intensity == "easy":
         if time_limit_minutes is not None and time_limit_minutes <= 25:
             blueprint = [
-                "Start with 3-5 minutes easy mobility, low-impact cardio, or light technique.",
-                f"Then use the remaining minutes for easy movement at RPE <= {rpe_cap}/10; stop before it feels like work.",
+                "Start with 3-5 minutes of easy mobility, low-impact cardio, or light technique.",
+                f"Then pick one low-dose lane for the remaining minutes: mobility flow, easy bike/elliptical, or skill practice at RPE <= {rpe_cap}/10.",
                 "Finish with energy in reserve.",
             ]
         else:
             blueprint = [
-                "Start with 10 minutes easy mobility, low-impact cardio, or light technique to see how your body responds.",
-                f"Then do 10-25 minutes easy movement at RPE <= {rpe_cap}/10; stop before it feels like work.",
+                "Start with 10 minutes of easy mobility, low-impact cardio, or light technique to see how your body responds.",
+                f"Then pick one low-dose lane for 10-25 minutes: mobility flow, easy bike/elliptical, or skill practice at RPE <= {rpe_cap}/10.",
                 "Finish with energy in reserve.",
             ]
     elif intensity == "moderate":
@@ -3210,7 +3210,7 @@ def _today_workout_coach_response(
     elif illness_flags:
         short_answer = "Skip hard training today. If symptoms are mild and improving, keep it to gentle mobility or very easy movement."
     elif intensity == "easy":
-        short_answer = "Make today recovery-biased: useful movement is fine, but keep it easy and finish with energy in reserve."
+        short_answer = "Make today recovery-biased: choose one low-dose lane and finish with energy in reserve."
     elif reserve_energy_obligation:
         short_answer = "Do the smallest useful dose today: move enough to feel better, then leave energy for what comes next."
     elif has_high_movement:
