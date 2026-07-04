@@ -133,11 +133,13 @@ async def test_widget_resource_is_registered() -> None:
     assert WIDGET_URI == "ui://mehair/today-v21.html"
     assert "ui://mehair/today-v20.html" in LEGACY_WIDGET_URIS
     assert "Preparing card" in html
-    assert 'appInfo: { name: "mehair-coach-widget", version: "0.7.2" }' in html
+    assert 'appInfo: { name: "mehair coach", version: "0.7.2" }' in html
+    assert "mehair-coach-widget" not in html
     assert 'renderEmpty("Preparing the health card from the latest tool result.", "waiting")' in html
     assert "function hasCardData(data)" in html
     assert "function withDataWindow(model, data)" in html
     assert "Latest Fitbit data pull was" in html
+    assert "not fresh; sync recommended" in html
     assert "using Fitbit data through" in html
     assert "data-window" in html
     assert "--sync-dot" in html
@@ -227,8 +229,8 @@ async def test_widget_preview_route_renders_real_card_state() -> None:
     assert "Movement load context; mostly useful for leg fatigue and total day load." in overview.text
     assert "Training Load" in overview.text
     assert "AZM over ${rangeLabel}" in overview.text
-    assert "HRV vs Avg" in overview.text
-    assert "RHR vs Avg" in overview.text
+    assert "HRV vs usual" in overview.text
+    assert "Resting HR vs usual" in overview.text
     assert "HRV = recovery stress signal" in overview.text
     assert "AZM = Fitbit hard-work minutes" in overview.text
     assert "Signals checked" in overview.text

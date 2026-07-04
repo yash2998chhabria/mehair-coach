@@ -1280,6 +1280,7 @@ def workout_plan_for_activity(
     intensity = _base_intensity(readiness_label)
     rpe_cap = {"easy": 6, "moderate": 7, "moderate-to-hard": 8}.get(intensity, 6)
     limiting_factors = _normalized_readiness_evidence(context)
+    limiting_factors.extend(_signal_snapshot_evidence(signal_snapshot, limit=5))
     steps_today = _safe_int(today.get("steps"))
     high_step_load = steps_today is not None and steps_today >= 15000
     short_constrained_session = _short_constrained_session(
@@ -2609,7 +2610,7 @@ def _workout_plan_coach_response(
         "session_blueprint": session_blueprint,
         "what_to_do": _dedupe(what_to_do)[:5],
         "why": _humanized_evidence(limiting_factors)[:6],
-        "labels_explained": _coach_metric_glossary(),
+        "labels_explained": _coach_metric_glossary(_metric_labels_from_evidence(limiting_factors)),
         "stop_if": stop_conditions[:5],
         "avoid": avoid[:5],
         "substitutions": substitutions[:5],

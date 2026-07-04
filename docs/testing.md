@@ -60,9 +60,10 @@ open "http://localhost:8787/docs/widget-preview?state=health-clues"
 ```
 
 Available preview states are `health-overview`, `health-clues`, `today-workout`,
-`active-workout`, `recovery-comparison`, and `heart-safety`. These render the same Apps SDK
-iframe HTML with synthetic structured tool results, which makes visual QA
-possible without recreating a ChatGPT connector for every UI change.
+`workout-plan`, `active-workout`, `active-workout-hold`, `recovery-comparison`,
+and `heart-safety`. These render the same Apps SDK iframe HTML with synthetic
+structured tool results, which makes visual QA possible without recreating a
+ChatGPT connector for every UI change.
 
 MCP Inspector:
 

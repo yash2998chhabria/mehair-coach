@@ -1309,7 +1309,7 @@ def test_today_recommendation_returns_human_coach_response_without_losing_labels
                 {
                     "id": "sleep_temperature",
                     "label": "Sleep temperature",
-                    "display": "+0.45 C vs baseline",
+                    "display": "+0.45 C vs usual",
                     "coaching_use": "Use an elevated deviation as context to keep training controlled; do not diagnose from it.",
                 },
                 {
@@ -1378,6 +1378,19 @@ def test_today_recommendation_returns_human_coach_response_without_losing_labels
     )
     assert any("I only have 30 minutes" in item for item in recommendation["coach_response"]["realistic_follow_ups"])
     assert any("If I still feel off" in item for item in recommendation["coach_response"]["realistic_follow_ups"])
+
+    plan = workout_plan_for_activity(
+        context=context,
+        planned_activity="30-minute run",
+        target_areas=[],
+        constraints="I want a useful session and my breathing felt weird earlier.",
+        duration_minutes=30,
+    )
+    plan_labels = {item["label"] for item in plan["coach_response"]["labels_explained"]}
+    assert {"SpO2", "Respiratory rate", "Sleep temperature"} <= plan_labels
+    assert any("SpO2" in item for item in plan["coach_response"]["why"])
+    assert any("Respiratory rate" in item for item in plan["coach_response"]["why"])
+    assert any("Sleep temperature" in item for item in plan["coach_response"]["why"])
 
 
 def test_today_recommendation_for_normal_green_day_does_not_assume_off_day() -> None:

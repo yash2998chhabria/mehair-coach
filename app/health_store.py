@@ -44,6 +44,7 @@ ILLNESS_PHRASES = (
     "feel sick",
     "feeling sick",
     "sick today",
+    "ill",
     "illness",
     "body aches",
 )
@@ -269,7 +270,7 @@ INTENT_METRICS = {
 
 METRIC_COACHING_REASONS = {
     "sleep": "Sleep duration, timing, and stages are primary recovery and fatigue context.",
-    "daily-heart-rate-variability": "Daily HRV helps spot autonomic recovery changes versus baseline.",
+    "daily-heart-rate-variability": "Daily HRV helps spot recovery changes versus your usual.",
     "heart-rate-variability": "HRV samples can add detail when daily HRV is sparse.",
     "daily-resting-heart-rate": "Resting heart rate often rises with stress, fatigue, illness, or under-recovery.",
     "heart-rate": "Heart-rate samples help explain intensity, unusual spikes, and workout effort.",
@@ -292,6 +293,61 @@ METRIC_COACHING_REASONS = {
     "total-calories": "Total calories can provide broad energy-expenditure context when available.",
     "floors": "Floors can matter for leg load, hikes, and climbing-heavy days.",
 }
+
+INTENT_SPECIFIC_METRIC_RANKS = {
+    "breathing_recovery": (
+        "daily-oxygen-saturation",
+        "oxygen-saturation",
+        "daily-respiratory-rate",
+        "respiratory-rate-sleep-summary",
+        "daily-sleep-temperature-derivations",
+        "sleep",
+        "daily-heart-rate-variability",
+        "daily-resting-heart-rate",
+    ),
+    "symptom_safety": (
+        "daily-resting-heart-rate",
+        "heart-rate",
+        "daily-respiratory-rate",
+        "daily-oxygen-saturation",
+        "daily-sleep-temperature-derivations",
+        "sleep",
+        "daily-heart-rate-variability",
+    ),
+    "heart": (
+        "daily-heart-rate-variability",
+        "daily-resting-heart-rate",
+        "heart-rate",
+        "heart-rate-variability",
+        "time-in-heart-rate-zone",
+    ),
+    "sleep": (
+        "sleep",
+        "daily-respiratory-rate",
+        "respiratory-rate-sleep-summary",
+        "daily-sleep-temperature-derivations",
+        "daily-oxygen-saturation",
+    ),
+    "activity_load": (
+        "active-zone-minutes",
+        "time-in-heart-rate-zone",
+        "exercise",
+        "active-minutes",
+        "steps",
+        "distance",
+        "floors",
+        "activity-level",
+        "sedentary-period",
+    ),
+}
+INTENT_SPECIFIC_METRIC_RANK_ORDER = (
+    "symptom_safety",
+    "breathing_recovery",
+    "active_workout",
+    "sleep",
+    "heart",
+    "activity_load",
+)
 
 SYNC_PRIORITY = (
     "sleep",
@@ -2957,14 +3013,14 @@ def _recovery_comparison_takeaways(
         next_actions.append("Keep training easy until sleep and heart recovery rebound.")
     elif sleep is not None and sleep >= 7 and ((hrv_pct_delta is not None and hrv_pct_delta >= -5) or (rhr_delta is not None and rhr_delta <= 2)):
         insights.append("Sleep duration and heart recovery are broadly aligned.")
-        positives.append("Sleep is supportive and heart signals are near baseline.")
+        positives.append("Sleep is supportive and heart signals are near your usual.")
         next_actions.append("A normal session can be reasonable if warm-up feels good.")
     elif sleep is not None and sleep >= 7 and (hrv_pct_delta is not None and hrv_pct_delta < -10):
         insights.append("Sleep duration looks fine, but HRV is still lagging.")
         watchouts.append("Good sleep hours are not fully translating into autonomic recovery yet.")
         next_actions.append("Use a controlled session and watch how quickly heart rate settles in warm-up.")
     elif sleep_delta is not None and sleep_delta < -0.75:
-        insights.append("Sleep is meaningfully below your recent baseline.")
+        insights.append("Sleep is meaningfully below your recent usual.")
         watchouts.append("Lower sleep may be dragging down readiness even if other signals are incomplete.")
         next_actions.append("Protect sleep tonight and keep intensity capped today.")
 
@@ -2974,22 +3030,22 @@ def _recovery_comparison_takeaways(
         next_actions.append("Avoid stacking another hard conditioning session today.")
     if hrv is not None and hrv_pct_delta is not None:
         if hrv_pct_delta <= -15:
-            watchouts.append(f"HRV is {abs(round(hrv_pct_delta))}% below baseline.")
+            watchouts.append(f"HRV is {abs(round(hrv_pct_delta))}% below your usual.")
         elif hrv_pct_delta >= 10:
-            positives.append(f"HRV is {round(hrv_pct_delta)}% above baseline.")
+            positives.append(f"HRV is {round(hrv_pct_delta)}% above your usual.")
     if rhr is not None and rhr_delta is not None:
         if rhr_delta >= 5:
-            watchouts.append(f"Resting heart rate is {round(rhr_delta, 1)} bpm above baseline.")
+            watchouts.append(f"Resting heart rate is {round(rhr_delta, 1)} bpm above your usual.")
         elif rhr_delta <= 2:
-            positives.append("Resting heart rate is near baseline.")
+            positives.append("Resting heart rate is near your usual.")
     if respiratory_rate is not None:
         if resp_delta is not None and resp_delta >= 2:
             watchouts.append(
-                f"Respiratory rate is {round(resp_delta, 1)} breaths/min above baseline."
+                f"Respiratory rate is {round(resp_delta, 1)} breaths/min above your usual."
             )
             next_actions.append("Treat breathing rate as a reason to keep intensity controlled today.")
         elif resp_delta is not None and resp_delta <= 1:
-            positives.append("Respiratory rate is not elevated versus recent baseline.")
+            positives.append("Respiratory rate is not elevated versus your usual.")
         else:
             insights.append(
                 f"Respiratory rate is {respiratory_rate:.1f} breaths/min; use it as context with sleep and heart signals."
@@ -3001,12 +3057,12 @@ def _recovery_comparison_takeaways(
             )
             next_actions.append("Avoid hard training if oxygen, breathing, symptoms, or warm-up feel abnormal.")
         elif spo2_delta is not None and spo2_delta <= -2:
-            watchouts.append(f"SpO2 is {abs(round(spo2_delta, 1))}% below recent baseline.")
+            watchouts.append(f"SpO2 is {abs(round(spo2_delta, 1))}% below your usual.")
         else:
             positives.append("SpO2 is available as reassuring background context, not a standalone reason to train hard.")
     if sleep_temp_delta is not None:
         if abs(sleep_temp_delta) >= 0.6 or (temp_delta_change is not None and temp_delta_change >= 0.5):
-            watchouts.append("Sleep temperature is meaningfully different from baseline.")
+            watchouts.append("Sleep temperature is meaningfully different from your usual.")
             next_actions.append("Use sleep temperature as a caution clue and keep intensity predictable.")
         else:
             insights.append("Sleep temperature is available as a secondary recovery clue.")
@@ -3292,19 +3348,7 @@ def _question_intents(question: str) -> list[str]:
         intents.extend(["metric_discovery", "general_overview", "recovery", "heart", "sleep", "activity_load"])
     if has("sore", "soreness", "pain", "injury", "ache", "stress", "energy", "feel"):
         intents.extend(["subjective", "recovery", "activity_load", "sleep"])
-    if has(
-        "sick",
-        "ill",
-        "illness",
-        "fever",
-        "flu",
-        "covid",
-        "cold symptoms",
-        "sore throat",
-        "nausea",
-        "chills",
-        "vomit",
-    ):
+    if any(_has_unnegated_phrase(text, phrase) for phrase in ILLNESS_PHRASES):
         intents.extend(["symptom_safety", "subjective", "recovery", "heart", "sleep"])
     if has("step", "steps", "calorie", "calories", "zone", "active", "load", "distance", "walk"):
         intents.extend(["activity_load", "workout_decision"])
@@ -3409,9 +3453,21 @@ def _relevant_metric_cards(
                 "first_observed_date": item.get("first_observed_date"),
                 "reason": _metric_reason(metric_id, intents, item),
                 "priority": priority,
+                "intent_rank": _intent_specific_metric_rank(metric_id, intents),
             }
         )
-    return sorted(cards, key=lambda item: (item["records"] == 0, item["priority"]))
+    return sorted(cards, key=lambda item: (item["records"] == 0, item["intent_rank"], item["priority"]))
+
+
+def _intent_specific_metric_rank(metric_id: str, intents: list[str]) -> int:
+    intent_set = set(intents)
+    for intent_offset, intent in enumerate(INTENT_SPECIFIC_METRIC_RANK_ORDER):
+        if intent not in intent_set:
+            continue
+        ranked_metrics = INTENT_SPECIFIC_METRIC_RANKS.get(intent)
+        if ranked_metrics and metric_id in ranked_metrics:
+            return intent_offset * 100 + ranked_metrics.index(metric_id)
+    return 10_000
 
 
 def _metric_reason(metric_id: str, intents: list[str], catalog_item: dict[str, Any]) -> str:
@@ -3750,6 +3806,7 @@ def _metric_query_suggestions(
                 "sleep",
                 "daily-respiratory-rate",
                 "daily-oxygen-saturation",
+                "daily-sleep-temperature-derivations",
             ],
         ),
     ]
@@ -3791,7 +3848,7 @@ def _answer_rubric_for_intents(intents: list[str]) -> list[str]:
         rubric.append("For in-session advice, prioritize stop/continue/downshift guidance from symptoms, RPE, pain, and heart rate.")
     if any(intent in intents for intent in ("recovery", "sleep", "heart")):
         rubric.append(
-            "For recovery explanations, compare latest sleep, HRV, resting heart rate, oxygen/breathing context, sleep temperature when available, and load against recent baseline."
+            "For recovery explanations, compare latest sleep, HRV, resting heart rate, oxygen/breathing context, sleep temperature when available, and load against the user's usual."
         )
     if "symptom_safety" in intents:
         rubric.append("For symptoms or illness, avoid diagnosis, advise rest or easy movement, and suggest clinical care for severe or worsening symptoms.")
@@ -4205,26 +4262,26 @@ def _question_clue_takeaways(
         spo2_delta = current.get("spo2_delta")
         if hrv_pct is not None:
             direction = "above" if hrv_pct >= 0 else "below"
-            clues.append(f"HRV is {abs(round(hrv_pct))}% {direction} recent baseline.")
+            clues.append(f"HRV is {abs(round(hrv_pct))}% {direction} your recent usual.")
             if hrv_pct <= -15:
-                watchouts.append("HRV is meaningfully suppressed versus baseline.")
+                watchouts.append("HRV is meaningfully suppressed versus your usual.")
             elif hrv_pct >= 10:
-                positives.append("HRV is above recent baseline.")
+                positives.append("HRV is above your recent usual.")
         if rhr_delta is not None:
             direction = "above" if rhr_delta >= 0 else "below"
-            clues.append(f"Resting heart rate is {abs(round(rhr_delta, 1))} bpm {direction} baseline.")
+            clues.append(f"Resting heart rate is {abs(round(rhr_delta, 1))} bpm {direction} your recent usual.")
             if rhr_delta >= 5:
-                watchouts.append("Resting heart rate is elevated versus baseline.")
+                watchouts.append("Resting heart rate is elevated versus your usual.")
         if resp_delta is not None:
             direction = "above" if resp_delta >= 0 else "below"
             clues.append(
-                f"Respiratory rate is {abs(round(resp_delta, 1))} breaths/min {direction} baseline."
+                f"Respiratory rate is {abs(round(resp_delta, 1))} breaths/min {direction} your recent usual."
             )
             if resp_delta >= 2:
-                watchouts.append("Respiratory rate is elevated versus baseline.")
+                watchouts.append("Respiratory rate is elevated versus your usual.")
         if spo2_delta is not None:
             direction = "above" if spo2_delta >= 0 else "below"
-            clues.append(f"SpO2 is {abs(round(spo2_delta, 1))}% {direction} baseline.")
+            clues.append(f"SpO2 is {abs(round(spo2_delta, 1))}% {direction} your recent usual.")
         clues.extend(comparison.get("insights", [])[:3])
         positives.extend(comparison.get("positives", [])[:2])
         watchouts.extend(comparison.get("watchouts", [])[:3])
@@ -4638,9 +4695,9 @@ def _overview_coaching(
     if sleep_temp.get("delta_celsius") is not None:
         delta = sleep_temp["delta_celsius"]
         if abs(delta) >= 0.6:
-            watchouts.append(f"Sleep temperature is {delta:+.2f} C versus baseline.")
+            watchouts.append(f"Sleep temperature is {delta:+.2f} C versus your usual.")
         else:
-            positives.append(f"Sleep temperature is {delta:+.2f} C versus baseline.")
+            positives.append(f"Sleep temperature is {delta:+.2f} C versus your usual.")
     if recovery.get("latest_vo2_max") is not None:
         positives.append(f"VO2 max is available at {recovery['latest_vo2_max']:.1f} ml/kg/min for capacity context.")
     if workouts.get("workout_count"):
@@ -4867,7 +4924,7 @@ def _daily_coaching_brief(
         add_signal(
             "recovery",
             "Sleep temperature",
-            f"{delta:+.2f} C versus baseline.",
+            f"{delta:+.2f} C versus your usual.",
             "Temperature deviation can be a stress or illness clue, but it is not diagnostic.",
             "watchout" if abs(delta) >= 0.6 else "context",
         )
@@ -5107,7 +5164,7 @@ def _unusual_signal_summary(
                     confidence=confidence,
                 )
             else:
-                add_context(signal, role="primary_recovery_background", meaning="HRV was checked against the recent baseline.")
+                add_context(signal, role="primary_recovery_background", meaning="HRV was checked against your recent usual.")
 
         elif signal_id == "resting_heart_rate":
             average = _number_or_none(window.get("baseline_average_bpm") or window.get("average_bpm"))
@@ -5184,7 +5241,7 @@ def _unusual_signal_summary(
                     latest_date=latest_date,
                     severity="moderate",
                     role="temperature_caution_context",
-                    why_it_matters="Sleep temperature is meaningfully different from baseline.",
+                    why_it_matters="Sleep temperature is meaningfully different from your usual.",
                     coaching_action="Use this as a stress or illness clue and avoid unpredictable max-effort work.",
                     confidence=confidence,
                 )
@@ -5362,7 +5419,7 @@ def _sleep_temperature_display(temp: dict[str, Any]) -> str | None:
     delta = temp.get("delta_celsius")
     nightly = temp.get("nightly_celsius")
     if delta is not None:
-        return f"{delta:+.2f} C vs baseline"
+        return f"{delta:+.2f} C vs usual"
     if nightly is not None:
         return f"{nightly:.2f} C nightly"
     return None
@@ -5899,9 +5956,9 @@ def readiness_from_day(day: dict[str, Any], daily: dict[str, dict[str, Any]] | N
     if temp_delta is not None:
         if abs(temp_delta) >= 0.6:
             score -= 4
-            evidence.append(f"Sleep temperature is {temp_delta:+.2f} C versus baseline.")
+            evidence.append(f"Sleep temperature is {temp_delta:+.2f} C versus your usual.")
         else:
-            evidence.append(f"Sleep temperature is {temp_delta:+.2f} C versus baseline.")
+            evidence.append(f"Sleep temperature is {temp_delta:+.2f} C versus your usual.")
     load_date, load_minutes = _latest_load(daily, activity_date)
     if load_minutes > 45:
         score -= 6

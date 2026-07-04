@@ -561,6 +561,13 @@ def test_eval_natural_prompt_mix_is_not_biased_to_off_day_language(tmp_path, mon
     assert "reserve_energy_or_future_event" not in plain_cues
     assert "no_special_constraint_detected" in plain_cues
 
+    still_training = store.health_question_clues(user_id, "I feel good and still want to train today.", days=7)
+    assert "symptom_safety" not in still_training["intent_hints"]
+    assert "recommend_workout_today" in still_training["recommended_tool_sequence"]
+
+    not_ill = store.health_question_clues(user_id, "I am not ill, just want a useful plan.", days=7)
+    assert "symptom_safety" not in not_ill["intent_hints"]
+
     informal_training = store.health_question_clues(
         user_id,
         "Do I have the green light to send it at the gym today?",
@@ -583,7 +590,7 @@ def test_eval_natural_prompt_mix_is_not_biased_to_off_day_language(tmp_path, mon
     } <= metric_ids(informal_training)
     assert any("SpO2 / oxygen saturation" in item for item in informal_training["clues"])
     assert any("Respiratory rate" in item for item in informal_training["clues"])
-    assert any("Sleep temp" in item for item in informal_training["clues"])
+    assert any("Sleep temperature" in item for item in informal_training["clues"])
     assert any("VO2 max" in item for item in informal_training["clues"])
     policy = informal_training["decision_frame"]["model_decision_policy"]
     axes = {item["axis"]: item for item in policy["decision_axes"]}
@@ -679,6 +686,13 @@ def test_eval_natural_prompt_mix_is_not_biased_to_off_day_language(tmp_path, mon
     assert oxygen_question["primary_conversation_flows"][0]["flow"] == "sleep_breathing_recovery_question"
     assert "daily-oxygen-saturation" in metric_ids(oxygen_question)
     assert "daily-respiratory-rate" in metric_ids(oxygen_question)
+    top_oxygen_metrics = [item["id"] for item in oxygen_question["relevant_metrics"][:4]]
+    assert top_oxygen_metrics[:3] == [
+        "daily-oxygen-saturation",
+        "daily-respiratory-rate",
+        "daily-sleep-temperature-derivations",
+    ]
+    assert "active-zone-minutes" not in top_oxygen_metrics[:3]
 
     constrained_activity_prompts = [
         "I have a hike tomorrow. What workout keeps my legs useful?",
@@ -861,7 +875,8 @@ def test_eval_illness_safety_intent_selects_the_matching_health_surfaces(tmp_pat
         "daily-oxygen-saturation",
         "daily-sleep-temperature-derivations",
     } <= metric_ids(clues)
-    assert any(item["purpose"] == "symptom_safety" for item in clues["query_suggestions"])
+    safety_suggestions = {item["purpose"]: item for item in clues["query_suggestions"]}
+    assert "daily-sleep-temperature-derivations" in safety_suggestions["symptom_safety"]["arguments"]["metrics"]
     assert clues["safety_flags"]
     safety_axis = {
         item["axis"]: item for item in clues["decision_frame"]["model_decision_policy"]["decision_axes"]

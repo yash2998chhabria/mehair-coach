@@ -705,7 +705,7 @@ TODAY_WIDGET_HTML = """
       async function initialize() {
         try {
           await rpcRequest("ui/initialize", {
-            appInfo: { name: "mehair-coach-widget", version: "0.7.2" },
+            appInfo: { name: "mehair coach", version: "0.7.2" },
             appCapabilities: {},
             protocolVersion: "2026-01-26",
           });
@@ -889,9 +889,9 @@ TODAY_WIDGET_HTML = """
           metrics: [
             moveMetric,
             ["Training Load", latestLoadAzm != null ? `${intText(latestLoadAzm)} AZM` : null, latestLoadDetail, "AZM = Fitbit hard-work minutes."],
-            ["Sleep vs Avg", sleepDelta != null ? `${signed(sleepDelta)}h` : (sleepHours != null ? `${num(sleepHours, 1)}h` : null), sleepHours != null ? `latest ${num(sleepHours, 1)}h` : ""],
-            ["HRV vs Avg", hrvDelta != null ? `${signed(hrvDelta)}%` : (hrv != null ? `${num(hrv, 1)} ms` : null), hrv != null && heart.average_hrv_ms ? `${num(hrv, 1)} vs ${num(heart.average_hrv_ms, 1)} ms` : "", "HRV = recovery stress signal."],
-            ["RHR vs Avg", rhrDelta != null ? `${signed(rhrDelta)} bpm` : (rhr != null ? `${num(rhr, 1)} bpm` : null), rhr != null && heart.average_resting_heart_rate ? `${num(rhr, 0)} vs ${num(heart.average_resting_heart_rate, 0)} bpm` : "", "RHR = resting heart rate."],
+            ["Sleep vs usual", sleepDelta != null ? `${signed(sleepDelta)}h` : (sleepHours != null ? `${num(sleepHours, 1)}h` : null), sleepHours != null ? `latest ${num(sleepHours, 1)}h` : ""],
+            ["HRV vs usual", hrvDelta != null ? `${signed(hrvDelta)}%` : (hrv != null ? `${num(hrv, 1)} ms` : null), hrv != null && heart.average_hrv_ms ? `${num(hrv, 1)} now; usual ${num(heart.average_hrv_ms, 1)} ms` : "", "HRV = recovery stress signal."],
+            ["Resting HR vs usual", rhrDelta != null ? `${signed(rhrDelta)} bpm` : (rhr != null ? `${num(rhr, 1)} bpm` : null), rhr != null && heart.average_resting_heart_rate ? `${num(rhr, 0)} now; usual ${num(heart.average_resting_heart_rate, 0)} bpm` : "", "Resting HR = resting heart rate."],
             breathingSignal
               ? signalMetric(breathingSignal, rangeLabel)
               : null,
@@ -986,15 +986,15 @@ TODAY_WIDGET_HTML = """
           focusTitle: "What This Means For Training",
           focus: data.insights || [],
           metrics: [
-            ["Sleep", latest.sleep_hours != null ? `${num(latest.sleep_hours, 1)}h` : null, baseline.sleep_hours != null ? `base ${num(baseline.sleep_hours, 1)}h` : ""],
-            ["Sleep delta", deltas.sleep_hours_delta != null ? `${signed(deltas.sleep_hours_delta)}h` : null],
-            ["HRV", latest.hrv_ms != null ? `${num(latest.hrv_ms, 1)} ms` : null, baseline.hrv_ms != null ? `base ${num(baseline.hrv_ms, 1)}` : ""],
-            ["HRV delta", deltas.hrv_percent_delta != null ? `${signed(deltas.hrv_percent_delta)}%` : null],
-            ["Resting HR", latest.resting_heart_rate != null ? `${latest.resting_heart_rate} bpm` : null, baseline.resting_heart_rate != null ? `base ${num(baseline.resting_heart_rate, 1)}` : ""],
-            ["Load", latest.active_zone_minutes != null ? `${latest.active_zone_minutes} AZM` : null, baseline.active_zone_minutes != null ? `base ${num(baseline.active_zone_minutes, 1)}` : ""],
-            ["Resp rate", latest.respiratory_rate != null ? `${num(latest.respiratory_rate, 1)}` : null, baseline.respiratory_rate != null ? `base ${num(baseline.respiratory_rate, 1)}` : "", "Breathing rate context."],
-            ["SpO2", latest.spo2_avg != null ? `${num(latest.spo2_avg, 1)}%` : null, baseline.spo2_avg != null ? `base ${num(baseline.spo2_avg, 1)}%` : "", "Oxygen context, not a standalone go signal."],
-            ["Sleep temp", sleepTemp.delta_celsius != null ? `${signed(sleepTemp.delta_celsius)} C` : null, "vs baseline", "Temperature deviation is a secondary clue."],
+            ["Sleep", latest.sleep_hours != null ? `${num(latest.sleep_hours, 1)}h` : null, baseline.sleep_hours != null ? `usual ${num(baseline.sleep_hours, 1)}h` : ""],
+            ["Sleep change", deltas.sleep_hours_delta != null ? `${signed(deltas.sleep_hours_delta)}h` : null],
+            ["HRV", latest.hrv_ms != null ? `${num(latest.hrv_ms, 1)} ms` : null, baseline.hrv_ms != null ? `usual ${num(baseline.hrv_ms, 1)}` : ""],
+            ["HRV change", deltas.hrv_percent_delta != null ? `${signed(deltas.hrv_percent_delta)}%` : null],
+            ["Resting HR", latest.resting_heart_rate != null ? `${latest.resting_heart_rate} bpm` : null, baseline.resting_heart_rate != null ? `usual ${num(baseline.resting_heart_rate, 1)}` : ""],
+            ["Load", latest.active_zone_minutes != null ? `${latest.active_zone_minutes} AZM` : null, baseline.active_zone_minutes != null ? `usual ${num(baseline.active_zone_minutes, 1)}` : ""],
+            ["Respiratory rate", latest.respiratory_rate != null ? `${num(latest.respiratory_rate, 1)}` : null, baseline.respiratory_rate != null ? `usual ${num(baseline.respiratory_rate, 1)}` : "", "Breathing rate context."],
+            ["SpO2", latest.spo2_avg != null ? `${num(latest.spo2_avg, 1)}%` : null, baseline.spo2_avg != null ? `usual ${num(baseline.spo2_avg, 1)}%` : "", "Oxygen context, not a standalone go signal."],
+            ["Sleep temperature", sleepTemp.delta_celsius != null ? `${signed(sleepTemp.delta_celsius)} C` : null, "change from usual", "Temperature deviation is a secondary clue."],
           ].filter((item) => item[1] != null),
           evidenceTitle: "Positives",
           evidence: data.positives || [],
@@ -1352,7 +1352,7 @@ TODAY_WIDGET_HTML = """
         const freshness = data.data_freshness || data.freshness || data.context?.data_freshness || {};
         const level = normalizedFreshnessLevel(freshness);
         const pullAge = pullAgeText(freshness);
-        const latestDay = explicitLatestDateFromPayload(data) || explicitLatestDateFromModel(model);
+        const latestDay = explicitLatestDateFromPayload(data);
         const pull = pullAge
           ? `Latest Fitbit data pull was ${pullAge}`
           : "Fitbit timing unavailable for this card";
@@ -1373,7 +1373,12 @@ TODAY_WIDGET_HTML = """
         const minutes = firstFinite(freshness?.sync_age_minutes, freshness?.age_minutes);
         if (minutes != null) return ageMinutesText(minutes);
         if (freshness?.last_sync) return `at ${formatDateTime(freshness.last_sync)}`;
-        if (freshness?.freshness_label) return freshness.freshness_label;
+        if (freshness?.freshness_label) {
+          const label = String(freshness.freshness_label).toLowerCase();
+          if (label.includes("recommended")) return "not fresh; sync recommended";
+          if (label.includes("stale")) return "more than 60 min ago";
+          return freshness.freshness_label;
+        }
         return freshnessChip(freshness || {});
       }
 
@@ -1404,8 +1409,6 @@ TODAY_WIDGET_HTML = """
 
       function explicitLatestDateFromPayload(data) {
         return latestIsoDate([
-          data?.date_range?.end,
-          data?.end_date,
           data?.latest?.date,
           data?.today?.activity_date,
           data?.today?.recovery_date,
@@ -1854,7 +1857,7 @@ TODAY_WIDGET_HTML = """
           "SpO2": "oxygen saturation from Fitbit; useful breathing context, not a standalone reason to train hard",
           "Respiratory rate": "breaths per minute, mostly useful when it changes from your usual or matches symptoms",
           "VO2 max": "cardio capacity estimate that changes slowly, not a same-day green light",
-          "Sleep temp": "temperature change during sleep, useful as a secondary stress or illness clue",
+          "Sleep temperature": "temperature change during sleep, useful as a secondary stress or illness clue",
         };
         return (labels || []).map((label) => ({ label, meaning: meanings[label] })).filter((item) => item.meaning);
       }
@@ -2170,7 +2173,7 @@ WIDGET_PREVIEW_STATES: dict[str, dict] = {
                 },
                 {
                     "id": "sleep_temperature",
-                    "label": "Sleep temp",
+                    "label": "Sleep temperature",
                     "display": "+0.4 C",
                     "latest_date": "2026-07-03",
                     "category": "recovery",
@@ -2227,7 +2230,7 @@ WIDGET_PREVIEW_STATES: dict[str, dict] = {
                 "label": "Daily HRV",
                 "records": 4,
                 "latest_observed_date": "2026-07-03",
-                "reason": "Daily HRV helps spot autonomic recovery changes versus baseline.",
+                "reason": "Daily HRV helps spot recovery changes versus your usual.",
             },
             {
                 "id": "daily-resting-heart-rate",
@@ -2805,7 +2808,7 @@ WIDGET_PREVIEW_STATES: dict[str, dict] = {
                 "label": "Daily HRV",
                 "records": 3,
                 "latest_observed_date": "2026-07-03",
-                "reason": "Daily HRV helps spot autonomic recovery changes versus baseline.",
+                "reason": "Daily HRV helps spot recovery changes versus your usual.",
             },
         ],
         "clues": [
