@@ -215,12 +215,14 @@ async def test_widget_resource_is_registered() -> None:
 
     assert str(resources[0].uri) == WIDGET_URI
     assert resources[0].mimeType == "text/html;profile=mcp-app"
-    assert WIDGET_URI == "ui://mehair/today-v26.html"
-    assert "ui://mehair/today-v25.html" in LEGACY_WIDGET_URIS
+    assert WIDGET_URI == "ui://mehair/today-v27.html"
+    assert "ui://mehair/today-v26.html" in LEGACY_WIDGET_URIS
     assert "Preparing card" in html
-    assert 'appInfo: { name: "mehair coach", version: "0.7.7" }' in html
+    assert 'appInfo: { name: "mehair coach", version: "0.7.8" }' in html
     assert "mehair-coach-widget" not in html
     assert 'renderEmpty("Preparing the health card from the latest tool result.", "waiting")' in html
+    assert "window.openai?.toolOutput" in html
+    assert "openai:set_globals" in html
     assert "function hasCardData(data)" in html
     assert "function withDataWindow(model, data)" in html
     assert "data?.suggested_card" in html

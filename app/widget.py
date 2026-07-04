@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 
 
-WIDGET_URI = "ui://mehair/today-v26.html"
+WIDGET_URI = "ui://mehair/today-v27.html"
 LEGACY_WIDGET_URIS = (
     "ui://mehair/today-v1.html",
     "ui://mehair/today-v2.html",
@@ -30,6 +30,7 @@ LEGACY_WIDGET_URIS = (
     "ui://mehair/today-v23.html",
     "ui://mehair/today-v24.html",
     "ui://mehair/today-v25.html",
+    "ui://mehair/today-v26.html",
 )
 WIDGET_RESOURCE_URIS = (WIDGET_URI, *LEGACY_WIDGET_URIS)
 WIDGET_MIME_TYPE = "text/html;profile=mcp-app"
@@ -753,7 +754,11 @@ TODAY_WIDGET_HTML = """
       }
 
       function updateFromResponse(response) {
-        const data = response?.structuredContent || response?.result?.structuredContent || response;
+        const data =
+          response?.structuredContent ||
+          response?.result?.structuredContent ||
+          response?.toolOutput ||
+          response;
         if (data && typeof data === "object") {
           state.data = data;
           render();
@@ -774,16 +779,28 @@ TODAY_WIDGET_HTML = """
         }
       }, { passive: true });
 
+      window.addEventListener(
+        "openai:set_globals",
+        (event) => {
+          const globals = event.detail?.globals || {};
+          updateFromResponse(globals.toolOutput || window.openai?.toolOutput);
+        },
+        { passive: true }
+      );
+
       async function initialize() {
+        updateFromResponse(window.openai?.toolOutput);
         try {
           await rpcRequest("ui/initialize", {
-            appInfo: { name: "mehair coach", version: "0.7.7" },
+            appInfo: { name: "mehair coach", version: "0.7.8" },
             appCapabilities: {},
             protocolVersion: "2026-01-26",
           });
           rpcNotify("ui/notifications/initialized", {});
+          updateFromResponse(window.openai?.toolOutput);
         } catch (error) {
           console.error(error);
+          updateFromResponse(window.openai?.toolOutput);
         }
       }
 
