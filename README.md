@@ -30,10 +30,12 @@ The core UX is:
 3. The MCP returns structured health context and, when useful, a card.
 4. ChatGPT explains the decision in plain language with the exact evidence it used.
 
+In ChatGPT developer mode, start the prompt with `mehair coach:` when you want to force this connector to run.
+
 Example questions:
 
 ```text
-What should I focus on today based on my data?
+mehair coach: What should I focus on today based on my data?
 Can I train hard today, or should I keep it controlled?
 I only have 30 minutes after work. What is the best use of it?
 How did sleep, HRV, and resting heart rate affect today's plan?
