@@ -971,6 +971,7 @@ def workout_recommendation(
     stated_pain = _rating_from_text(current_feeling_lower, ("pain", "ache", "tightness", "tight"))
     subjective_limiter = _subjective_limiter_from_text(current_feeling_lower)
     stated_high_movement = _high_movement_from_text(current_feeling_lower)
+    reserve_energy_obligation = _reserve_energy_obligation_from_text(current_feeling_lower)
     soreness_rating = _first_present(stated_soreness, stated_pain, _latest_rating(checkins or [], "soreness"))
     energy_rating = _first_present(stated_energy, _latest_rating(checkins or [], "energy"))
     stress_rating = _latest_rating(checkins or [], "stress")
@@ -1045,6 +1046,16 @@ def workout_recommendation(
             "Because movement volume is already high, choose upper body, technique, mobility, or short controlled intervals before adding lower-body volume."
         )
         avoid.append("Stacking hard lower-body work on top of a high-step or high-walking day")
+    if reserve_energy_obligation:
+        if intensity == "moderate-to-hard":
+            intensity = "moderate"
+        rpe_cap = min(rpe_cap, 6)
+        plan += (
+            " Because you have something else soon, make this the smallest useful dose: leave energy, "
+            "attention, and calm breathing for the rest of the day."
+        )
+        next_actions.append("Keep this to a minimum useful dose and finish feeling clearer than when you started.")
+        avoid.append("A workout that leaves you rushed, sweaty, drained, or mentally foggy for the next obligation")
     if sleep_hours is not None and sleep_hours < 5:
         plan += " Keep impact low because the latest sleep block was short."
         avoid.append("High-impact or max-effort work on short sleep")
@@ -1091,7 +1102,10 @@ def workout_recommendation(
     if intensity == "moderate-to-hard":
         primary_action = "Train normally, but stop before form or breathing feels unusual."
     elif intensity == "moderate":
-        primary_action = "Do one controlled main block: easy zone 2 if no plan, or submax planned training with reps in reserve."
+        if reserve_energy_obligation:
+            primary_action = "Do enough useful movement to feel better, then stop before it feels like a workout you have to recover from."
+        else:
+            primary_action = "Do one controlled main block: easy zone 2 if no plan, or submax planned training with reps in reserve."
     else:
         primary_action = "Make today recovery-biased: walk, mobility, easy cardio, or rest."
     if illness_flags:
@@ -1130,6 +1144,7 @@ def workout_recommendation(
         illness_flags=illness_flags,
         current_feeling=current_feeling_text,
         time_limit_minutes=time_limit_minutes,
+        reserve_energy_obligation=reserve_energy_obligation,
     )
     training_decision = _training_decision_frame(
         intensity=intensity,
@@ -1166,6 +1181,7 @@ def workout_recommendation(
             "current_feeling": current_feeling_text or None,
             "time_limit_minutes": time_limit_minutes,
             "subjective_limiter": subjective_limiter,
+            "reserve_energy_obligation": reserve_energy_obligation,
             "latest_checkins": checkins or [],
         },
         "workout_history_summary": workout_summary or None,
@@ -1187,6 +1203,7 @@ def workout_recommendation(
             "current_feeling": current_feeling_text or None,
             "time_limit_minutes": time_limit_minutes,
             "subjective_limiter": subjective_limiter,
+            "reserve_energy_obligation": reserve_energy_obligation,
             "stated_energy": stated_energy,
             "stated_soreness": stated_soreness,
             "stated_pain": stated_pain,
@@ -1240,6 +1257,7 @@ def workout_plan_for_activity(
     stated_pain = _rating_from_text(constraint_text, ("pain", "ache", "tightness", "tight"))
     subjective_limiter = _subjective_limiter_from_text(constraint_text)
     stated_high_movement = _high_movement_from_text(constraint_text)
+    reserve_energy_obligation = _reserve_energy_obligation_from_text(all_context_text)
     soreness_rating = _first_present(stated_soreness, stated_pain, _latest_rating(checkins or [], "soreness"))
     energy_rating = _first_present(stated_energy, _latest_rating(checkins or [], "energy"))
     current_illness_flags = _illness_flags_from_text(all_context_text)
@@ -1348,6 +1366,13 @@ def workout_plan_for_activity(
     if preserving_next_session:
         rpe_cap = min(rpe_cap, 6)
         limiting_factors.append("User wants to preserve readiness for another sport or workout soon.")
+    if reserve_energy_obligation:
+        if intensity == "moderate-to-hard":
+            intensity = "moderate"
+        rpe_cap = min(rpe_cap, 6)
+        limiting_factors.append(
+            "User has a near-term class, meeting, work, travel, or social obligation, so the session should leave energy and focus available."
+        )
     if protect_lower_body:
         rpe_cap = min(rpe_cap, 6)
         limiting_factors.append(
@@ -1367,6 +1392,9 @@ def workout_plan_for_activity(
         readiness_label,
         spinal_constraint,
     )
+    if reserve_energy_obligation and _generic_workout_text(planned_activity):
+        exercise_blocks = []
+        substitutions.append("Generic workout -> easy zone 2, mobility, or light technique that does not need recovery.")
     if requested_duration_minutes:
         session.append(f"Keep the session near {max(15, min(requested_duration_minutes, 120))} minutes including warm-up.")
     if short_constrained_session and not explicit_high_intensity_request:
@@ -1404,6 +1432,10 @@ def workout_plan_for_activity(
     if preserving_next_session:
         session.append("Leave the session feeling fresher than you started so tomorrow's sport session stays available.")
         avoid.append("Extra finishers that steal from tomorrow's sport or workout session")
+    if reserve_energy_obligation:
+        focus.insert(0, "Make this the smallest useful dose before the rest of the day.")
+        session.insert(0, "Use easy movement, mobility, or submax work that leaves breathing calm and focus intact.")
+        avoid.append("Turning a before-class or before-work window into a workout you need to recover from")
     if protect_lower_body:
         focus.insert(0, "Protect your legs for the upcoming hike, walk, sport, or long day.")
         warmup.insert(0, "5-8 minutes of very easy mobility plus light upper-body activation; your legs should feel lighter, not worked.")
@@ -1430,6 +1462,8 @@ def workout_plan_for_activity(
         avoid.insert(0, "Sweat-it-out workouts, intervals, heavy sets, or long sessions while sick.")
 
     display_activity = _display_workout_activity(planned_activity, intensity)
+    if reserve_energy_obligation and _generic_workout_text(planned_activity):
+        display_activity = "Minimum Useful Movement"
     if protect_lower_body and _generic_workout_text(planned_activity):
         display_activity = "Upper Body + Mobility"
     intent_context = _workout_intent_context(
@@ -1443,6 +1477,7 @@ def workout_plan_for_activity(
         high_step_load=high_step_load,
         localized_soreness_away_from_target=localized_soreness_away_from_target,
         subjective_limiter=subjective_limiter,
+        reserve_energy_obligation=reserve_energy_obligation,
         requested_duration_minutes=requested_duration_minutes,
     )
     planned_date_text = planned_date or "next planned session"
@@ -1457,6 +1492,8 @@ def workout_plan_for_activity(
         summary += " Illness signs should override the workout plan until symptoms are clearly improving."
     if stated_high_movement or high_step_load:
         summary += " Today's walking or step volume should count as leg/load context, so avoid stacking extra hard lower-body work."
+    if reserve_energy_obligation:
+        summary += " Keep it useful but leave enough energy and attention for the next obligation."
     stop_conditions = _workout_stop_conditions(
         rpe_cap,
         subjective_limiter=subjective_limiter,
@@ -1540,6 +1577,7 @@ def workout_plan_for_activity(
             "stated_soreness": stated_soreness,
             "stated_pain": stated_pain,
             "subjective_limiter": subjective_limiter,
+            "reserve_energy_obligation": reserve_energy_obligation,
             "stated_high_movement": stated_high_movement,
             "illness_flags": illness_flags,
             "current_illness_flags": current_illness_flags,
@@ -2145,12 +2183,27 @@ def _today_session_blueprint(
     subjective_limiter: bool,
     illness_flags: list[str],
     time_limit_minutes: int | None = None,
+    reserve_energy_obligation: bool = False,
 ) -> list[str]:
     if illness_flags:
         return [
             "Today: skip hard training.",
             "If symptoms are mild and improving, do 10-20 minutes of easy walking or mobility only.",
             "End the session if symptoms worsen, breathing feels unusual, or energy drops.",
+        ]
+
+    if reserve_energy_obligation and not illness_flags:
+        if time_limit_minutes is not None:
+            usable_minutes = max(10, min(time_limit_minutes - 10, 30))
+            return [
+                "Start with 3-5 minutes easy movement and check breathing.",
+                f"Do {usable_minutes} minutes of easy zone 2, mobility, or light technique at RPE <= {rpe_cap}/10.",
+                "Stop while breathing is calm; leave time to cool down, hydrate, and switch contexts.",
+            ]
+        return [
+            "Start with 5 minutes easy movement and check breathing.",
+            f"Do 15-25 minutes easy zone 2, mobility, or light technique at RPE <= {rpe_cap}/10.",
+            "Stop while you still feel clear and ready for the rest of the day.",
         ]
 
     if intensity == "easy":
@@ -2371,6 +2424,7 @@ def _today_workout_coach_response(
     illness_flags: list[str],
     current_feeling: str | None = None,
     time_limit_minutes: int | None = None,
+    reserve_energy_obligation: bool = False,
 ) -> dict[str, Any]:
     evidence_text = " ".join(evidence).lower()
     has_stale_data = "data freshness is stale" in evidence_text or "sync latest fitbit data" in evidence_text
@@ -2390,6 +2444,8 @@ def _today_workout_coach_response(
             "Train, but keep lower-body work and hard conditioning controlled because the movement-load "
             "window already adds leg stress."
         )
+    elif reserve_energy_obligation:
+        short_answer = "Do the smallest useful dose today: move enough to feel better, then leave energy for what comes next."
     elif intensity == "moderate":
         short_answer = "Do a focused controlled session today: useful work, not all-out intensity."
     else:
@@ -2402,6 +2458,8 @@ def _today_workout_coach_response(
         short_answer += " Because you do not feel fully right, let the first 10-15 minutes decide whether to continue."
     if time_limit_minutes is not None and time_limit_minutes <= 35 and not has_stale_data:
         short_answer += f" Since you have {time_limit_minutes} minutes, make the plan compact instead of adding extra volume."
+    elif reserve_energy_obligation and time_limit_minutes is not None and not has_stale_data:
+        short_answer += f" Since the next thing is in about {time_limit_minutes} minutes, stop early enough to cool down and reset."
 
     what_to_do = list(next_actions[:3])
     rpe_line = f"Keep RPE (how hard it feels) at or below {rpe_cap}/10, which means {_rpe_plain(rpe_cap)}."
@@ -2412,6 +2470,7 @@ def _today_workout_coach_response(
         subjective_limiter=subjective_limiter,
         illness_flags=illness_flags,
         time_limit_minutes=time_limit_minutes,
+        reserve_energy_obligation=reserve_energy_obligation,
     )
 
     return {
@@ -2530,6 +2589,9 @@ def _split_training_reasons(evidence: list[str]) -> tuple[list[str], list[str]]:
         "not feel",
         "soreness",
         "stress",
+        "near-term",
+        "obligation",
+        "drain",
     )
     reasons_for: list[str] = []
     reasons_against: list[str] = []
@@ -2577,10 +2639,13 @@ def _workout_plan_coach_response(
     stop_conditions: list[str],
 ) -> dict[str, Any]:
     has_short_time_box = any("short time box" in item.lower() for item in limiting_factors)
+    has_reserve_obligation = any("near-term" in item.lower() and "obligation" in item.lower() for item in limiting_factors)
     if illness_flags:
         short_answer = f"For {display_activity}, keep this as rest or very easy movement until symptoms improve."
     elif preserving_next_session:
         short_answer = f"For {display_activity}, train controlled enough that tomorrow still stays available."
+    elif has_reserve_obligation:
+        short_answer = f"For {display_activity}, do the smallest useful dose and leave energy for what comes next."
     elif has_short_time_box:
         short_answer = f"For {display_activity}, make this compact and useful so it supports the rest of your day."
     elif intensity == "easy":
@@ -3102,6 +3167,88 @@ def _short_constrained_session(text: str, minutes: int | None) -> bool:
     )
 
 
+def _reserve_energy_obligation_from_text(text: str) -> bool:
+    if not text:
+        return False
+    lower = text.lower()
+    after_only = (
+        "after work" in lower
+        or "after class" in lower
+        or "after school" in lower
+        or "after my shift" in lower
+        or "after shift" in lower
+    )
+    obligation_terms = (
+        "class",
+        "school",
+        "lecture",
+        "meeting",
+        "call",
+        "appointment",
+        "work shift",
+        "shift",
+        "office",
+        "presentation",
+        "exam",
+        "interview",
+        "dinner",
+        "date",
+        "event",
+        "party",
+        "travel",
+        "flight",
+        "drive",
+        "commute",
+        "errand",
+        "errands",
+    )
+    has_obligation = any(_has_unnegated_phrase(lower, term) for term in obligation_terms)
+    if not has_obligation:
+        return False
+
+    direct_preserve = (
+        "do not want to be drained",
+        "don't want to be drained",
+        "dont want to be drained",
+        "don't want to feel drained",
+        "dont want to feel drained",
+        "not feel drained",
+        "not be drained",
+        "still need energy",
+        "need energy for",
+        "save energy",
+        "preserve energy",
+        "leave energy",
+        "not be cooked",
+        "not feel cooked",
+    )
+    if any(phrase in lower for phrase in direct_preserve):
+        return True
+
+    timing_cues = (
+        "before",
+        "soon",
+        "later",
+        "later today",
+        "tonight",
+        "this evening",
+        "right after",
+        "after this",
+        "then",
+        "next",
+        "heading to",
+        "need to go",
+        "have to go",
+        "got to go",
+        "gotta go",
+    )
+    has_timing_cue = any(phrase in lower for phrase in timing_cues)
+    has_in_window = re.search(r"\bin\s+\d{1,3}\s*(?:min|mins|minute|minutes|hr|hrs|hour|hours)\b", lower) is not None
+    if after_only and not (has_in_window or any(phrase in lower for phrase in ("before", "later", "soon", "then", "next"))):
+        return False
+    return has_in_window or has_timing_cue
+
+
 def _explicit_high_intensity_request(text: str) -> bool:
     lower = (text or "").lower()
     phrases = (
@@ -3284,6 +3431,7 @@ def _workout_intent_context(
     high_step_load: bool,
     localized_soreness_away_from_target: bool,
     subjective_limiter: bool,
+    reserve_energy_obligation: bool,
     requested_duration_minutes: int | None,
 ) -> dict[str, Any]:
     constraint_roles: list[str] = []
@@ -3307,6 +3455,11 @@ def _workout_intent_context(
         exercise_bias.extend(["controlled_volume", "submaximal_strength", "technique"])
         constraint_roles.append("future_session_priority")
         guardrails.append("leave clear energy in reserve")
+    elif reserve_energy_obligation:
+        primary_job = "get useful movement without draining energy, focus, or calm breathing before the next obligation"
+        exercise_bias.extend(["minimum_effective_dose", "easy_zone_2", "mobility", "light_technique"])
+        constraint_roles.append("reserve_energy_obligation")
+        guardrails.append("finish early enough to cool down, hydrate, and switch contexts")
     elif localized_soreness_away_from_target:
         primary_job = "train the requested area while keeping the sore area out of the job"
         exercise_bias.extend(["supported_exercises", "machine_options", "reduced_compensation"])

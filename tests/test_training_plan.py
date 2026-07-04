@@ -1252,6 +1252,65 @@ def test_generic_workout_payload_stays_human_readable_for_cached_cards() -> None
     assert not any("6 bpm vs 62 bpm" in item for item in plan["limiting_factors"])
 
 
+def test_generic_workout_before_class_renders_as_minimum_useful_movement() -> None:
+    context = {
+        "status": "ok",
+        "latest_date": "2026-07-03",
+        "activity_date": "2026-07-03",
+        "recovery_date": "2026-07-03",
+        "data_freshness": {
+            "freshness_level": "fresh",
+            "needs_sync_before_time_sensitive_advice": False,
+        },
+        "readiness": {
+            "score": 84,
+            "label": "green",
+            "recommendation": "A normal training day is reasonable if you feel good.",
+            "evidence": [
+                "Latest sleep is strong at 9.4h.",
+                "HRV is above recent baseline: 92.1 ms vs 61.7 ms.",
+                "Resting heart rate is steady: 60 bpm.",
+            ],
+        },
+        "today": {
+            "steps": 5200,
+            "active_minutes": 34,
+            "active_zone_minutes": 12,
+            "hrv_ms": 92.1,
+            "resting_heart_rate": 60,
+            "sleep": {"asleep_hours": 9.4, "sessions_count": 1},
+            "latest_training_load": {"date": "2026-07-03", "active_zone_minutes": 12},
+        },
+        "sections": {
+            "heart": {
+                "latest_hrv_ms": 92.1,
+                "average_hrv_ms": 61.7,
+                "latest_resting_heart_rate": 60,
+                "average_resting_heart_rate": 62,
+            }
+        },
+    }
+
+    plan = workout_plan_for_activity(
+        context=context,
+        planned_activity="general workout",
+        target_areas=[],
+        constraints="I have class in 40 minutes and want enough movement.",
+    )
+    coach = plan["coach_response"]
+    joined = " ".join([coach["short_answer"], plan["summary"], *coach["session_blueprint"], *coach["what_to_do"]]).lower()
+
+    assert plan["planned_activity"] == "Minimum Useful Movement"
+    assert plan["recommended_intensity"] == "moderate"
+    assert plan["rpe_cap"] <= 6
+    assert plan["data_used"]["reserve_energy_obligation"] is True
+    assert plan["intent_context"]["primary_job"].startswith("get useful movement without draining")
+    assert "smallest useful dose" in joined
+    assert "breathing calm" in joined
+    assert "moderate-to-hard" not in joined
+    assert not plan["exercise_blocks"]
+
+
 def test_today_recommendation_returns_human_coach_response_without_losing_labels() -> None:
     context = {
         "status": "ok",
@@ -1537,6 +1596,53 @@ def test_today_recommendation_for_busy_normal_day_is_compact_without_off_day_bia
     assert "do not feel fully right" not in joined
     assert any(item["label"] == "RPE" for item in coach["labels_explained"])
     assert any(item["label"] == "HRV" for item in coach["labels_explained"])
+
+
+def test_today_recommendation_before_class_uses_minimum_effective_dose() -> None:
+    context = {
+        "status": "ok",
+        "latest_date": "2026-07-03",
+        "activity_date": "2026-07-03",
+        "recovery_date": "2026-07-03",
+        "data_freshness": {
+            "freshness_level": "fresh",
+            "needs_sync_before_time_sensitive_advice": False,
+        },
+        "readiness": {
+            "score": 84,
+            "label": "green",
+            "recommendation": "A normal training day is reasonable if you feel good.",
+            "evidence": [
+                "Latest sleep is strong at 8.1h.",
+                "HRV is above recent baseline.",
+                "Resting heart rate is steady.",
+            ],
+        },
+        "today": {
+            "steps": 5200,
+            "active_minutes": 32,
+            "active_zone_minutes": 12,
+            "hrv_ms": 62.0,
+            "resting_heart_rate": 56,
+            "sleep": {"asleep_hours": 8.1, "sessions_count": 1},
+            "latest_training_load": {"date": "2026-07-03", "active_zone_minutes": 12},
+        },
+    }
+
+    recommendation = workout_recommendation(
+        context=context,
+        current_feeling="I have class in 40 minutes; what is enough movement?",
+    )
+    coach = recommendation["coach_response"]
+    joined = " ".join([coach["short_answer"], *coach["session_blueprint"], *coach["what_to_do"]]).lower()
+
+    assert recommendation["intensity"] == "moderate"
+    assert recommendation["rpe_cap"] <= 6
+    assert recommendation["data_used"]["reserve_energy_obligation"] is True
+    assert "smallest useful dose" in joined
+    assert "switch contexts" in joined
+    assert any("next obligation" in item for item in recommendation["avoid"])
+    assert not any("moderate-to-hard" in item.lower() for item in coach["what_to_do"])
 
 
 def test_today_recommendation_downshifts_stale_green_data_before_hard_work() -> None:
