@@ -72,12 +72,18 @@ async def test_mcp_tool_list_matches_private_beta_plan() -> None:
     assert "Do not use this as the visible final card" in by_name[
         "sync_and_get_health_overview"
     ].description
+    assert by_name["sync_and_get_health_overview"].title == "Sync broad health overview, not workout cards"
     sync_overview_description = by_name["sync_and_get_health_overview"].description
+    assert "Do not use for prompts that ask to show, update, render, or rerun an actual workout card" in sync_overview_description
     assert (
         "call sync_latest_fitbit_data first" in sync_overview_description
         or "sync_and_get_workout_card instead" in sync_overview_description
     )
+    assert by_name["sync_and_get_workout_card"].title == "Sync and render actual workout card"
     assert "Best single tool" in by_name["sync_and_get_workout_card"].description
+    assert "force refresh Fitbit now, then show the actual workout card" in by_name[
+        "sync_and_get_workout_card"
+    ].description
     assert "actual workout card" in by_name["sync_and_get_workout_card"].description
     assert "Do not call get_health_overview after this" in by_name[
         "sync_and_get_workout_card"

@@ -62,8 +62,9 @@ SERVER_INSTRUCTIONS = (
     "plan_workout_with_health_context, or guide_active_workout is available. "
     "For prompts that combine a fresh sync/refresh with a workout, run/lift, training, movement, "
     "or workout-card request, call sync_and_get_workout_card as the single current card-rendering "
-    "path. That tool syncs first and then returns the actual workout card; do not route those prompts "
-    "through a health overview card. If get_health_question_clues returns suggested_card, treat suggested_card as the current "
+    "path. This includes wording like 'force refresh Fitbit now, then show the actual workout card "
+    "for a 25-minute workout.' That tool syncs first and then returns the actual workout card; "
+    "do not route those prompts through a health overview card. If get_health_question_clues returns suggested_card, treat suggested_card as the current "
     "card-ready coaching result for that turn; answer from it or make the next recommended tool "
     "call, but do not stop at a generic signals card when the user asked for a workout card. "
     "Match the user's actual situation: do not default to 'I feel off', fatigue, soreness, or recovery "
@@ -167,7 +168,7 @@ POST_SYNC_ROUTING_GUIDANCE = {
     ],
     "next_tool_for_workout_card": (
         "If the user asked for a workout card, day-of training decision, run/lift advice, "
-        "or enough movement before an obligation, prefer sync_and_get_workout_card for a combined "
+        "or enough movement before an obligation, use sync_and_get_workout_card for a combined "
         "sync+card request. If sync already happened, call recommend_workout_today next and pass "
         "the user's current plain-language context in current_feeling."
     ),
@@ -449,11 +450,14 @@ def create_server(settings_override: Settings | None = None) -> ServerBundle:
         return result
 
     @mcp.tool(
-        title="Sync and get health overview",
+        title="Sync broad health overview, not workout cards",
         description=(
-            "Use only when the user explicitly asks to sync, refresh, pull, or update Fitbit/Google "
-            "Health data now and then summarize, analyze all available health metrics, or explain what "
-            "changed. Runs one sync, then returns a broad all-data overview with sync freshness. For "
+            "Do not use for prompts that ask to show, update, render, or rerun an actual workout card, "
+            "a time-limited workout, what to do today, how hard to train, or whether to run/lift/work out; "
+            "use sync_and_get_workout_card instead. Use this only when the user explicitly asks to sync, "
+            "refresh, pull, or update Fitbit/Google Health data now and then summarize, analyze all "
+            "available health metrics, or explain what changed without asking for a workout card. Runs "
+            "one sync, then returns a broad all-data overview with sync freshness. For "
             "normal current/latest/today questions, use get_health_overview instead because it is faster "
             "and includes freshness metadata. Leave force false unless the user explicitly asks to force "
             "a refresh. Do not use this as the visible final card when the same prompt asks for a workout "
@@ -487,12 +491,14 @@ def create_server(settings_override: Settings | None = None) -> ServerBundle:
         return overview
 
     @mcp.tool(
-        title="Sync and get workout card",
+        title="Sync and render actual workout card",
         description=(
-            "Best single tool when the user explicitly asks to sync, refresh, pull, update, or force "
-            "Fitbit/Google Health data and also asks what workout to do, how hard to train, whether "
-            "to run/lift/work out, enough movement today, or to show/update/rerun the actual workout "
-            "card. This tool syncs first, then renders the workout card using all available synced "
+            "Best single tool and preferred path when the user explicitly asks to sync, refresh, pull, "
+            "update, or force Fitbit/Google Health data and also asks what workout to do, how hard "
+            "to train, whether to run/lift/work out, enough movement today, a time-limited session, "
+            "or to show/update/rerun the actual workout card. Use this for prompts like 'force "
+            "refresh Fitbit now, then show the actual workout card for a 25-minute useful workout "
+            "today.' This tool syncs first, then renders the workout card using all available synced "
             "signals including sleep, HRV, resting heart rate, SpO2, respiratory rate, sleep "
             "temperature, AZM/load, steps with date/window, workouts, goals, check-ins, and freshness. "
             "Use planned_activity for a named activity like run, lift, squash, mobility, or upper body; "
