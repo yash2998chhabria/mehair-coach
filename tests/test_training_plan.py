@@ -537,6 +537,46 @@ def test_hike_tomorrow_card_preserves_legs_instead_of_prescribing_leg_blocks() -
     assert "leg-heavy plan -> upper-body lift" in card_text
 
 
+def test_keep_legs_useful_for_hike_preserves_lower_body() -> None:
+    context = {
+        "status": "ok",
+        "latest_date": "2026-07-03",
+        "activity_date": "2026-07-03",
+        "recovery_date": "2026-07-03",
+        "readiness": {
+            "score": 84,
+            "label": "green",
+            "recommendation": "A normal training day is reasonable if you feel good.",
+            "evidence": ["Latest sleep is strong at 7.9h.", "Resting heart rate is steady."],
+        },
+        "today": {
+            "steps": 4200,
+            "active_minutes": 30,
+            "active_zone_minutes": 10,
+            "sleep": {"asleep_hours": 7.9, "sessions_count": 1},
+            "latest_training_load": {"date": "2026-07-03", "active_zone_minutes": 10},
+        },
+    }
+
+    plan = workout_plan_for_activity(
+        context=context,
+        planned_activity="general workout",
+        target_areas=[],
+        constraints="I have a hike tomorrow; keep my legs useful.",
+        duration_minutes=30,
+    )
+
+    exercises = " ".join(block["exercise"] for block in plan["exercise_blocks"]).lower()
+    assert plan["data_used"]["protect_lower_body"] is True
+    assert plan["planned_activity"] == "Upper Body + Mobility"
+    assert "Upper Body + Mobility" in plan["summary"]
+    assert "machine chest press" in exercises
+    assert "chest-supported row" in exercises
+    assert "leg press" not in exercises
+    assert "hamstring curl" not in exercises
+    assert "calf raise" not in exercises
+
+
 def test_active_workout_stops_for_dizziness_even_when_readiness_is_green() -> None:
     context = {
         "status": "ok",

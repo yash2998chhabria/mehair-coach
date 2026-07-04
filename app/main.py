@@ -1429,6 +1429,8 @@ def workout_plan_for_activity(
         avoid.insert(0, "Sweat-it-out workouts, intervals, heavy sets, or long sessions while sick.")
 
     display_activity = _display_workout_activity(planned_activity, intensity)
+    if protect_lower_body and _generic_workout_text(planned_activity):
+        display_activity = "Upper Body + Mobility"
     intent_context = _workout_intent_context(
         planned_activity=planned_activity,
         target_areas=target_areas,
@@ -3163,6 +3165,12 @@ def _protect_lower_body_from_text(text: str) -> bool:
         "do not want my legs tired",
         "keep legs fresh",
         "keep my legs fresh",
+        "keep legs useful",
+        "keep my legs useful",
+        "keep legs usable",
+        "keep my legs usable",
+        "useful legs",
+        "usable legs",
         "fresh legs",
         "save my legs",
         "save legs",
@@ -3209,6 +3217,8 @@ def _protect_lower_body_from_text(text: str) -> bool:
         "ready for",
         "not tired",
         "not drained",
+        "useful",
+        "usable",
     )
     return (
         any(term in lower for term in future_terms)

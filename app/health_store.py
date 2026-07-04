@@ -203,6 +203,18 @@ INTENT_METRICS = {
         "daily-sleep-temperature-derivations",
         "daily-vo2-max",
     ],
+    "weekly_goal": [
+        "exercise",
+        "active-zone-minutes",
+        "time-in-heart-rate-zone",
+        "active-minutes",
+        "steps",
+        "distance",
+        "sleep",
+        "daily-heart-rate-variability",
+        "daily-resting-heart-rate",
+        "daily-vo2-max",
+    ],
     "symptom_safety": [
         "daily-resting-heart-rate",
         "heart-rate",
@@ -3048,6 +3060,17 @@ def _question_intents(question: str) -> list[str]:
         "preserve energy",
         "stay fresh",
     )
+    weekly_goal_context = has(
+        "weekly goal",
+        "training goal",
+        "weekly training",
+        "goal progress",
+        "progress toward",
+        "progress on",
+        "on track",
+        "track for my",
+        "track with my",
+    )
     specific_activity_context = has(
         "hike",
         "walk",
@@ -3096,6 +3119,15 @@ def _question_intents(question: str) -> list[str]:
         "other signals",
         "appropriate data",
         "necessary data",
+        "anything unusual",
+        "anything weird",
+        "unusual in my",
+        "unusual pattern",
+        "weird pattern",
+        "outlier",
+        "outliers",
+        "red flag",
+        "red flags",
         "everything",
     )
     exercise_context = has(
@@ -3180,6 +3212,9 @@ def _question_intents(question: str) -> list[str]:
 
     if improvement_goal_context:
         intents.extend(["daily_plan", "general_overview", "workout_decision", "recovery", "activity_load", "heart", "sleep", "goal"])
+
+    if weekly_goal_context:
+        intents.extend(["weekly_goal", "goal", "activity_load", "general_overview", "workout_decision", "recovery"])
 
     if exercise_context:
         intents.extend(["workout_decision", "recovery", "activity_load", "heart", "sleep", "subjective", "goal"])
@@ -3586,7 +3621,7 @@ def _primary_conversation_flows(
         add("metric_discovery_or_unusual_question", "The user is asking which data matters, what is available, or what is being ignored.")
     if "specific_activity" in intents:
         add("specific_activity_plan", "A named activity, future event, body area, or energy-preservation constraint should shape the session first.")
-    if "multi_day_plan" in intents:
+    if "multi_day_plan" in intents or "weekly_goal" in intents:
         add("weekly_training_planning", "A next-few-days or weekly question should start from recent load, workout history, goals, and recovery windows.")
     if "daily_plan" in intents or "workout_decision" in intents:
         add("daily_training_decision", "The user needs a concrete today/session decision, not only a metric explanation.")

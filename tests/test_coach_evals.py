@@ -628,6 +628,15 @@ def test_eval_natural_prompt_mix_is_not_biased_to_off_day_language(tmp_path, mon
     assert "multi_day_plan" in pure_multi_day_plan["intent_hints"]
     assert pure_multi_day_plan["recommended_tool_sequence"][1] == "get_health_overview"
 
+    weekly_goal_question = store.health_question_clues(
+        user_id,
+        "Am I on track for my weekly training goal and what should I do next?",
+        days=7,
+    )
+    assert weekly_goal_question["primary_conversation_flows"][0]["flow"] == "weekly_training_planning"
+    assert "weekly_goal" in weekly_goal_question["intent_hints"]
+    assert "get_workout_history" in weekly_goal_question["recommended_tool_sequence"]
+
     generalizable_prompts = [
         "Make the call for my body today; I want something useful without being dumb.",
         "What clues from the band would talk me out of a big session?",
@@ -652,6 +661,15 @@ def test_eval_natural_prompt_mix_is_not_biased_to_off_day_language(tmp_path, mon
     assert "list_available_health_metrics" in data_audit["recommended_tool_sequence"]
     assert "query_health_metrics" in data_audit["recommended_tool_sequence"]
     assert any("Prefer primary_conversation_flows" in item for item in data_audit["answering_guidance"])
+
+    unusual_band_question = store.health_question_clues(
+        user_id,
+        "Look at anything unusual in my band data that could matter today.",
+        days=7,
+    )
+    assert unusual_band_question["primary_conversation_flows"][0]["flow"] == "metric_discovery_or_unusual_question"
+    assert "metric_discovery" in unusual_band_question["intent_hints"]
+    assert "query_health_metrics" in unusual_band_question["recommended_tool_sequence"]
 
     oxygen_question = store.health_question_clues(
         user_id,
