@@ -394,6 +394,25 @@ CORE_SYNC_METRICS = {
     "activity-level",
     "floors",
 }
+HIGH_SIGNAL_QUERY_METRICS = (
+    "sleep",
+    "daily-heart-rate-variability",
+    "daily-resting-heart-rate",
+    "heart-rate",
+    "active-zone-minutes",
+    "time-in-heart-rate-zone",
+    "exercise",
+    "activity-level",
+    "steps",
+    "active-minutes",
+    "distance",
+    "daily-respiratory-rate",
+    "respiratory-rate-sleep-summary",
+    "daily-oxygen-saturation",
+    "oxygen-saturation",
+    "daily-sleep-temperature-derivations",
+    "daily-vo2-max",
+)
 LIVE_READY_METRICS = {
     "sleep",
     "daily-resting-heart-rate",
@@ -1373,9 +1392,24 @@ class HealthStore:
         if not latest_observed:
             return empty_data()
 
+        broad_metric_request = not metrics or any(str(metric).strip() == "*" for metric in metrics)
         requested_metrics = _normalize_metric_request(metrics, stored_types)
         unknown_metrics = sorted(metric for metric in requested_metrics if metric not in SYNC_DATA_TYPE_IDS)
         requested_metrics = [metric for metric in requested_metrics if metric in SYNC_DATA_TYPE_IDS]
+        full_requested_metrics = list(requested_metrics)
+        omitted_metrics: list[str] = []
+        metric_selection_mode = "explicit"
+        if broad_metric_request:
+            metric_selection_mode = "curated_default"
+            curated = [
+                metric
+                for metric in HIGH_SIGNAL_QUERY_METRICS
+                if metric in requested_metrics and metric in stored_types
+            ]
+            if not curated:
+                curated = [metric for metric in requested_metrics if metric in stored_types][:10]
+            omitted_metrics = sorted(set(requested_metrics) - set(curated))
+            requested_metrics = curated
         if not requested_metrics:
             return {
                 "status": "empty",
@@ -1463,6 +1497,22 @@ class HealthStore:
             "start_date": resolved_start,
             "end_date": resolved_end,
             "requested_metrics": requested_metrics,
+            "full_requested_metrics": full_requested_metrics,
+            "omitted_metrics": omitted_metrics,
+            "metric_selection": {
+                "mode": metric_selection_mode,
+                "reason": (
+                    "Broad metric requests return a curated high-signal set first to keep ChatGPT turns fast and useful."
+                    if broad_metric_request
+                    else "Only explicitly requested metrics were fetched."
+                ),
+                "omitted_metrics": omitted_metrics,
+                "next_step": (
+                    "Call query_health_metrics again with omitted metric ids if the conversation needs lower-priority or raw signals."
+                    if omitted_metrics
+                    else None
+                ),
+            },
             "unknown_metrics": unknown_metrics,
             "missing_metrics": missing_metrics,
             "record_count": sum(len(records) for records in grouped.values()),
@@ -3361,6 +3411,39 @@ def _question_intents(question: str) -> list[str]:
         "track for my",
         "track with my",
     )
+    activity_metric_context = has("step", "steps", "calorie", "calories", "zone", "active", "load", "distance", "walk")
+    retrospective_data_context = activity_metric_context and (
+        has(
+            "yesterday",
+            "last week",
+            "past week",
+            "this week",
+            "so far",
+            "what were",
+            "what was",
+            "how many",
+            "how much",
+            "show me",
+            "breakdown",
+            "history",
+            "trend",
+            "look back",
+        )
+        or bool(re.search(r"\b(?:did|was|were|had|have)\s+(?:i|my)\b", text))
+    ) and not has(
+        "what should",
+        "what do i do",
+        "should i",
+        "can i",
+        "do i have room",
+        "recommend",
+        "suggest",
+        "plan for",
+        "do next",
+        "next move",
+        "today's useful move",
+        "todays useful move",
+    )
     specific_activity_context = has(
         "hike",
         "walk",
@@ -3555,7 +3638,10 @@ def _question_intents(question: str) -> list[str]:
         )
 
     if future_window_context:
-        intents.extend(["multi_day_plan", "daily_plan", "general_overview", "workout_decision", "recovery", "activity_load", "heart", "sleep", "goal"])
+        if retrospective_data_context:
+            intents.extend(["general_overview", "activity_load", "heart", "sleep", "goal"])
+        else:
+            intents.extend(["multi_day_plan", "daily_plan", "general_overview", "workout_decision", "recovery", "activity_load", "heart", "sleep", "goal"])
 
     if improvement_goal_context:
         intents.extend(["daily_plan", "general_overview", "workout_decision", "recovery", "activity_load", "heart", "sleep", "goal"])
@@ -3587,7 +3673,9 @@ def _question_intents(question: str) -> list[str]:
             intents.extend(["general_overview"])
 
     if exercise_context or practical_decision_context:
-        intents.extend(["workout_decision", "recovery", "activity_load", "heart", "sleep", "subjective", "goal"])
+        intents.extend(["recovery", "activity_load", "heart", "sleep", "subjective", "goal"])
+        if practical_decision_context or not retrospective_data_context:
+            intents.append("workout_decision")
     if specific_activity_context and exercise_context:
         intents.extend(["specific_activity", "workout_decision", "activity_load", "recovery", "subjective"])
     live_marker = has(
@@ -3649,10 +3737,16 @@ def _question_intents(question: str) -> list[str]:
         intents.extend(["subjective", "recovery", "activity_load", "sleep"])
     if any(_has_unnegated_phrase(text, phrase) for phrase in ILLNESS_PHRASES):
         intents.extend(["symptom_safety", "subjective", "recovery", "heart", "sleep"])
-    if has("step", "steps", "calorie", "calories", "zone", "active", "load", "distance", "walk"):
-        intents.extend(["activity_load", "workout_decision"])
+    if activity_metric_context:
+        intents.append("activity_load")
+        if retrospective_data_context:
+            intents.append("activity_history")
+        if not retrospective_data_context:
+            intents.append("workout_decision")
     if has("goal", "goals", "progress", "week", "weekly"):
-        intents.extend(["goal", "workout_decision", "activity_load", "daily_plan"])
+        intents.extend(["goal", "activity_load"])
+        if not retrospective_data_context:
+            intents.extend(["workout_decision", "daily_plan"])
 
     if not intents:
         intents = ["general_overview", "recovery", "heart", "sleep", "activity_load"]
@@ -3929,10 +4023,12 @@ def _conversation_flow_options(
                 "live_inputs_are_user_reported",
             ],
             "model_instruction": (
-                "Use live user-reported HR, RPE, pain, symptoms, elapsed time, and synced readiness/load; "
-                "do not describe synced Fitbit context as a live band stream."
+                "Use live user-reported HR, RPE, pain, symptoms, and elapsed time for the immediate call. "
+                "Use synced readiness, sleep, heart-zone, SpO2, respiratory-rate, sleep-temperature, load, "
+                "goal, and check-in context only as background caution/load context; do not describe synced "
+                "Fitbit context as a live band stream."
             ),
-            "freshness_policy": "Synced context can be background during a workout; live HR/RPE/pain must come from the user's report.",
+            "freshness_policy": "Synced context can be background during a workout; live HR/RPE/pain/symptoms must come from the user's report.",
         },
         {
             "flow": "sleep_breathing_recovery_question",
@@ -3965,7 +4061,7 @@ def _conversation_flow_options(
                 "how much have I done",
             ],
             "primary_tools": ["get_health_overview", "get_activity_load", "get_workout_history"],
-            "supporting_tools": ["recommend_workout_today"],
+            "supporting_tools": [],
             "data_surfaces_to_use": [
                 "overview_context",
                 "goal_context",
@@ -4020,6 +4116,8 @@ def _primary_conversation_flows(
         add("sleep_breathing_recovery_question", "Oxygen, respiratory-rate, or sleep-temperature questions need recovery comparison before training permission.")
     if "metric_discovery" in intents:
         add("metric_discovery_or_unusual_question", "The user is asking which data matters, what is available, or what is being ignored.")
+    if "activity_history" in intents:
+        add("weekly_training_planning", "The user is asking for recent activity/load data, not a workout prescription.")
     if "specific_activity" in intents:
         add("specific_activity_plan", "A named activity, future event, body area, or energy-preservation constraint should shape the session first.")
     if "multi_day_plan" in intents or "weekly_goal" in intents:

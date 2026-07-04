@@ -141,6 +141,9 @@ async def test_mcp_tool_list_matches_private_beta_plan() -> None:
     ]["constraints"]["description"]
     assert "Live inputs are user-reported" in by_name["guide_active_workout"].description
     assert "not direct band telemetry" in by_name["guide_active_workout"].description
+    assert "SpO2" in by_name["guide_active_workout"].description
+    assert "respiratory-rate" in by_name["guide_active_workout"].description
+    assert "background caution/load context" in by_name["guide_active_workout"].description
     assert "actual Apps SDK active workout card renderer" in by_name[
         "guide_active_workout"
     ].description
@@ -171,6 +174,8 @@ def test_server_instructions_keep_normal_latest_questions_fast() -> None:
     assert "When a tool returns coach_response" in SERVER_INSTRUCTIONS
     assert "If get_health_question_clues returns suggested_card" in SERVER_INSTRUCTIONS
     assert "training_decision, readiness_attribution, model_signal_context" in SERVER_INSTRUCTIONS
+    assert "SpO2, respiratory-rate" in SERVER_INSTRUCTIONS
+    assert "background context, not live telemetry" in SERVER_INSTRUCTIONS
     assert "which signals actually moved" in SERVER_INSTRUCTIONS
     assert "readiness score as a summary, not an independent reason" in SERVER_INSTRUCTIONS
     assert "decision_frame.model_decision_policy" in SERVER_INSTRUCTIONS

@@ -651,6 +651,47 @@ def test_synthetic_records_calculate_context(tmp_path, monkeypatch) -> None:
     ] == 15.0
     assert richer_metrics["metrics"]["oxygen-saturation"]["daily"][-1]["spo2_sample"]["avg"] == 98.4
 
+    store.upsert_records(
+        user_id,
+        "total-calories",
+        [
+            {
+                "name": "calories-1",
+                "date": {"year": 2026, "month": 7, "day": 3},
+                "totalCalories": {"energyKilocalories": 2400},
+            }
+        ],
+    )
+    broad_metrics = store.query_metrics(user_id, metrics=["*"], days=1)
+    broad_requested = set(broad_metrics["requested_metrics"])
+    assert broad_metrics["status"] == "ok"
+    assert broad_metrics["metric_selection"]["mode"] == "curated_default"
+    assert broad_metrics["metric_selection"]["next_step"]
+    assert {
+        "sleep",
+        "daily-heart-rate-variability",
+        "daily-resting-heart-rate",
+        "heart-rate",
+        "active-zone-minutes",
+        "time-in-heart-rate-zone",
+        "activity-level",
+        "steps",
+        "daily-respiratory-rate",
+        "respiratory-rate-sleep-summary",
+        "oxygen-saturation",
+        "daily-sleep-temperature-derivations",
+        "daily-vo2-max",
+    } <= broad_requested
+    assert "total-calories" in broad_metrics["full_requested_metrics"]
+    assert "total-calories" in broad_metrics["omitted_metrics"]
+    assert "total-calories" not in broad_metrics["metrics"]
+
+    explicit_low_priority = store.query_metrics(user_id, metrics=["total-calories"], days=1)
+    assert explicit_low_priority["status"] == "ok"
+    assert explicit_low_priority["metric_selection"]["mode"] == "explicit"
+    assert explicit_low_priority["requested_metrics"] == ["total-calories"]
+    assert "total-calories" in explicit_low_priority["metrics"]
+
     store.save_goal(user_id, {"goal_type": "running", "target": "Run four days per week"})
     store.save_checkin(user_id, {"energy": 8, "soreness": 2, "stress": 3, "notes": "Feeling good"})
 

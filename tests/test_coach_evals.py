@@ -746,6 +746,19 @@ def test_eval_natural_prompt_mix_is_not_biased_to_off_day_language(tmp_path, mon
     assert "metric_discovery" in unusual_band_question["intent_hints"]
     assert "query_health_metrics" in unusual_band_question["recommended_tool_sequence"]
 
+    retrospective_activity_questions = [
+        "What were my active zone minutes and heart-rate zones yesterday?",
+        "How much training load did I build this week?",
+        "Show me my steps and distance so far today.",
+    ]
+    for question in retrospective_activity_questions:
+        clues = store.health_question_clues(user_id, question, days=7)
+        assert "activity_load" in clues["intent_hints"]
+        assert "workout_decision" not in clues["intent_hints"]
+        assert clues["primary_conversation_flows"][0]["flow"] == "weekly_training_planning"
+        assert "get_activity_load" in clues["recommended_tool_sequence"]
+        assert "recommend_workout_today" not in clues["recommended_tool_sequence"]
+
     oxygen_question = store.health_question_clues(
         user_id,
         "My oxygen looked a little lower last night. What does that change for training?",

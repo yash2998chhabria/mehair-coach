@@ -143,7 +143,9 @@ SERVER_INSTRUCTIONS = (
     "During an active workout, call guide_active_workout when the user reports live RPE, heart rate, "
     "pain, symptoms, elapsed time, or asks in an in-session context whether to keep going, push, hold "
     "steady, back off, slow down, or stop. Call guide_active_workout directly for these in-session questions because it "
-    "already reads the latest synced readiness/load context and renders the active workout card. Do "
+    "already reads the latest synced readiness/load, sleep, heart-zone, SpO2, respiratory-rate, "
+    "sleep-temperature, goal, and check-in context and renders the active workout card. Treat those "
+    "synced signals as background context, not live telemetry. Do "
     "not substitute get_health_overview for live workout decisions. Prefer one card-rendering tool per "
     "answer unless the user explicitly asks for multiple cards."
 )
@@ -491,14 +493,42 @@ def create_server(settings_override: Settings | None = None) -> ServerBundle:
             return setup_required()
 
         sync = await health_store.sync_latest(user_id, force=force, include_context=False)
-        if sync.get("status") != "ok":
+        active_sync_fallback = sync.get("status") == "sync_in_progress"
+        if sync.get("status") != "ok" and not active_sync_fallback:
             return sync
 
         overview = health_store.health_overview(user_id, max(1, min(days, 30)))
         if overview.get("status") != "ok":
+            if active_sync_fallback:
+                return {
+                    **sync,
+                    "message": (
+                        "Google Health sync is already running and no stored health records are available "
+                        "yet; retry shortly after the first sync finishes."
+                    ),
+                }
             return overview
 
         overview["fresh_sync"] = _fresh_sync_payload(sync, overview)
+        overview["sync_overview_contract"] = {
+            "role": "broad_overview_after_sync",
+            "sync_status": (
+                "active_sync_fallback"
+                if overview["fresh_sync"].get("sync_in_progress")
+                else "partial"
+                if overview["fresh_sync"].get("partial_sync")
+                else "full"
+            ),
+            "visible_card_policy": (
+                "This is a broad health overview result. If the user asked for workout instructions, "
+                "render a workout card instead of treating this as the final training plan."
+            ),
+        }
+        if overview["fresh_sync"].get("sync_in_progress"):
+            overview["sync_overview_contract"]["freshness_note"] = (
+                "A Google Health sync is still running, so this overview uses the newest records already stored. "
+                "Refresh again shortly if the user needs the just-finished cloud pull."
+            )
         overview["post_sync_routing_guidance"] = POST_SYNC_ROUTING_GUIDANCE
         overview["final_answer_guardrail"] = (
             "If the user's prompt asked for a workout card, what to do today, how hard to train, "
@@ -920,7 +950,9 @@ def create_server(settings_override: Settings | None = None) -> ServerBundle:
         description=(
             "Give in-session continue/hold-steady/downshift/stop guidance using live user-reported "
             "heart rate, RPE, pain, symptoms, elapsed time, and the latest synced Fitbit "
-            "readiness/load context. Use this for during-workout prompts like 'HR 150, RPE 7, "
+            "readiness/load, sleep, heart-zone, SpO2, respiratory-rate, sleep-temperature, goal, "
+            "and check-in context. Use synced wearable data as background caution/load context, not "
+            "live telemetry. Use this for during-workout prompts like 'HR 150, RPE 7, "
             "pain 0/10, should I push or back off?', 'my chest feels tight', or 'keep going?'. "
             "Live inputs are user-reported, not direct band telemetry. Do not substitute "
             "get_health_overview for active in-session decisions; this is the actual Apps SDK active "

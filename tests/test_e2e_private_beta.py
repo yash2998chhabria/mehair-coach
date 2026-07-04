@@ -506,6 +506,8 @@ async def test_private_beta_oauth_mcp_sync_and_coaching_flow(tmp_path, monkeypat
             assert fresh_overview["fresh_sync"]["sync_skipped"] is True
             assert fresh_overview["fresh_sync"]["sync_window"]["mode"] == "recent_skip"
             assert fresh_overview["fresh_sync"]["records_upserted"] == 0
+            assert fresh_overview["sync_overview_contract"]["role"] == "broad_overview_after_sync"
+            assert fresh_overview["sync_overview_contract"]["sync_status"] == "full"
             assert fresh_overview["post_sync_routing_guidance"]["role"] == "preparatory_sync_result"
             assert "plan_workout_with_health_context" in fresh_overview["post_sync_routing_guidance"][
                 "next_tool_for_specific_activity"
@@ -1172,6 +1174,60 @@ async def test_partial_sync_preserves_records_and_reports_metric_diagnostics(tmp
     assert sync_run["status"] == "partial"
     assert sync_run["records_upserted"] == 1
     assert "errors=" in sync_run["message"]
+
+
+@pytest.mark.asyncio
+async def test_sync_overview_uses_existing_records_while_sync_is_running(tmp_path) -> None:
+    bundle = make_bundle(tmp_path)
+    bundle.health_store.google = FakeGoogleHealth()
+    user_id = bundle.auth_service._create_user_from_google(
+        {
+            "access_token": "fake-google-access",
+            "refresh_token": "fake-google-refresh",
+            "expires_in": 3600,
+            "scope": " ".join(bundle.settings.google_scopes),
+        },
+        {"email": "tester@example.com", "sub": "google-subject"},
+    )
+    initial_sync = await bundle.health_store.sync_latest(user_id, force=True, include_context=False)
+    assert initial_sync["status"] == "ok"
+
+    bundle.health_store._start_sync(user_id, iso_now())
+    client_id = "active-sync-overview-client"
+    with bundle.db.connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO oauth_clients (client_id, client_secret, metadata_json, created_at)
+            VALUES (?, NULL, ?, ?)
+            """,
+            (client_id, json.dumps({"token_endpoint_auth_method": "none"}), datetime.now(UTC).isoformat()),
+        )
+    access_token = json.loads(bundle.auth_service._issue_app_tokens(user_id, client_id, ["health.read"]).body)[
+        "access_token"
+    ]
+    transport = httpx.ASGITransport(app=bundle.app)
+
+    async with bundle.app.router.lifespan_context(bundle.app):
+        async with httpx.AsyncClient(transport=transport, base_url="http://localhost:8787") as client:
+            overview = tool_content(
+                await mcp_request(
+                    client,
+                    access_token,
+                    "tools/call",
+                    {"name": "sync_and_get_health_overview", "arguments": {"days": 7}},
+                    502,
+                )
+            )
+
+    assert overview["status"] == "ok"
+    assert overview["overview_type"] == "health_overview"
+    assert overview["sections"]["activity"]["totals"]["steps"] == 9200
+    assert overview["fresh_sync"]["sync_in_progress"] is True
+    assert overview["fresh_sync"]["skip_reason"] == "active_sync_in_progress"
+    assert overview["sync_overview_contract"]["role"] == "broad_overview_after_sync"
+    assert overview["sync_overview_contract"]["sync_status"] == "active_sync_fallback"
+    assert "newest records already stored" in overview["sync_overview_contract"]["freshness_note"]
+    assert overview["post_sync_routing_guidance"]["role"] == "preparatory_sync_result"
 
 
 @pytest.mark.asyncio
