@@ -19,7 +19,7 @@ from starlette.responses import HTMLResponse, JSONResponse, PlainTextResponse, R
 
 from .auth import AppTokenVerifier, AuthError, AuthService
 from .db import Database
-from .health_store import HealthStore, setup_required
+from .health_store import HealthStore, model_signal_context, setup_required
 from .settings import Settings, get_settings
 from .widget import (
     TODAY_WIDGET_HTML,
@@ -32,7 +32,7 @@ from .widget import (
 
 
 SERVER_INSTRUCTIONS = (
-    "Mehair Coach provides read-only Google Health/Fitbit context for a connected user. "
+    "mehair coach provides read-only Google Health/Fitbit context for a connected user. "
     "Use plain English before statistics. Keep metric labels such as HRV, RPE, AZM, and resting "
     "heart rate, but briefly explain what they mean when they appear in user-facing advice. "
     "When mentioning steps or other movement totals, include the date/window and explain why that "
@@ -97,7 +97,7 @@ WIDGET_META = {
     "openai/outputTemplate": WIDGET_URI,
 }
 APP_ICON_SVG = """
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96" role="img" aria-label="Mehair Coach">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96" role="img" aria-label="mehair coach">
   <rect width="96" height="96" rx="24" fill="#d63384"/>
   <path d="M22 64V31h9l17 20 17-20h9v33h-9V44L50 62h-4L31 44v20h-9Z" fill="white"/>
   <circle cx="73" cy="24" r="8" fill="#fff0f6"/>
@@ -212,7 +212,7 @@ def create_server(settings_override: Settings | None = None) -> ServerBundle:
     health_store = HealthStore(db, auth_service, settings)
 
     mcp = FastMCP(
-        name="Mehair Coach",
+        name="mehair coach",
         instructions=SERVER_INSTRUCTIONS,
         icons=[
             Icon(
@@ -244,7 +244,7 @@ def create_server(settings_override: Settings | None = None) -> ServerBundle:
         @mcp.resource(
             widget_uri,
             name=f"mehair-today-card-{widget_version}",
-            title="Mehair Coach Today Card",
+            title="mehair coach today card",
             description="Inline readiness, sleep, activity, and evidence card for synced Fitbit context.",
             mime_type=WIDGET_MIME_TYPE,
             meta={
@@ -442,8 +442,9 @@ def create_server(settings_override: Settings | None = None) -> ServerBundle:
         description=(
             "For a user's natural-language health, recovery, sleep, heart, soreness, or workout question, "
             "identify likely intents, the best synced Fitbit metrics to inspect, clues already visible "
-            "from overview data, and recommended follow-up tools. Use this for 'what data matters?', "
-            "'what other signals are relevant?', and ambiguous coaching prompts before the final answer."
+            "from overview data, recommended follow-up tools, and reusable conversation flow options "
+            "for informal wording. Use this for 'what data matters?', 'what other signals are relevant?', "
+            "and ambiguous coaching prompts before the final answer."
         ),
         annotations=READ_ONLY,
         meta=WIDGET_META,
@@ -689,7 +690,7 @@ def create_server(settings_override: Settings | None = None) -> ServerBundle:
 
     @mcp.tool(
         title="Set coaching goal",
-        description="Store a user-provided fitness goal for future recommendations. Writes only to local Mehair Coach storage.",
+        description="Store a user-provided fitness goal for future recommendations. Writes only to local mehair coach storage.",
         annotations=WRITE_LOCAL,
     )
     def set_goal(
@@ -746,7 +747,7 @@ def create_server(settings_override: Settings | None = None) -> ServerBundle:
         return JSONResponse(
             {
                 "status": "ok",
-                "name": "Mehair Coach",
+                "name": "mehair coach",
                 "mcp_endpoint": f"{settings.base_url}/mcp",
                 "google_oauth_configured": bool(
                     settings.google_client_id
@@ -757,7 +758,7 @@ def create_server(settings_override: Settings | None = None) -> ServerBundle:
         )
 
     async def home(_: Request) -> PlainTextResponse:
-        return PlainTextResponse("Mehair Coach MCP server. Connect ChatGPT to /mcp.")
+        return PlainTextResponse("mehair coach MCP server. Connect ChatGPT to /mcp.")
 
     async def oauth_metadata(_: Request) -> JSONResponse:
         return JSONResponse(auth_service.oauth_metadata())
@@ -805,9 +806,9 @@ def create_server(settings_override: Settings | None = None) -> ServerBundle:
             <!doctype html>
             <html lang="en">
               <meta charset="utf-8" />
-              <title>Mehair Coach setup</title>
+              <title>mehair coach setup</title>
               <body style="font-family: system-ui; max-width: 760px; margin: 40px auto; line-height: 1.5">
-                <h1>Mehair Coach setup</h1>
+                <h1>mehair coach setup</h1>
                 <p>Expose this server over HTTPS, set PUBLIC_BASE_URL and GOOGLE_REDIRECT_URI to that origin, then create a ChatGPT developer-mode connector pointing at <code>/mcp</code>.</p>
                 <p>Google Health OAuth must be configured with read-only Health scopes and each beta tester must be added as a Google OAuth test user.</p>
               </body>
@@ -1075,6 +1076,7 @@ def workout_recommendation(
         "workout_history_summary": workout_summary or None,
         "data_freshness": freshness,
         "training_decision": training_decision,
+        "model_signal_context": model_signal_context(signal_snapshot),
         "data_used": {
             "activity_date": activity_date,
             "recovery_date": recovery_date,
@@ -1420,6 +1422,7 @@ def workout_plan_for_activity(
         "stop_conditions": stop_conditions,
         "limiting_factors": deduped_limiting_factors,
         "training_decision": training_decision,
+        "model_signal_context": model_signal_context(signal_snapshot),
         "data_used": {
             "activity_date": activity_date,
             "recovery_date": recovery_date,
@@ -1494,7 +1497,12 @@ def active_workout_guidance(
     pain = _bounded_rating(pain_level, minimum=0)
     symptoms_text = " ".join([symptoms or "", notes or ""]).lower()
     safety_flags = _active_workout_safety_flags(symptoms_text, current_heart_rate_bpm, pain)
-    signal_snapshot = context.get("available_signal_snapshot", {}) or {}
+    signal_snapshot = _active_workout_signal_snapshot(
+        context,
+        current_heart_rate_bpm=current_heart_rate_bpm,
+        hrv_ms=hrv_ms,
+        resting_heart_rate=resting_heart_rate,
+    )
     evidence = list(readiness.get("evidence", []))
     if current_heart_rate_bpm is not None:
         evidence.append(f"Live heart rate reported: {current_heart_rate_bpm} bpm (HR = current beats per minute).")
@@ -1637,6 +1645,7 @@ def active_workout_guidance(
         "goal_context": (goal or {}).get("goal"),
         "recent_checkins": checkins or [],
         "data_freshness": freshness,
+        "model_signal_context": model_signal_context(signal_snapshot),
         "live_data_note": "In-session guidance uses user-reported live HR/RPE/pain plus the latest cloud-synced Fitbit context; it is not direct band telemetry.",
         "live_inputs": {
             "current_heart_rate_bpm": current_heart_rate_bpm,
@@ -1670,6 +1679,142 @@ def active_workout_guidance(
         "coach_response": coach_response,
         "safety_note": "This is in-session fitness guidance, not medical diagnosis or emergency care.",
         "context": context,
+    }
+
+
+def _active_workout_signal_snapshot(
+    context: dict[str, Any],
+    *,
+    current_heart_rate_bpm: int | None,
+    hrv_ms: float | int | None,
+    resting_heart_rate: float | int | None,
+) -> dict[str, Any]:
+    existing = context.get("available_signal_snapshot", {}) or {}
+    if existing.get("status") == "ok" and existing.get("signals"):
+        return existing
+
+    today = context.get("today", {}) or {}
+    sleep = today.get("sleep", {}) or {}
+    latest_load = today.get("latest_training_load", {}) or {}
+    latest_date = (
+        context.get("latest_date")
+        or context.get("activity_date")
+        or context.get("recovery_date")
+        or latest_load.get("date")
+    )
+    signals: list[dict[str, Any]] = []
+
+    def add_signal(
+        *,
+        signal_id: str,
+        label: str,
+        category: str,
+        value: Any,
+        display: str,
+        unit: str = "",
+        latest_date_override: str | None = None,
+        why_it_matters: str,
+        coaching_use: str,
+        use_when: list[str],
+        confidence: str,
+        window_summary: dict[str, Any] | None = None,
+    ) -> None:
+        if value is None:
+            return
+        signals.append(
+            {
+                "id": signal_id,
+                "label": label,
+                "category": category,
+                "latest_value": value,
+                "unit": unit,
+                "display": display,
+                "latest_date": latest_date_override or latest_date,
+                "why_it_matters": why_it_matters,
+                "coaching_use": coaching_use,
+                "use_when": use_when,
+                "confidence": confidence,
+                "window_summary": window_summary or {},
+            }
+        )
+
+    add_signal(
+        signal_id="heart_rate_samples",
+        label="Heart rate",
+        category="in_session_context",
+        value=current_heart_rate_bpm,
+        unit="bpm",
+        display=f"{current_heart_rate_bpm} bpm",
+        why_it_matters="Current HR helps pace the session when interpreted with symptoms, effort, and recovery context.",
+        coaching_use="Use for in-session pacing only; this value is user-reported, not direct band telemetry.",
+        use_when=["active_workout", "pacing", "symptoms", "high_effort"],
+        confidence="user_reported_live",
+        window_summary={"source": "user_reported_live_input"},
+    )
+    add_signal(
+        signal_id="active_zone_minutes",
+        label="Active Zone Minutes",
+        category="activity_load",
+        value=latest_load.get("active_zone_minutes") or today.get("active_zone_minutes"),
+        unit="AZM",
+        display=f"{latest_load.get('active_zone_minutes') or today.get('active_zone_minutes')} AZM",
+        latest_date_override=latest_load.get("date") or latest_date,
+        why_it_matters="AZM is Fitbit's hard-work-minute load signal; high recent load can cap intensity.",
+        coaching_use="Use as latest synced load context, and state the date/window when it matters.",
+        use_when=["active_workout", "daily_load", "training_decision"],
+        confidence="synced_context",
+    )
+    add_signal(
+        signal_id="hrv",
+        label="HRV",
+        category="recovery",
+        value=hrv_ms,
+        unit="ms",
+        display=f"{_fmt_num(float(hrv_ms))} ms" if hrv_ms is not None else "",
+        why_it_matters="HRV can reflect recovery and stress trends, especially compared with the user's baseline.",
+        coaching_use="Use as recovery context; do not let it override live pain, symptoms, or very high effort.",
+        use_when=["active_workout", "recovery", "training_decision"],
+        confidence="synced_context",
+    )
+    add_signal(
+        signal_id="resting_heart_rate",
+        label="Resting HR",
+        category="recovery",
+        value=resting_heart_rate,
+        unit="bpm",
+        display=f"{_fmt_num(float(resting_heart_rate), 0)} bpm" if resting_heart_rate is not None else "",
+        why_it_matters="Resting HR can rise with stress, illness, poor sleep, or fatigue.",
+        coaching_use="Use as recovery context alongside HRV, sleep, load, and symptoms.",
+        use_when=["active_workout", "recovery", "illness_context"],
+        confidence="synced_context",
+    )
+    add_signal(
+        signal_id="sleep_duration",
+        label="Sleep",
+        category="sleep_recovery",
+        value=sleep.get("asleep_hours") or sleep.get("duration_hours"),
+        unit="h",
+        display=f"{_fmt_num(float(sleep.get('asleep_hours') or sleep.get('duration_hours')))}h asleep"
+        if sleep.get("asleep_hours") or sleep.get("duration_hours")
+        else "",
+        why_it_matters="Sleep is a major recovery input for how hard to train today.",
+        coaching_use="Use as primary recovery context, but still let live symptoms and pain override the plan.",
+        use_when=["active_workout", "recovery", "training_decision"],
+        confidence="synced_context",
+    )
+
+    return {
+        "status": "ok" if signals else "missing",
+        "window_days": 1 if latest_date else 0,
+        "date_range": {"latest": latest_date} if latest_date else {},
+        "available_signal_ids": [signal["id"] for signal in signals],
+        "available_categories": sorted({signal["category"] for signal in signals}),
+        "signals": signals,
+        "source": "active_workout_context_fallback",
+        "question_guidance": [
+            "This compact snapshot was built from active-workout context already available to the tool.",
+            "Live HR is user-reported; synced recovery/load values are background context.",
+        ],
     }
 
 

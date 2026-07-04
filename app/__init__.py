@@ -1,1 +1,1 @@
-"""Mehair Coach ChatGPT App backend."""
+"""mehair coach ChatGPT App backend."""

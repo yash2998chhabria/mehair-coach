@@ -1,6 +1,6 @@
 # Setup
 
-Mehair Coach is a Python MCP server for ChatGPT Apps. ChatGPT hosts the conversation; this server handles Google Health OAuth, data sync, storage, and tools.
+mehair coach is a Python MCP server for ChatGPT Apps. ChatGPT hosts the conversation; this server handles Google Health OAuth, data sync, storage, and tools.
 
 ## Requirements
 

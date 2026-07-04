@@ -297,10 +297,15 @@ def test_compact_sync_write_replaces_legacy_raw_rows_for_same_metric_day(tmp_pat
 def test_empty_states_do_not_fabricate_data(tmp_path) -> None:
     _, store = make_store(tmp_path)
 
-    assert store.connection_status(None)["status"] == "setup_required"
+    setup = store.connection_status(None)
+    assert setup["status"] == "setup_required"
+    assert setup["conversation_flow_options"][0]["flow"] == "connect_first"
+    assert "cannot see Fitbit or Google Health data" in setup["plain_english_state"]
     empty_context = store.latest_context("missing-user")
     assert empty_context["status"] == "empty"
     assert "No Fitbit data" in empty_context["message"]
+    assert empty_context["conversation_flow_options"][0]["flow"] == "first_sync_after_connect"
+    assert "sync_latest_fitbit_data" in empty_context["conversation_flow_options"][0]["primary_tools"]
 
 
 def test_synthetic_records_calculate_context(tmp_path, monkeypatch) -> None:
@@ -597,6 +602,14 @@ def test_synthetic_records_calculate_context(tmp_path, monkeypatch) -> None:
     assert spo2_signal["latest"] == 98.4
     assert "not a green light by themselves" in spo2_signal["why_it_matters"]
     assert overview["data_used"]["available_signal_count"] == len(snapshot["signals"])
+    signal_context = overview["model_signal_context"]
+    assert signal_context["status"] == "ok"
+    assert "spo2" in signal_context["all_available_signal_ids"]
+    assert any(
+        item["id"] == "spo2"
+        for item in signal_context["signal_groups"]["breathing_temperature_caution"]
+    )
+    assert any("green readiness score" in item for item in signal_context["answer_contract"])
     assert overview["daily"][-1]["time_in_hr_zones_minutes"]["fat_burn"] == 20.0
     assert overview["positives"]
     assert overview["next_actions"]
@@ -904,6 +917,17 @@ def test_question_clues_choose_recovery_heart_and_load_metrics(tmp_path, monkeyp
     )
     assert any("recorded step days" in item for item in clues["clues"])
     assert any("not as a standalone reason to train or rest" in item for item in clues["clues"])
+    assert clues["model_signal_context"]["status"] == "ok"
+    assert any(
+        "VO2 max" in item
+        for item in clues["model_signal_context"]["decision_order"]
+    )
+    assert {
+        "primary_recovery",
+        "breathing_temperature_caution",
+        "activity_load_window",
+        "capacity_progress",
+    } <= set(clues["model_signal_context"]["signal_groups"])
 
     day_plan = store.health_question_clues(user_id, "What should I do today?", days=7)
 

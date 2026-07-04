@@ -84,4 +84,4 @@ Golden prompts:
 - `I feel cooked today. Which metrics matter, and what clues do you see?`
 - `Should I worry about my high heart rate and dizziness?`
 
-If ChatGPT answers that it cannot access the connector while the connector is enabled, immediately retry with `Use the Mehair Coach Live connector tools now. Call sync_and_get_health_overview.` This catches developer-mode routing/cache misses during live testing.
+If ChatGPT answers that it cannot access the connector while the connector is enabled, immediately retry with `Use the mehair coach connector tools now. Call sync_and_get_health_overview.` This catches developer-mode routing/cache misses during live testing.

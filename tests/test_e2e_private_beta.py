@@ -388,7 +388,7 @@ async def test_private_beta_oauth_mcp_sync_and_coaching_flow(tmp_path, monkeypat
                 1,
             )
             assert initialize
-            assert initialize["result"]["serverInfo"]["name"] == "Mehair Coach"
+            assert initialize["result"]["serverInfo"]["name"] == "mehair coach"
 
             initialized = await client.post(
                 "/mcp",

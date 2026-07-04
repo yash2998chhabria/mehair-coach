@@ -1,6 +1,6 @@
 # Security
 
-Mehair Coach handles personal health data, so the default posture is private beta only.
+mehair coach handles personal health data, so the default posture is private beta only.
 
 ## Data Handling
 

@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 
 
-WIDGET_URI = "ui://mehair/today-v17.html"
+WIDGET_URI = "ui://mehair/today-v18.html"
 LEGACY_WIDGET_URIS = (
     "ui://mehair/today-v1.html",
     "ui://mehair/today-v2.html",
@@ -21,6 +21,7 @@ LEGACY_WIDGET_URIS = (
     "ui://mehair/today-v14.html",
     "ui://mehair/today-v15.html",
     "ui://mehair/today-v16.html",
+    "ui://mehair/today-v17.html",
 )
 WIDGET_RESOURCE_URIS = (WIDGET_URI, *LEGACY_WIDGET_URIS)
 WIDGET_MIME_TYPE = "text/html;profile=mcp-app"
@@ -32,7 +33,7 @@ TODAY_WIDGET_HTML = """
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Mehair Coach</title>
+    <title>mehair coach</title>
     <style>
       :root {
         color-scheme: light;
@@ -568,7 +569,7 @@ TODAY_WIDGET_HTML = """
     <main>
       <section class="panel" id="root">
         <div class="empty">
-          <strong>Mehair Coach</strong>
+          <strong>mehair coach</strong>
           <span>Preparing health card...</span>
         </div>
       </section>
@@ -789,7 +790,7 @@ TODAY_WIDGET_HTML = """
           accent: readinessAccent(band),
           stateLabel: band,
           title: "Health Overview",
-          eyebrow: "Mehair Coach",
+          eyebrow: "mehair coach",
           date: range || data.data_freshness?.latest_observed_date || "",
           chips: [
             readinessChip(label, score),
@@ -845,7 +846,7 @@ TODAY_WIDGET_HTML = """
           accent: hasSafetyFlags ? "#a94f43" : "#d63384",
           stateLabel: band,
           title: hasSafetyFlags ? "Health Check" : "Signals That Matter",
-          eyebrow: "Mehair Coach",
+          eyebrow: "mehair coach",
           date: data.today?.activity_date && data.today?.recovery_date && data.today.activity_date !== data.today.recovery_date
             ? `Activity ${data.today.activity_date}; recovery ${data.today.recovery_date}`
             : data.today?.activity_date || freshness.latest_observed_date || "",
@@ -890,7 +891,7 @@ TODAY_WIDGET_HTML = """
           accent: readinessAccent(band),
           stateLabel: band,
           title: "Recovery Signals",
-          eyebrow: "Mehair Coach",
+          eyebrow: "mehair coach",
           date: data.date_range?.start && data.date_range?.end ? `${data.date_range.start} to ${data.date_range.end}` : latest.date || "",
           chips: [
             readinessChip(label, score),
@@ -945,7 +946,7 @@ TODAY_WIDGET_HTML = """
           accent: readinessAccent(band),
           stateLabel: band,
           title: "Today's Workout",
-          eyebrow: "Coach Recommendation",
+          eyebrow: "mehair coach",
           date: data.activity_date && data.recovery_date && data.activity_date !== data.recovery_date
             ? `Activity ${data.activity_date}; recovery ${data.recovery_date}`
             : data.activity_date || data.latest_date || "",
@@ -1023,7 +1024,7 @@ TODAY_WIDGET_HTML = """
           accent: readinessAccent(band),
           stateLabel: band,
           title: "Readiness",
-          eyebrow: "Mehair Coach",
+          eyebrow: "mehair coach",
           date: source,
           chips: [readinessChip(label, score), activityDate].filter(Boolean),
           score,
@@ -1060,7 +1061,7 @@ TODAY_WIDGET_HTML = """
           accent: readinessAccent(band),
           stateLabel: band,
           title: workoutTitle(data.planned_activity, data.recommended_intensity),
-          eyebrow: "Workout Plan",
+          eyebrow: "mehair coach",
           date: data.planned_date ? `Planned for ${data.planned_date}` : "Next planned session",
           chips: [intensityChip(data.recommended_intensity), rpeChip(data.rpe_cap), readinessChip(label, score)].filter(Boolean),
           score,
@@ -1099,7 +1100,7 @@ TODAY_WIDGET_HTML = """
           accent: safety.length ? "#a94f43" : readinessAccent(readinessBandLabel),
           stateLabel: readinessBandLabel,
           title: "Active Workout",
-          eyebrow: data.planned_activity || "In-Session Check",
+          eyebrow: "mehair coach",
           date: live.elapsed_minutes != null ? `${live.elapsed_minutes} min elapsed` : data.activity_date || "",
           chips: [
             decisionLabel(data.decision || "guidance"),
@@ -1143,7 +1144,7 @@ TODAY_WIDGET_HTML = """
         return {
           accent: "#386f8f",
           title: "Sleep",
-          eyebrow: "Recovery",
+          eyebrow: "mehair coach",
           date: latest.date ? `Latest sleep from ${latest.date}` : "Latest synced sleep",
           chips: [`${sessions} session${sessions === 1 ? "" : "s"}`],
           score: asleep ? Math.min(100, Math.round((asleep / 8) * 100)) : 0,
@@ -1171,7 +1172,7 @@ TODAY_WIDGET_HTML = """
         return {
           accent: "#7a6a18",
           title: "Activity Load",
-          eyebrow: "Training",
+          eyebrow: "mehair coach",
           date: rangeText(days),
           chips: [`${days.length || 0} days`],
           score: clamp(Math.round((Number(totals.active_zone_minutes || highest.active_zone_minutes || 0) / 150) * 100), 0, 100),
@@ -1202,7 +1203,7 @@ TODAY_WIDGET_HTML = """
         return {
           accent: "#8a4b3e",
           title: "Heart Trends",
-          eyebrow: "Recovery",
+          eyebrow: "mehair coach",
           date: latest.date || rangeText(days),
           chips: ["heart", days.length ? `${days.length} days` : ""].filter(Boolean),
           score,
@@ -1234,8 +1235,8 @@ TODAY_WIDGET_HTML = """
         const entries = Object.entries(metrics);
         return {
           accent: "#4b6f8f",
-          title: "Metric Query",
-          eyebrow: "Data",
+          title: "Returned Health Data",
+          eyebrow: "mehair coach",
           date: data.start_date && data.end_date ? `${data.start_date} to ${data.end_date}` : "",
           chips: [`${data.requested_metrics.length} metrics`, data.source || ""].filter(Boolean),
           score: clamp(Number(data.record_count || 0), 0, 100),
@@ -1274,8 +1275,8 @@ TODAY_WIDGET_HTML = """
         root.innerHTML = `
           <div class="mast">
             <div class="identity">
-              <p class="eyebrow">${escapeHtml(model.eyebrow || "Mehair Coach")}</p>
-              <h1>${escapeHtml(model.title || "Mehair Coach")}</h1>
+              <p class="eyebrow">${escapeHtml(model.eyebrow || "mehair coach")}</p>
+              <h1>${escapeHtml(model.title || "mehair coach")}</h1>
               <p class="headline">${escapeHtml(model.headline || "Health context synced.")}</p>
             </div>
             <div class="stamp">${escapeHtml(model.date || "")}</div>
@@ -1338,7 +1339,7 @@ TODAY_WIDGET_HTML = """
         const usable = (signals || []).filter((item) => item && item.label).slice(0, 6);
         if (!usable.length) return "";
         return `
-          <div class="signal-heading">Other signals checked</div>
+          <div class="signal-heading">Other signals checked for this answer</div>
           <div class="signal-strip" aria-label="Signals checked">
             ${usable.map((item) => `
               <div class="signal-card">
@@ -1367,16 +1368,16 @@ TODAY_WIDGET_HTML = """
 
       function prioritySignalStrip(signals) {
         const priority = [
-          "sleep",
-          "hrv",
-          "resting_heart_rate",
-          "active_zone_minutes",
-          "heart_rate_zones",
           "spo2",
           "respiratory_rate",
           "sleep_temperature",
           "vo2_max",
+          "heart_rate_zones",
+          "active_zone_minutes",
           "steps",
+          "sleep",
+          "hrv",
+          "resting_heart_rate",
         ];
         const rank = (signal) => {
           const id = String(signal.id || "").toLowerCase();

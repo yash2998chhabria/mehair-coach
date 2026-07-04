@@ -1,6 +1,6 @@
-# Mehair Coach
+# mehair coach
 
-Mehair Coach is a private-beta ChatGPT App for personal health and fitness coaching from Google Health / Fitbit data.
+mehair coach is a private-beta ChatGPT App for personal health and fitness coaching from Google Health / Fitbit data.
 
 ChatGPT provides the conversation. This repo provides the Python MCP server that connects a user to Google Health, syncs their Fitbit-backed data, stores it securely, and exposes coaching tools plus inline health cards.
 
@@ -63,7 +63,7 @@ Food and nutrition scopes are intentionally excluded.
 ```mermaid
 flowchart LR
   User["User in ChatGPT"] --> ChatGPT["ChatGPT App"]
-  ChatGPT --> MCP["Mehair Coach MCP /mcp"]
+  ChatGPT --> MCP["mehair coach MCP /mcp"]
   MCP --> OAuth["App OAuth"]
   OAuth --> Google["Google OAuth"]
   MCP --> Health["Google Health API"]

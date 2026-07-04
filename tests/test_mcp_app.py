@@ -117,13 +117,13 @@ async def test_http_metadata_routes() -> None:
         protected = await client.get("/.well-known/oauth-protected-resource")
 
     assert health.status_code == 200
-    assert health.json()["name"] == "Mehair Coach"
+    assert health.json()["name"] == "mehair coach"
     assert health.json()["mcp_endpoint"].endswith("/mcp")
     assert icon.status_code == 200
     assert icon.headers["content-type"].startswith("image/svg+xml")
     assert "#d63384" in icon.text
     assert oauth.status_code == 200
-    assert oauth.json()["client_name"] == "Mehair Coach"
+    assert oauth.json()["client_name"] == "mehair coach"
     assert oauth.json()["logo_uri"].endswith("/assets/mehair-coach-icon.svg")
     assert oauth.json()["authorization_endpoint"].endswith("/oauth/authorize")
     assert protected.status_code == 200
@@ -165,7 +165,7 @@ async def test_widget_preview_route_renders_real_card_state() -> None:
     assert "HRV = recovery stress signal" in overview.text
     assert "AZM = Fitbit hard-work minutes" in overview.text
     assert "Signals checked" in overview.text
-    assert "Other signals checked" in overview.text
+    assert "Other signals checked for this answer" in overview.text
     assert "signal-strip" in overview.text
     assert "&lt;55 red" in overview.text
     assert "Vitals" in overview.text
@@ -176,7 +176,7 @@ async def test_widget_preview_route_renders_real_card_state() -> None:
     assert safety.status_code == 200
     assert "Should I worry about my high heart rate and dizziness?" in safety.text
     assert "Health Check" in safety.text
-    assert "Mehair Coach" in safety.text
+    assert "mehair coach" in safety.text
     assert active_workout.status_code == 200
     assert "Active Workout" in active_workout.text
     assert "stop_and_assess" in active_workout.text

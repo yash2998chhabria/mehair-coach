@@ -10,6 +10,8 @@ from datetime import UTC, date, datetime, timedelta
 from time import monotonic
 from typing import Any
 
+import httpx
+
 from .auth import AuthService
 from .db import Database, dumps, loads
 from .google_health import GoogleHealthClient, SYNC_DATA_TYPE_IDS, SYNC_DATA_TYPES, metric_catalog
@@ -301,6 +303,17 @@ class HealthStore:
                 len(specs),
             )
             semaphore = asyncio.Semaphore(concurrency)
+            http_timeout = httpx.Timeout(
+                metric_timeout + 1,
+                connect=min(2.0, float(metric_timeout)),
+                read=metric_timeout + 1,
+                write=metric_timeout + 1,
+                pool=min(2.0, float(metric_timeout)),
+            )
+            http_limits = httpx.Limits(
+                max_connections=concurrency,
+                max_keepalive_connections=concurrency,
+            )
 
             async def fetch_one(spec: Any) -> dict[str, Any]:
                 remaining = deadline - monotonic()
@@ -332,6 +345,7 @@ class HealthStore:
                                 end_date=end_date,
                                 timeout_seconds=timeout,
                                 page_limit=page_limit,
+                                client=google_http,
                             ),
                             timeout=timeout + 1,
                         )
@@ -373,31 +387,32 @@ class HealthStore:
                         ),
                     }
 
-            pending_by_task = {asyncio.create_task(fetch_one(spec)): spec for spec in specs}
-            completed_results: list[dict[str, Any]] = []
-            pending = set(pending_by_task)
-            while pending:
-                remaining = deadline - monotonic()
-                if remaining <= 0:
-                    time_budget_exhausted = True
-                    break
-                done, pending = await asyncio.wait(
-                    pending,
-                    timeout=remaining,
-                    return_when=asyncio.FIRST_COMPLETED,
-                )
-                if not done:
-                    time_budget_exhausted = True
-                    break
-                for task in done:
-                    completed_results.append(task.result())
+            async with httpx.AsyncClient(timeout=http_timeout, limits=http_limits) as google_http:
+                pending_by_task = {asyncio.create_task(fetch_one(spec)): spec for spec in specs}
+                completed_results: list[dict[str, Any]] = []
+                pending = set(pending_by_task)
+                while pending:
+                    remaining = deadline - monotonic()
+                    if remaining <= 0:
+                        time_budget_exhausted = True
+                        break
+                    done, pending = await asyncio.wait(
+                        pending,
+                        timeout=remaining,
+                        return_when=asyncio.FIRST_COMPLETED,
+                    )
+                    if not done:
+                        time_budget_exhausted = True
+                        break
+                    for task in done:
+                        completed_results.append(task.result())
 
-            if pending:
-                time_budget_exhausted = True
-                metrics_deferred.extend(pending_by_task[task].id for task in pending)
-                for task in pending:
-                    task.cancel()
-                await asyncio.gather(*pending, return_exceptions=True)
+                if pending:
+                    time_budget_exhausted = True
+                    metrics_deferred.extend(pending_by_task[task].id for task in pending)
+                    for task in pending:
+                        task.cancel()
+                    await asyncio.gather(*pending, return_exceptions=True)
 
             successful_results: list[dict[str, Any]] = []
             for result_item in completed_results:
@@ -652,7 +667,9 @@ class HealthStore:
         end_date: str,
         timeout_seconds: int,
         page_limit: int,
+        client: httpx.AsyncClient | None = None,
     ) -> list[dict[str, Any]]:
+        client_kwargs = {"client": client} if client is not None and isinstance(self.google, GoogleHealthClient) else {}
         if spec.operation == "dailyRollUp":
             return await self.google.daily_rollup(
                 access_token,
@@ -660,6 +677,7 @@ class HealthStore:
                 start_date,
                 end_date,
                 timeout_seconds=timeout_seconds,
+                **client_kwargs,
             )
         return await self.google.list_data_points(
             access_token,
@@ -668,6 +686,7 @@ class HealthStore:
             end_time,
             timeout_seconds=timeout_seconds,
             max_pages=page_limit,
+            **client_kwargs,
         )
 
     def _sync_specs(self) -> list[Any]:
@@ -1273,6 +1292,7 @@ class HealthStore:
             },
             "daily_brief": daily_brief,
             "available_signal_snapshot": signal_snapshot,
+            "model_signal_context": model_signal_context(signal_snapshot),
             "positives": positives,
             "watchouts": watchouts,
             "next_actions": next_actions,
@@ -1528,6 +1548,7 @@ class HealthStore:
             "headline": _question_clue_headline(intents, context, comparison),
             "intent_hints": intents,
             "recommended_tool_sequence": _recommended_tool_sequence(intents, context.get("data_freshness", {})),
+            "conversation_flow_options": _conversation_flow_options(context.get("data_freshness", {})),
             "relevant_metrics": relevant_metrics,
             "available_metric_ids": [item["id"] for item in relevant_metrics if item["records"] > 0],
             "missing_metric_ids": [item["id"] for item in relevant_metrics if item["records"] == 0],
@@ -1548,11 +1569,13 @@ class HealthStore:
             "today": _compact_today_context(context["today"]),
             "overview_context": _compact_overview_context(overview),
             "available_signal_snapshot": signal_snapshot,
+            "model_signal_context": model_signal_context(signal_snapshot),
             "personal_context": personal_context,
             "recovery_comparison": _compact_recovery_comparison(comparison),
             "data_freshness": context["data_freshness"],
             "answering_guidance": [
                 "Use the relevant_metrics list to decide which synced signals to inspect next.",
+                "Use conversation_flow_options when the user's wording is informal, broad, or not well captured by intent_hints.",
                 "Use available_signal_snapshot for broad, all-data, oxygen, breathing, or unusual-pattern questions so secondary signals are not ignored.",
                 "Mention normal secondary signals briefly as context when they do not change the workout call.",
                 "Treat missing metrics as absent, not zero.",
@@ -1697,7 +1720,13 @@ def setup_required(message: str = "Connect Google Health before using health too
         "status": "setup_required",
         "google_connected": False,
         "message": message,
+        "plain_english_state": "I cannot see Fitbit or Google Health data until this ChatGPT user connects Google Health.",
         "next_actions": ["Connect Google Health from the ChatGPT app OAuth prompt."],
+        "what_to_expect": [
+            "After Google Health is connected, run sync_latest_fitbit_data to pull the user's private cloud-synced Fitbit data.",
+            "Until then, answer only with setup guidance and do not infer health stats.",
+        ],
+        "conversation_flow_options": _conversation_flow_options(setup_state=True),
     }
 
 
@@ -1705,7 +1734,13 @@ def empty_data(message: str = "No Fitbit data has synced yet.") -> dict[str, Any
     return {
         "status": "empty",
         "message": message,
+        "plain_english_state": "Google Health may be connected, but this private store has no synced Fitbit records yet.",
         "next_actions": ["Run sync_latest_fitbit_data after connecting Google Health."],
+        "what_to_expect": [
+            "The first sync starts the user's personal data history for this app.",
+            "If sync returns no records, explain that the app has no wearable context yet instead of fabricating a plan.",
+        ],
+        "conversation_flow_options": _conversation_flow_options(empty_state=True),
     }
 
 
@@ -2353,6 +2388,85 @@ def _available_signal_snapshot(
     }
 
 
+def model_signal_context(snapshot: dict[str, Any]) -> dict[str, Any]:
+    signals = snapshot.get("signals") or []
+    if snapshot.get("status") != "ok" or not signals:
+        return {
+            "status": "missing",
+            "model_guidance": (
+                "No synced signal snapshot is available. Answer with setup or empty-state guidance "
+                "instead of inventing health data."
+            ),
+        }
+
+    by_id = {str(signal.get("id") or ""): signal for signal in signals}
+
+    def pack(signal_ids: tuple[str, ...]) -> list[dict[str, Any]]:
+        packed: list[dict[str, Any]] = []
+        for signal_id in signal_ids:
+            signal = by_id.get(signal_id)
+            if not signal:
+                continue
+            packed.append(
+                {
+                    "id": signal_id,
+                    "label": signal.get("label"),
+                    "latest": signal.get("display"),
+                    "latest_date": signal.get("latest_date"),
+                    "confidence": signal.get("confidence"),
+                    "why_it_matters": signal.get("why_it_matters"),
+                    "coaching_use": signal.get("coaching_use"),
+                    "use_when": signal.get("use_when") or [],
+                    "window_summary": signal.get("window_summary") or {},
+                }
+            )
+        return packed
+
+    return {
+        "status": "ok",
+        "date_range": snapshot.get("date_range"),
+        "all_available_signal_ids": snapshot.get("available_signal_ids", []),
+        "decision_order": [
+            "Start from the user's actual goal, current feeling, symptoms, time budget, and future plans.",
+            "Use readiness, sleep, HRV, resting heart rate, and recent load as the primary train-hard-or-control call.",
+            "Use SpO2, respiratory rate, and sleep temperature as caution/context signals; normal values are reassuring background, not permission for max effort.",
+            "Use AZM, heart-rate zones, steps, distance, floors, active minutes, and active energy as load-window signals; always include the date/window when they matter.",
+            "Use VO2 max for cardio capacity, endurance planning, and progress context, not same-day recovery permission.",
+            "Use live user-reported HR, RPE, pain, symptoms, and elapsed time for in-session decisions because the MCP is not direct band telemetry.",
+        ],
+        "signal_groups": {
+            "primary_recovery": pack(
+                ("sleep_duration", "hrv", "resting_heart_rate", "active_zone_minutes")
+            ),
+            "breathing_temperature_caution": pack(
+                ("spo2", "respiratory_rate", "sleep_temperature")
+            ),
+            "activity_load_window": pack(
+                (
+                    "active_zone_minutes",
+                    "heart_rate_zones",
+                    "steps",
+                    "active_minutes",
+                    "distance",
+                    "floors",
+                    "activity_levels",
+                    "sedentary_minutes",
+                    "active_energy",
+                )
+            ),
+            "capacity_progress": pack(("vo2_max",)),
+            "in_session_context": pack(("heart_rate_samples", "heart_rate_zones")),
+        },
+        "answer_contract": [
+            "Say the practical decision first, then explain the smallest set of signals that changed it.",
+            "For every metric shown, say what it means in plain English and whether it is a primary driver, secondary clue, or background context.",
+            "When a signal is normal but relevant, say it was checked and why it did not change the recommendation.",
+            "Never turn a green readiness score, normal SpO2, or high VO2 max into automatic permission for all-out work.",
+            "Do not treat missing values as zero; say they are not synced or not available.",
+        ],
+    }
+
+
 def _recovery_row(day: str, values: dict[str, Any]) -> dict[str, Any]:
     sleep = values.get("sleep", {})
     hrv_sample = values.get("hrv_sample_ms") or {}
@@ -2819,6 +2933,190 @@ def _recommended_tool_sequence(intents: list[str], freshness: dict[str, Any]) ->
     if "activity_load" in intents:
         tools.extend(["get_activity_load", "get_workout_history"])
     return _dedupe(tools)
+
+
+def _conversation_flow_options(
+    freshness: dict[str, Any] | None = None,
+    *,
+    setup_state: bool = False,
+    empty_state: bool = False,
+) -> list[dict[str, Any]]:
+    freshness = freshness or {}
+    sync_prefix = (
+        ["get_data_freshness", "sync_latest_fitbit_data"]
+        if freshness.get("needs_sync_before_time_sensitive_advice")
+        else []
+    )
+    freshness_policy = (
+        freshness.get("recommendation")
+        or "Use already-synced data for normal coaching; sync only when the user asks or freshness is stale."
+    )
+
+    if setup_state:
+        return [
+            {
+                "flow": "connect_first",
+                "use_for": [
+                    "new ChatGPT user",
+                    "friend has not connected Google Health",
+                    "OAuth required",
+                ],
+                "primary_tools": ["connect_google_health_status"],
+                "model_instruction": "Explain that this app starts empty per user and cannot see Fitbit data until Google Health OAuth is completed.",
+            }
+        ]
+
+    if empty_state:
+        return [
+            {
+                "flow": "first_sync_after_connect",
+                "use_for": [
+                    "connected account with no synced records",
+                    "first run after setup",
+                    "friend or new user empty state",
+                ],
+                "primary_tools": ["connect_google_health_status", "sync_latest_fitbit_data"],
+                "model_instruction": "Ask the user to sync before coaching from data; if sync is still empty, say there is not enough wearable context yet.",
+            }
+        ]
+
+    return [
+        {
+            "flow": "daily_training_decision",
+            "use_for": [
+                "train hard today",
+                "green light to push",
+                "low energy but want to move",
+                "run vs lift today",
+                "what should I do today",
+            ],
+            "primary_tools": [*sync_prefix, "recommend_workout_today"],
+            "supporting_tools": ["get_health_overview", "get_recovery_signal_comparison"],
+            "data_surfaces_to_use": [
+                "training_decision",
+                "coach_response",
+                "available_signal_snapshot",
+                "data_freshness",
+                "goal_context",
+                "subjective_context",
+            ],
+            "model_instruction": (
+                "Turn the data into a specific session type, duration, intensity, RPE cap, avoid-list, "
+                "and the signals that would change the call."
+            ),
+            "freshness_policy": freshness_policy,
+        },
+        {
+            "flow": "specific_activity_plan",
+            "use_for": [
+                "hike tomorrow",
+                "legs sore but want to lift",
+                "upper body or run",
+                "specific sport or muscle group",
+            ],
+            "primary_tools": [*sync_prefix, "plan_workout_with_health_context"],
+            "supporting_tools": ["recommend_workout_today", "get_activity_load"],
+            "data_surfaces_to_use": [
+                "training_decision",
+                "coach_response",
+                "available_signal_snapshot",
+                "goal_context",
+                "recent_checkins",
+            ],
+            "model_instruction": (
+                "Put the actual workout in planned_activity and keep future events, soreness, pain, "
+                "time limits, and energy preservation in constraints."
+            ),
+            "freshness_policy": freshness_policy,
+        },
+        {
+            "flow": "active_workout_pacing",
+            "use_for": [
+                "during workout",
+                "heart rate is high",
+                "RPE or pain reported",
+                "should I keep going or stop",
+            ],
+            "primary_tools": ["guide_active_workout"],
+            "supporting_tools": ["get_data_freshness"],
+            "data_surfaces_to_use": [
+                "coach_response",
+                "training_decision",
+                "data_freshness",
+                "available_signal_snapshot",
+                "live_inputs_are_user_reported",
+            ],
+            "model_instruction": (
+                "Use live user-reported HR, RPE, pain, symptoms, elapsed time, and synced readiness/load; "
+                "do not describe synced Fitbit context as a live band stream."
+            ),
+            "freshness_policy": "Synced context can be background during a workout; live HR/RPE/pain must come from the user's report.",
+        },
+        {
+            "flow": "sleep_breathing_recovery_question",
+            "use_for": [
+                "compare sleep and heart",
+                "SpO2 or respiratory rate concern",
+                "illness suspicion",
+                "why do I feel tired",
+            ],
+            "primary_tools": [*sync_prefix, "get_recovery_signal_comparison"],
+            "supporting_tools": ["query_health_metrics", "get_sleep_analysis", "get_heart_trends"],
+            "data_surfaces_to_use": [
+                "recovery_comparison",
+                "available_signal_snapshot",
+                "query_suggestions",
+                "safety_flags",
+            ],
+            "model_instruction": (
+                "Explain which signals agree or disagree. Treat oxygen, respiratory rate, and sleep "
+                "temperature as context with symptoms and heart/sleep patterns, not as standalone diagnosis."
+            ),
+            "freshness_policy": freshness_policy,
+        },
+        {
+            "flow": "weekly_training_planning",
+            "use_for": [
+                "weekly plan",
+                "training consistency",
+                "goal progress",
+                "how much have I done",
+            ],
+            "primary_tools": ["get_health_overview", "get_activity_load", "get_workout_history"],
+            "supporting_tools": ["recommend_workout_today"],
+            "data_surfaces_to_use": [
+                "overview_context",
+                "goal_context",
+                "activity_load",
+                "workout_history",
+                "available_signal_snapshot",
+            ],
+            "model_instruction": (
+                "Separate past load from what to do next; name the window for steps/AZM/workouts and "
+                "turn it into the smallest useful next move."
+            ),
+            "freshness_policy": freshness_policy,
+        },
+        {
+            "flow": "metric_discovery_or_unusual_question",
+            "use_for": [
+                "what other data matters",
+                "use all my data",
+                "which metrics should you inspect",
+                "unusual pattern",
+            ],
+            "primary_tools": ["list_available_health_metrics", "query_health_metrics"],
+            "supporting_tools": ["get_health_question_clues", "get_health_overview"],
+            "data_surfaces_to_use": [
+                "metric_catalog_model_guidance",
+                "query_suggestions",
+                "available_signal_snapshot",
+                "relevant_metrics",
+            ],
+            "model_instruction": "Let the user's question choose the metrics; use missing metrics as unknown, never as zero.",
+            "freshness_policy": freshness_policy,
+        },
+    ]
 
 
 def _metric_query_suggestions(
@@ -3606,7 +3904,9 @@ def _compact_overview_context(overview: dict[str, Any]) -> dict[str, Any]:
         "workouts": sections.get("workouts"),
         "personal_context": overview.get("personal_context"),
         "data_coverage": overview.get("data_coverage"),
-        "available_signal_snapshot": overview.get("available_signal_snapshot"),
+        "available_signal_summary": _compact_signal_snapshot_reference(
+            overview.get("available_signal_snapshot")
+        ),
     }
 
 
@@ -3623,7 +3923,21 @@ def _compact_recovery_comparison(comparison: dict[str, Any]) -> dict[str, Any]:
         "insights": comparison.get("insights"),
         "watchouts": comparison.get("watchouts"),
         "positives": comparison.get("positives"),
-        "available_signal_snapshot": comparison.get("available_signal_snapshot"),
+        "available_signal_summary": _compact_signal_snapshot_reference(
+            comparison.get("available_signal_snapshot")
+        ),
+    }
+
+
+def _compact_signal_snapshot_reference(snapshot: dict[str, Any] | None) -> dict[str, Any]:
+    snapshot = snapshot or {}
+    return {
+        "status": snapshot.get("status"),
+        "window_days": snapshot.get("window_days"),
+        "date_range": snapshot.get("date_range"),
+        "available_signal_ids": snapshot.get("available_signal_ids", []),
+        "available_categories": snapshot.get("available_categories", []),
+        "signal_count": len(snapshot.get("signals") or []),
     }
 
 

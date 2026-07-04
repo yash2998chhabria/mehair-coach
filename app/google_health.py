@@ -93,12 +93,15 @@ class GoogleHealthClient:
         page_size: int = 1000,
         timeout_seconds: int = 8,
         max_pages: int = 8,
+        client: httpx.AsyncClient | None = None,
     ) -> list[dict[str, Any]]:
         records: list[dict[str, Any]] = []
         page_token = ""
         pages = 0
         timeout = _http_timeout(timeout_seconds)
-        async with httpx.AsyncClient(timeout=timeout) as client:
+
+        async def fetch_pages(http_client: httpx.AsyncClient) -> list[dict[str, Any]]:
+            nonlocal page_token, pages
             while pages < max(1, max_pages):
                 params: dict[str, str | int] = {"pageSize": page_size}
                 if page_token:
@@ -106,9 +109,10 @@ class GoogleHealthClient:
                 filter_value = self._filter(spec, start_time, end_time)
                 if filter_value:
                     params["filter"] = filter_value
-                response = await client.get(
+                response = await http_client.get(
                     f"{self.base_url}/users/me/dataTypes/{spec.id}/dataPoints?{urlencode(params)}",
                     headers={"Authorization": f"Bearer {access_token}"},
+                    timeout=timeout,
                 )
                 response.raise_for_status()
                 body = response.json()
@@ -117,6 +121,12 @@ class GoogleHealthClient:
                 pages += 1
                 if not page_token:
                     break
+            return records
+
+        if client is not None:
+            return await fetch_pages(client)
+        async with httpx.AsyncClient(timeout=timeout) as local_client:
+            await fetch_pages(local_client)
         return records
 
     async def daily_rollup(
@@ -126,6 +136,7 @@ class GoogleHealthClient:
         start_date: str,
         end_date: str,
         timeout_seconds: int = 8,
+        client: httpx.AsyncClient | None = None,
     ) -> list[dict[str, Any]]:
         body = {
             "range": {
@@ -136,15 +147,24 @@ class GoogleHealthClient:
             "pageSize": 8,
             "dataSourceFamily": "users/me/dataSourceFamilies/google-wearables",
         }
-        async with httpx.AsyncClient(timeout=_http_timeout(timeout_seconds)) as client:
-            response = await client.post(
+        timeout = _http_timeout(timeout_seconds)
+
+        async def post_rollup(http_client: httpx.AsyncClient) -> httpx.Response:
+            return await http_client.post(
                 f"{self.base_url}/users/me/dataTypes/{spec.id}/dataPoints:dailyRollUp",
                 headers={
                     "Authorization": f"Bearer {access_token}",
                     "Content-Type": "application/json",
                 },
                 json=body,
+                timeout=timeout,
             )
+
+        if client is not None:
+            response = await post_rollup(client)
+        else:
+            async with httpx.AsyncClient(timeout=timeout) as local_client:
+                response = await post_rollup(local_client)
         response.raise_for_status()
         payload = response.json()
         return payload.get("rollupDataPoints", payload.get("dataPoints", []))

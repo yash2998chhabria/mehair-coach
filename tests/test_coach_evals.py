@@ -502,6 +502,18 @@ def test_eval_natural_prompt_mix_is_not_biased_to_off_day_language(tmp_path, mon
     assert "reserve_energy_or_future_event" not in plain_cues
     assert "no_special_constraint_detected" in plain_cues
 
+    informal_training = store.health_question_clues(
+        user_id,
+        "Do I have the green light to send it at the gym today?",
+        days=7,
+    )
+    flows = {item["flow"]: item for item in informal_training["conversation_flow_options"]}
+    daily_flow = flows["daily_training_decision"]
+    assert "recommend_workout_today" in daily_flow["primary_tools"]
+    assert "available_signal_snapshot" in daily_flow["data_surfaces_to_use"]
+    assert "training_decision" in daily_flow["data_surfaces_to_use"]
+    assert any("conversation_flow_options" in item for item in informal_training["answering_guidance"])
+
 
 def test_eval_question_clues_include_human_decision_frame_for_life_constraints(tmp_path, monkeypatch) -> None:
     freeze_now(monkeypatch)

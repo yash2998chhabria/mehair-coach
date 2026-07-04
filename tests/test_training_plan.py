@@ -558,6 +558,33 @@ def test_active_workout_stops_for_dizziness_even_when_readiness_is_green() -> No
             "sleep": {"asleep_hours": 8.0, "sessions_count": 1},
             "latest_training_load": {"date": "2026-07-03", "active_zone_minutes": 35},
         },
+        "available_signal_snapshot": {
+            "status": "ok",
+            "available_signal_ids": ["heart_rate_samples", "heart_rate_zones", "spo2"],
+            "signals": [
+                {
+                    "id": "heart_rate_samples",
+                    "label": "Heart rate samples",
+                    "display": "142 bpm avg",
+                    "coaching_use": "Use sample heart rate for recent effort context; use live user-reported HR for in-session decisions.",
+                    "use_when": ["active_workout"],
+                },
+                {
+                    "id": "heart_rate_zones",
+                    "label": "Heart-rate zones",
+                    "display": "cardio 18m, peak 2m",
+                    "coaching_use": "More peak/cardio zone time should push the next session toward easy volume, technique, or strength away from fatigue.",
+                    "use_when": ["active_workout"],
+                },
+                {
+                    "id": "spo2",
+                    "label": "SpO2 / oxygen saturation",
+                    "display": "96.5%",
+                    "coaching_use": "Use low or unusual SpO2 with respiratory rate, resting HR, sleep, and symptoms to lower intensity or recommend caution.",
+                    "use_when": ["breathing"],
+                },
+            ],
+        },
     }
 
     guidance = active_workout_guidance(
@@ -577,6 +604,15 @@ def test_active_workout_stops_for_dizziness_even_when_readiness_is_green() -> No
     assert any("Stop the set or interval now" in item for item in guidance["immediate_actions"])
     assert any("Live heart rate reported: 178 bpm" in item for item in guidance["evidence"])
     assert guidance["live_inputs"]["current_rpe"] == 9
+    assert guidance["model_signal_context"]["status"] == "ok"
+    assert any(
+        "not direct band telemetry" in item
+        for item in guidance["model_signal_context"]["decision_order"]
+    )
+    assert any(
+        item["id"] == "heart_rate_samples"
+        for item in guidance["model_signal_context"]["signal_groups"]["in_session_context"]
+    )
 
 
 def test_active_workout_downshifts_for_high_effort_without_urgent_symptoms() -> None:
@@ -1290,6 +1326,15 @@ def test_today_recommendation_returns_human_coach_response_without_losing_labels
     assert recommendation["training_decision"]["hard_training"] == "conditional"
     assert recommendation["training_decision"]["rpe_cap"] == 7
     assert any("breathing" in item.lower() or "oxygen" in item.lower() for item in recommendation["training_decision"]["reasons_for"])
+    assert recommendation["model_signal_context"]["status"] == "ok"
+    assert any(
+        item["id"] == "vo2_max"
+        for item in recommendation["model_signal_context"]["signal_groups"]["capacity_progress"]
+    )
+    assert any(
+        "normal SpO2" in item
+        for item in recommendation["model_signal_context"]["answer_contract"]
+    )
     assert any("I only have 30 minutes" in item for item in recommendation["coach_response"]["realistic_follow_ups"])
     assert any("If I still feel off" in item for item in recommendation["coach_response"]["realistic_follow_ups"])
 
