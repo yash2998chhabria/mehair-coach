@@ -130,6 +130,33 @@ def test_freshness_uses_15_and_60_minute_sync_windows(monkeypatch) -> None:
     assert stale["needs_sync_before_time_sensitive_advice"] is True
 
 
+def test_partial_recent_sync_does_not_skip_when_core_coverage_is_missing(tmp_path, monkeypatch) -> None:
+    fixed_now = datetime(2026, 7, 3, 12, 0, tzinfo=UTC)
+    monkeypatch.setattr(health_store_module, "utc_now", lambda: fixed_now)
+    monkeypatch.setattr(health_store_module, "iso_now", lambda: fixed_now.isoformat())
+    _, store = make_store(tmp_path)
+    user_id = create_user(store.db, "partial_coverage_user")
+    store.upsert_records(
+        user_id,
+        "steps",
+        [
+            {
+                "name": "steps-only",
+                "steps": {"count": 1200},
+                "interval": {"startTime": "2026-07-03T11:55:00Z"},
+            }
+        ],
+    )
+    sync_id = store._start_sync(user_id, fixed_now.isoformat())
+    store._finish_sync(sync_id, "partial", 1, "Only one metric saved.")
+
+    freshness = store.freshness(user_id)
+    assert freshness["freshness_level"] == "fresh"
+    assert freshness["metric_coverage"]["core_recovery_ready"] is False
+    assert "sleep" in freshness["metric_coverage"]["missing_required_for_recent_skip"]
+    assert store._recent_sync_result(user_id, include_context=False) is None
+
+
 @pytest.mark.asyncio
 async def test_sync_returns_at_live_budget_when_answer_ready(tmp_path, monkeypatch) -> None:
     fixed_now = datetime(2026, 7, 3, 12, 0, tzinfo=UTC)

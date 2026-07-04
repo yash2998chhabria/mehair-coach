@@ -436,6 +436,13 @@ LIVE_READY_METRICS = {
     "daily-oxygen-saturation",
     "daily-sleep-temperature-derivations",
 }
+ESSENTIAL_FRESHNESS_METRICS = {
+    "sleep",
+    "daily-resting-heart-rate",
+    "daily-heart-rate-variability",
+    "active-zone-minutes",
+    "steps",
+}
 SYNC_METRIC_TIMEOUT_CAP_SECONDS = 4
 SYNC_REQUEST_BUDGET_CAP_SECONDS = 16
 SYNC_METRIC_PAGE_LIMIT_CAP = 4
@@ -1113,6 +1120,9 @@ class HealthStore:
         freshness = self.freshness(user_id)
         if freshness.get("status") != "ok":
             return None
+        coverage = freshness.get("metric_coverage") or {}
+        if last_finished["status"] == "partial" and coverage.get("core_recovery_ready") is False:
+            return None
         sync_age = freshness.get("sync_age_minutes")
         if (
             freshness.get("freshness_level") != "fresh"
@@ -1534,23 +1544,42 @@ class HealthStore:
         }
 
     def freshness(self, user_id: str) -> dict[str, Any]:
-        row = self.db.one(
+        rows = self.db.all(
             """
-            SELECT COUNT(*) AS records, MAX(observed_date) AS latest_observed,
+            SELECT data_type, COUNT(*) AS records, MAX(observed_date) AS latest_observed,
                    MAX(synced_at) AS last_sync
             FROM raw_health_records
             WHERE user_id = ?
+            GROUP BY data_type
             """,
             (user_id,),
         )
-        if not row or row["records"] == 0:
+        if not rows:
             return empty_data()
+        total_records = sum(int(row["records"] or 0) for row in rows)
+        latest_observed = max((row["latest_observed"] for row in rows if row["latest_observed"]), default=None)
+        last_sync = max((row["last_sync"] for row in rows if row["last_sync"]), default=None)
+        metric_ids = {str(row["data_type"]) for row in rows}
+        missing_core = sorted(ESSENTIAL_FRESHNESS_METRICS - metric_ids)
+        missing_live = sorted(LIVE_READY_METRICS - metric_ids)
         return {
             "status": "ok",
-            "records": row["records"],
-            "latest_observed_date": row["latest_observed"],
-            "last_sync": row["last_sync"],
-            **freshness_details(row["latest_observed"], row["last_sync"]),
+            "records": total_records,
+            "latest_observed_date": latest_observed,
+            "last_sync": last_sync,
+            **freshness_details(latest_observed, last_sync),
+            "metric_coverage": {
+                "metrics_present": sorted(metric_ids),
+                "required_for_recent_skip": sorted(ESSENTIAL_FRESHNESS_METRICS),
+                "missing_required_for_recent_skip": missing_core,
+                "core_recovery_ready": not missing_core,
+                "missing_live_ready_metrics": missing_live,
+                "coverage_note": (
+                    "Fresh timestamp plus core sleep, heart, load, and steps are present."
+                    if not missing_core
+                    else "Fresh timestamp exists, but core sleep/heart/load/step coverage is incomplete."
+                ),
+            },
         }
 
     def latest_context(self, user_id: str) -> dict[str, Any]:

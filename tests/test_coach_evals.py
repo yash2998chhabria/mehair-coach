@@ -9,7 +9,7 @@ from app.auth import AuthService
 from app.crypto import generate_key
 from app.db import Database
 from app.health_store import HealthStore
-from app.main import workout_recommendation
+from app.main import _question_clues_should_attach_card, workout_recommendation
 from app.settings import Settings
 from app.time_utils import iso_now
 
@@ -751,6 +751,7 @@ def test_eval_natural_prompt_mix_is_not_biased_to_off_day_language(tmp_path, mon
         assert "capacity_progress" in prompt_axes
         assert clues["primary_conversation_flows"][0]["flow"] == "daily_training_decision"
         assert "recommend_workout_today" in clues["recommended_tool_sequence"]
+        assert _question_clues_should_attach_card(clues, question)
         assert any("Human answer first" in item for item in prompt_policy["answer_style"])
         assert "i feel a little off" not in json.dumps(clues).lower()
 

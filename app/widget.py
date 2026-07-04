@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 
 
-WIDGET_URI = "ui://mehair/today-v32.html"
+WIDGET_URI = "ui://mehair/today-v33.html"
 LEGACY_WIDGET_URIS = (
     "ui://mehair/today-v1.html",
     "ui://mehair/today-v2.html",
@@ -36,6 +36,7 @@ LEGACY_WIDGET_URIS = (
     "ui://mehair/today-v29.html",
     "ui://mehair/today-v30.html",
     "ui://mehair/today-v31.html",
+    "ui://mehair/today-v32.html",
 )
 WIDGET_RESOURCE_URIS = (WIDGET_URI, *LEGACY_WIDGET_URIS)
 WIDGET_MIME_TYPE = "text/html;profile=mcp-app"
@@ -212,6 +213,17 @@ TODAY_WIDGET_HTML = """
         font-size: 12px;
         font-weight: 680;
         line-height: 1.3;
+      }
+
+      .source-note {
+        margin: 0;
+        border-top: 1px solid #f7deea;
+        background: #fffafd;
+        color: #5d6670;
+        font-size: 12px;
+        font-weight: 650;
+        line-height: 1.35;
+        padding: 8px 14px;
       }
 
       .chip {
@@ -1089,7 +1101,7 @@ TODAY_WIDGET_HTML = """
             ["HRV change", deltas.hrv_percent_delta != null ? `${signed(deltas.hrv_percent_delta)}%` : null],
             ["Resting HR", latest.resting_heart_rate != null ? `${latest.resting_heart_rate} bpm` : null, baseline.resting_heart_rate != null ? `usual ${num(baseline.resting_heart_rate, 1)}` : ""],
             ["Load", latest.active_zone_minutes != null ? `${latest.active_zone_minutes} AZM` : null, baseline.active_zone_minutes != null ? `usual ${num(baseline.active_zone_minutes, 1)}` : ""],
-            ["Respiratory rate", latest.respiratory_rate != null ? `${num(latest.respiratory_rate, 1)}` : null, baseline.respiratory_rate != null ? `usual ${num(baseline.respiratory_rate, 1)}` : "", "Breathing rate context."],
+            ["Respiratory rate", latest.respiratory_rate != null ? `${num(latest.respiratory_rate, 1)} breaths/min` : null, baseline.respiratory_rate != null ? `usual ${num(baseline.respiratory_rate, 1)} breaths/min` : "", "Breathing rate context."],
             ["SpO2", latest.spo2_avg != null ? `${num(latest.spo2_avg, 1)}%` : null, baseline.spo2_avg != null ? `usual ${num(baseline.spo2_avg, 1)}%` : "", "Oxygen context, not a standalone go signal."],
             ["Sleep temperature", sleepTemp.delta_celsius != null ? `${signed(sleepTemp.delta_celsius)} C` : null, "change from usual", "Temperature deviation is a secondary clue."],
           ].filter((item) => item[1] != null),
@@ -1327,6 +1339,7 @@ TODAY_WIDGET_HTML = """
           showScore: !safety.length,
           primaryLabel: "Readiness",
           headline: coach.short_answer || data.headline || "Use live symptoms and effort to adjust the session.",
+          sourceNote: data.live_data_note || "In-session HR, effort, pain, and symptoms are user-reported; Fitbit context is the latest synced background data.",
           focusTitle: activeWorkoutFocusTitle(data, coach, safety),
           focus: activeWorkoutFocus(data, coach, safety),
           labels: coach.labels_explained || defaultLabelKey(["HR", "RPE", "Readiness", "AZM"]),
@@ -1482,11 +1495,17 @@ TODAY_WIDGET_HTML = """
 
       function dataWindowFromPayload(data, model) {
         const source = data?.suggested_card || data || {};
-        const freshness = source.data_freshness || source.freshness || source.context?.data_freshness || data.data_freshness || data.freshness || data.context?.data_freshness || {};
+        const sync = source.fresh_sync || data.fresh_sync || {};
+        const contract = source.auto_sync_contract || source.sync_card_contract || data.auto_sync_contract || data.sync_card_contract || {};
+        const freshness = sync.freshness || source.data_freshness || source.freshness || source.context?.data_freshness || data.data_freshness || data.freshness || data.context?.data_freshness || {};
         const level = normalizedFreshnessLevel(freshness);
         const pullAge = pullAgeText(freshness);
         const latestDay = explicitLatestDateFromPayload(source) || explicitLatestDateFromPayload(data);
         const hasPullTimestamp = Boolean(freshness?.last_sync);
+        const syncStatus = String(sync.status || "").toLowerCase();
+        const syncInProgress = Boolean(sync.sync_in_progress || syncStatus === "sync_in_progress");
+        const partial = Boolean(sync.partial_sync || contract.sync_status === "partial");
+        const failed = Boolean(syncStatus && !["ok", "sync_in_progress"].includes(syncStatus));
         const pull = pullAge && hasPullTimestamp
           ? `Latest Fitbit data pull was ${pullAge}`
           : pullAge
@@ -1498,9 +1517,15 @@ TODAY_WIDGET_HTML = """
             ? `card window: ${model.date}`
             : "";
         return {
-          level,
-          levelLabel: level === "fresh" ? "Fresh pull" : level === "aging" ? "Aging pull" : level === "stale" ? "Stale pull" : "Fitbit timing",
-          pull,
+          level: failed ? "stale" : syncInProgress || partial ? "aging" : level,
+          levelLabel: failed
+            ? "Refresh failed"
+            : syncInProgress
+              ? "Refresh running"
+              : partial
+                ? "Refresh partial"
+                : level === "fresh" ? "Fresh pull" : level === "aging" ? "Aging pull" : level === "stale" ? "Stale pull" : "Fitbit timing",
+          pull: contract.freshness_note || sync.message || pull,
           latest,
         };
       }
@@ -1652,6 +1677,7 @@ TODAY_WIDGET_HTML = """
             ${(model.chips || ["health"]).slice(0, 4).map((item, index) => `<span class="chip ${index === 0 ? "accent" : ""}">${escapeHtml(item)}</span>`).join("")}
           </div>
           ${renderDataWindow(model.dataWindow)}
+          ${model.sourceNote ? `<p class="source-note">${escapeHtml(model.sourceNote)}</p>` : ""}
           <div class="hero ${showScore ? "" : "no-score"}">
             ${showScore ? `
               <div class="score-card">
@@ -1746,7 +1772,7 @@ TODAY_WIDGET_HTML = """
       }
 
       function renderLabelKey(labels) {
-        const usable = prioritizedLabelKey(labels).slice(0, 6);
+        const usable = prioritizedLabelKey(labels);
         if (!usable.length) return "";
         return `
           <div class="label-key" aria-label="Metric label explanations">
@@ -2002,8 +2028,8 @@ TODAY_WIDGET_HTML = """
 
       function hrMeaning(value, rpe) {
         if (value == null) return "";
-        if (rpe != null && Number(rpe) >= 8) return "Use with RPE: if it keeps climbing at the same pace, ease off.";
-        return "Current beats per minute; useful when compared with effort and symptoms.";
+        if (rpe != null && Number(rpe) >= 8) return "User-reported current HR; if it keeps climbing at the same pace, ease off.";
+        return "User-reported current HR; compare with effort, breathing, and symptoms.";
       }
 
       function painMeaning(value) {

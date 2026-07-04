@@ -1070,10 +1070,10 @@ def create_server(settings_override: Settings | None = None) -> ServerBundle:
             "workout card renderer. "
             "Always call this again for each new in-session update; do not reuse earlier active-workout guidance."
         ),
-        annotations=READ_ONLY,
+        annotations=SYNC,
         meta=WIDGET_META,
     )
-    def guide_active_workout(
+    async def guide_active_workout(
         planned_activity: Annotated[
             str,
             Field(
@@ -1120,10 +1120,10 @@ def create_server(settings_override: Settings | None = None) -> ServerBundle:
         user_id = current_user_id()
         if not user_id:
             return setup_required()
-        context = health_store.latest_context(user_id)
+        context, sync = await _auto_sync_for_time_sensitive_card(user_id)
         if context.get("status") != "ok":
             return context
-        return active_workout_guidance(
+        card = active_workout_guidance(
             context=context,
             planned_activity=planned_activity,
             current_heart_rate_bpm=current_heart_rate_bpm,
@@ -1135,6 +1135,12 @@ def create_server(settings_override: Settings | None = None) -> ServerBundle:
             notes=notes,
             goal=health_store.latest_goal(user_id),
             checkins=health_store.recent_checkins(user_id),
+        )
+        return _attach_auto_sync_contract(
+            card,
+            sync=sync,
+            context=context,
+            card_type="active_workout",
         )
 
     @mcp.tool(
@@ -1477,6 +1483,16 @@ def _question_clues_should_attach_card(clues: dict[str, Any], question: str) -> 
         return False
     if not ({"workout_decision", "daily_plan"} & intents):
         return False
+    primary_flows = {
+        str(flow.get("flow") or "")
+        for flow in clues.get("primary_conversation_flows") or []
+        if isinstance(flow, dict)
+    }
+    if primary_flows & {"daily_training_decision", "specific_activity_plan"}:
+        return True
+    recommended_tools = set(clues.get("recommended_tool_sequence") or [])
+    if recommended_tools & {"recommend_workout_today", "plan_workout_with_health_context"}:
+        return True
     text = str(question or "").lower()
     return _mentions(
         text,
