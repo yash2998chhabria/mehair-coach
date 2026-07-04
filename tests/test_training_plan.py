@@ -454,6 +454,49 @@ def test_active_workout_preserves_zero_pain_level() -> None:
     assert guidance["live_inputs"]["pain_level"] == 0
     assert guidance["safety_flags"] == []
     assert any("Live pain reported: 0/10." in item for item in guidance["evidence"])
+    assert any("Hold steady" in item for item in guidance["coach_response"]["what_to_do"])
+    assert any("RPE 6/10" in item for item in guidance["coach_response"]["what_to_do"])
+
+
+def test_active_workout_translates_high_rpe_into_human_next_action() -> None:
+    context = {
+        "status": "ok",
+        "latest_date": "2026-07-03",
+        "activity_date": "2026-07-03",
+        "recovery_date": "2026-07-03",
+        "readiness": {
+            "score": 84,
+            "label": "green",
+            "recommendation": "A normal training day is reasonable if you feel good.",
+            "evidence": ["Latest sleep is strong at 8.0h.", "Resting heart rate is steady."],
+        },
+        "today": {
+            "steps": 5200,
+            "active_minutes": 36,
+            "active_zone_minutes": 9,
+            "sleep": {"asleep_hours": 8.0, "sessions_count": 1},
+            "latest_training_load": {"date": "2026-07-03", "active_zone_minutes": 9},
+        },
+    }
+
+    guidance = active_workout_guidance(
+        context=context,
+        planned_activity="active workout",
+        current_heart_rate_bpm=158,
+        current_rpe=8,
+        pain_level=0,
+        symptoms="no dizziness, no chest pain, breathing is controlled",
+        elapsed_minutes=18,
+        planned_duration_minutes=35,
+    )
+
+    coach = guidance["coach_response"]
+    joined = " ".join([coach["short_answer"], *coach["what_to_do"], *coach["next_check"]])
+    assert guidance["decision"] == "continue_controlled"
+    assert "RPE 8/10 is already challenging" in coach["short_answer"]
+    assert "only the next 3-5 minutes" in joined
+    assert "back off one notch" in joined
+    assert any(item["label"] == "AZM" for item in coach["labels_explained"])
 
 
 def test_today_recommendation_uses_goal_checkins_and_history() -> None:

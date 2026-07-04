@@ -1666,6 +1666,8 @@ def _sync_error_message(exc: Exception) -> str:
 
 def freshness_details(latest_observed_date: str | None, last_sync: str | None) -> dict[str, Any]:
     now = utc_now()
+    fresh_window_minutes = 15
+    aging_window_minutes = 60
     observed_date = _date_from_iso(latest_observed_date)
     observed_days_ago = None
     if observed_date:
@@ -1680,22 +1682,24 @@ def freshness_details(latest_observed_date: str | None, last_sync: str | None) -
         level = "unknown"
         label = "unknown freshness"
         recommendation = "Run sync_latest_fitbit_data before using health data."
-    elif observed_days_ago == 0 and (sync_age_minutes is None or sync_age_minutes <= 120):
+    elif observed_days_ago == 0 and sync_age_minutes is not None and sync_age_minutes <= fresh_window_minutes:
         level = "fresh"
-        label = "fresh today"
-        recommendation = "Synced data is current enough for normal coaching."
-    elif observed_days_ago == 0 and (sync_age_minutes is None or sync_age_minutes <= 720):
+        label = "fresh <15 min"
+        recommendation = "Synced in the last 15 minutes; fresh enough for time-sensitive coaching."
+    elif observed_days_ago == 0 and (sync_age_minutes is None or sync_age_minutes <= aging_window_minutes):
         level = "aging"
-        label = "sync if needed"
-        recommendation = "Data is from today, but sync again before time-sensitive workout decisions."
+        label = "aging 15-60 min" if sync_age_minutes is not None else "sync age unknown"
+        recommendation = "Usable for context, but sync before hard or time-sensitive workout decisions."
     else:
         level = "stale"
-        label = "sync recommended"
+        label = "stale >1 hour" if observed_days_ago == 0 else "sync recommended"
         recommendation = "Run sync_latest_fitbit_data before time-sensitive workout decisions."
 
     return {
         "freshness_level": level,
         "freshness_label": label,
+        "fresh_window_minutes": fresh_window_minutes,
+        "aging_window_minutes": aging_window_minutes,
         "observed_days_ago": observed_days_ago,
         "sync_age_minutes": sync_age_minutes,
         "is_observed_today": observed_days_ago == 0,

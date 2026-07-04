@@ -35,6 +35,34 @@ def create_user(db: Database, user_id: str = "user_test") -> str:
     return user_id
 
 
+def test_freshness_uses_15_and_60_minute_sync_windows(monkeypatch) -> None:
+    fixed_now = datetime(2026, 7, 3, 12, 0, tzinfo=UTC)
+    monkeypatch.setattr(health_store_module, "utc_now", lambda: fixed_now)
+
+    fresh = health_store_module.freshness_details(
+        "2026-07-03",
+        "2026-07-03T11:46:00+00:00",
+    )
+    aging = health_store_module.freshness_details(
+        "2026-07-03",
+        "2026-07-03T11:20:00+00:00",
+    )
+    stale = health_store_module.freshness_details(
+        "2026-07-03",
+        "2026-07-03T10:59:00+00:00",
+    )
+
+    assert fresh["freshness_level"] == "fresh"
+    assert fresh["freshness_label"] == "fresh <15 min"
+    assert fresh["needs_sync_before_time_sensitive_advice"] is False
+    assert aging["freshness_level"] == "aging"
+    assert aging["freshness_label"] == "aging 15-60 min"
+    assert aging["needs_sync_before_time_sensitive_advice"] is True
+    assert stale["freshness_level"] == "stale"
+    assert stale["freshness_label"] == "stale >1 hour"
+    assert stale["needs_sync_before_time_sensitive_advice"] is True
+
+
 def test_sync_storage_prep_aggregates_high_volume_activity_metrics() -> None:
     records = [
         {

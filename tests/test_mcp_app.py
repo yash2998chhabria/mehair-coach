@@ -55,6 +55,7 @@ def test_server_instructions_keep_normal_latest_questions_fast() -> None:
     assert "When a tool returns coach_response" in SERVER_INSTRUCTIONS
     assert "do not default to 'I feel off'" in SERVER_INSTRUCTIONS
     assert "Use already-synced local data for normal current/latest/today questions" in SERVER_INSTRUCTIONS
+    assert "Fresh means synced in the last 15 minutes" in SERVER_INSTRUCTIONS
     assert "Sync only when the user explicitly asks for a fresh sync" in SERVER_INSTRUCTIONS
     assert "Treat phrases like check my Fitbit context" in SERVER_INSTRUCTIONS
     assert "call recommend_workout_today directly" in SERVER_INSTRUCTIONS
@@ -93,12 +94,19 @@ async def test_http_metadata_routes() -> None:
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
         health = await client.get("/health")
+        icon = await client.get("/assets/mehair-coach-icon.svg")
         oauth = await client.get("/.well-known/oauth-authorization-server")
         protected = await client.get("/.well-known/oauth-protected-resource")
 
     assert health.status_code == 200
+    assert health.json()["name"] == "Mehair Coach"
     assert health.json()["mcp_endpoint"].endswith("/mcp")
+    assert icon.status_code == 200
+    assert icon.headers["content-type"].startswith("image/svg+xml")
+    assert "#f43f8f" in icon.text
     assert oauth.status_code == 200
+    assert oauth.json()["client_name"] == "Mehair Coach"
+    assert oauth.json()["logo_uri"].endswith("/assets/mehair-coach-icon.svg")
     assert oauth.json()["authorization_endpoint"].endswith("/oauth/authorize")
     assert protected.status_code == 200
     assert protected.json()["resource"].rstrip("/") == app_settings.base_url
@@ -153,6 +161,8 @@ async def test_widget_preview_route_renders_real_card_state() -> None:
     assert "Recovery Comparison" in recovery_comparison.text
     assert "Latest recovery comparison" in recovery_comparison.text
     assert "dizzy during the interval" in active_workout.text
+    assert "green today; yellow is 55-74, red is below 55" in active_workout.text
+    assert "AZM = Active Zone Minutes" in active_workout.text
     assert today_workout.status_code == 200
     assert "Today's Workout" in today_workout.text
     assert "Next Session" in today_workout.text

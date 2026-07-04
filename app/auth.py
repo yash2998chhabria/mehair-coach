@@ -50,6 +50,8 @@ class AuthService:
         base = self.settings.base_url
         return {
             "issuer": base,
+            "client_name": "Mehair Coach",
+            "logo_uri": f"{base}/assets/mehair-coach-icon.svg",
             "authorization_endpoint": f"{base}/oauth/authorize",
             "token_endpoint": f"{base}/oauth/token",
             "registration_endpoint": f"{base}/oauth/register",

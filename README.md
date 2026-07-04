@@ -44,7 +44,7 @@ I am halfway through intervals, HR 150, RPE 7, legs feel heavy, no pain. Keep go
 
 The assistant should combine wearable signals with user context. For example, it can use short sleep, low HRV, elevated resting heart rate, high zone minutes, soreness, goals, and planned workouts together instead of treating any single metric as the whole answer.
 
-Metric labels stay visible, but the app explains them in normal language. For example, `HRV` is shown as a recovery stress signal, `RPE` as how hard the workout feels, `AZM` as Fitbit hard-work minutes, and `Resting HR` as heart stress at rest.
+Metric labels stay visible, but the app explains them in normal language. `Readiness` shows recovery bands (`green` 75+, `yellow` 55-74, `red` below 55), `RPE` is the 1-10 effort dial used to decide whether to hold, back off, or stop, `AZM` is Fitbit hard-work load to recover from, and `HRV`/`Resting HR` are heart-recovery signals.
 
 ## Health Data Used
 
@@ -215,6 +215,8 @@ npx @modelcontextprotocol/inspector@latest --server-url http://localhost:8787/mc
 The tests cover OAuth metadata, encrypted token storage, empty states, synthetic health calculations, coaching evals, widget registration, tool schemas, deployment config, and local private-beta flows.
 
 Live sync behavior is intentionally best-effort: the app pulls useful Fitbit metrics in parallel with per-metric timeouts, page caps, and an overall request budget. High-volume streams are written as daily summaries or aggregates during the chat request, so ChatGPT gets fresh usable context without waiting on thousands of remote database writes. Coverage diagnostics show which metrics were fresh, truncated, deferred, or errored.
+
+Freshness is explicit: synced in the last 15 minutes is `fresh`, 15-60 minutes is `aging`, and more than 1 hour is `stale` for time-sensitive workout advice.
 
 ## Safety Notes
 

@@ -9,7 +9,7 @@ from mcp.server.auth.middleware.auth_context import get_access_token
 from mcp.server.auth.settings import AuthSettings
 from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
-from mcp.types import ToolAnnotations
+from mcp.types import Icon, ToolAnnotations
 from pydantic import Field
 from starlette.applications import Starlette
 from starlette.background import BackgroundTask
@@ -45,7 +45,9 @@ SERVER_INSTRUCTIONS = (
     "questions, give normal training permission with clear guardrails and the data that would change the call. "
     "If connection or synced data is missing, call status/freshness tools and explain setup; "
     "never invent health data. Use already-synced local data for normal current/latest/today questions, "
-    "because every overview includes freshness metadata. Treat phrases like check my Fitbit context, "
+    "because every overview includes freshness metadata. Fresh means synced in the last 15 minutes, "
+    "aging means 15-60 minutes, and stale means more than 60 minutes or not observed today. "
+    "Treat phrases like check my Fitbit context, "
     "look at my data, use my data, or what should I do today as already-synced reads unless the user "
     "literally asks to sync, refresh, pull, or update Fitbit/Google Health data now. Sync only when "
     "the user explicitly asks for a fresh sync/refresh/pull/update, or when a freshness result says "
@@ -84,6 +86,13 @@ WIDGET_META = {
     "ui": {"resourceUri": WIDGET_URI},
     "openai/outputTemplate": WIDGET_URI,
 }
+APP_ICON_SVG = """
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96" role="img" aria-label="Mehair Coach">
+  <rect width="96" height="96" rx="24" fill="#f43f8f"/>
+  <path d="M22 64V31h9l17 20 17-20h9v33h-9V44L50 62h-4L31 44v20h-9Z" fill="white"/>
+  <circle cx="73" cy="24" r="8" fill="#fff0f6"/>
+</svg>
+""".strip()
 ILLNESS_PHRASES = (
     "fever",
     "flu",
@@ -104,12 +113,12 @@ ILLNESS_PHRASES = (
 )
 
 METRIC_LABEL_EXPLANATIONS = {
-    "Readiness": "a quick recovery score built from sleep, heart, and recent load signals",
-    "RPE": "rate of perceived exertion: how hard it feels from 1 easy to 10 max",
+    "Readiness": "a quick recovery score built from sleep, heart, and recent load signals; green is 75+, yellow is 55-74, red is below 55",
+    "RPE": "rate of perceived exertion: how hard it feels from 1 easy to 10 max; use it to decide whether to hold, back off, or stop",
     "HR": "heart rate right now: current beats per minute during movement or rest",
     "HRV": "heart-rate variability: a recovery stress signal compared with your usual",
     "Resting HR": "resting heart rate: heart stress at rest, best judged against your usual",
-    "AZM": "Active Zone Minutes: Fitbit's hard-work minutes from elevated heart-rate zones",
+    "AZM": "Active Zone Minutes: Fitbit's hard-work minutes from elevated heart-rate zones; recent AZM is load you need to recover from",
 }
 
 CARDIO_SPORT_TERMS = (
@@ -151,6 +160,13 @@ def create_server(settings_override: Settings | None = None) -> ServerBundle:
     mcp = FastMCP(
         name="Mehair Coach",
         instructions=SERVER_INSTRUCTIONS,
+        icons=[
+            Icon(
+                src=f"{settings.base_url}/assets/mehair-coach-icon.svg",
+                mimeType="image/svg+xml",
+                sizes=["96x96"],
+            )
+        ],
         token_verifier=AppTokenVerifier(auth_service),
         auth=AuthSettings(
             issuer_url=settings.base_url,
@@ -628,6 +644,9 @@ def create_server(settings_override: Settings | None = None) -> ServerBundle:
     async def oauth_metadata(_: Request) -> JSONResponse:
         return JSONResponse(auth_service.oauth_metadata())
 
+    async def app_icon(_: Request) -> Response:
+        return Response(APP_ICON_SVG, media_type="image/svg+xml")
+
     async def register_client(request: Request) -> JSONResponse:
         return await auth_service.register_client(request)
 
@@ -693,6 +712,7 @@ def create_server(settings_override: Settings | None = None) -> ServerBundle:
 
     app.add_route("/", home, methods=["GET"])
     app.add_route("/health", health, methods=["GET"])
+    app.add_route("/assets/mehair-coach-icon.svg", app_icon, methods=["GET"])
     app.add_route("/.well-known/oauth-authorization-server", oauth_metadata, methods=["GET"])
     app.add_route("/.well-known/openid-configuration", oauth_metadata, methods=["GET"])
     app.add_route("/oauth/register", register_client, methods=["POST"])
@@ -1235,15 +1255,18 @@ def active_workout_guidance(
             "(AZM, Fitbit hard-work minutes)."
         )
 
+    next_check_window = _active_workout_check_window(elapsed_minutes)
+    rpe_cap = _active_workout_rpe_cap(rpe, readiness_label)
     decision = "continue_controlled"
-    headline = "Keep going only if form, breathing, and symptoms stay normal."
+    headline = f"Hold steady until {next_check_window}; do not make the workout harder yet."
     immediate_actions = [
-        "Keep the next block controlled and reassess in 5-10 minutes.",
+        f"Stay at or below RPE {rpe_cap}/10 until {next_check_window}.",
+        "Keep the exact same pace, load, or resistance; no sprint, PR, or surprise finisher.",
         "Stay below the point where form, breathing, or coordination changes.",
     ]
     modifications = [
-        "Hold intensity steady instead of chasing a new peak.",
-        "Extend rest periods if heart rate or RPE is not settling.",
+        "If heart rate climbs while the pace feels the same, back off for 3-5 easy minutes.",
+        "If RPE rises by 1 point or breathing stops feeling controlled, reduce speed, load, or impact one notch.",
     ]
     avoid = ["Adding surprise max-effort work", "Ignoring new pain or unusual symptoms"]
 
@@ -1285,6 +1308,19 @@ def active_workout_guidance(
         ]
         modifications = ["Cut the next block by 25-50% or switch to zone 2."]
         avoid = ["Another all-out interval", "Heavy work before heart rate settles"]
+    elif rpe is not None and rpe >= 8:
+        decision = "continue_controlled"
+        headline = f"You can keep the session useful, but RPE {rpe}/10 means no harder from here."
+        immediate_actions = [
+            "Hold this effort for only the next 3-5 minutes, then reassess honestly.",
+            "If this was supposed to be easy or moderate, back off one notch now.",
+            "Keep pain at 0-3/10 and breathing controlled; stop hard work if either changes.",
+        ]
+        modifications = [
+            "Turn the next interval into steady controlled work instead of chasing a peak.",
+            "Add recovery time until heart rate and breathing clearly settle.",
+        ]
+        avoid = ["Trying to prove fitness after RPE reaches 8/10", "Adding a hard finish without a clear plan"]
     elif pain is not None and pain >= 4:
         decision = "modify"
         headline = "Modify the workout around pain before it escalates."
@@ -1323,6 +1359,8 @@ def active_workout_guidance(
         rpe=rpe,
         current_heart_rate_bpm=current_heart_rate_bpm,
         pain=pain,
+        elapsed_minutes=elapsed_minutes,
+        planned_duration_minutes=planned_duration_minutes,
     )
 
     return {
@@ -1751,6 +1789,24 @@ def _active_workout_next_check(
     return _dedupe(checks)
 
 
+def _active_workout_check_window(elapsed_minutes: int | None) -> str:
+    if elapsed_minutes is None:
+        return "the next 5-10 minutes"
+    start = elapsed_minutes + 5
+    end = elapsed_minutes + 10
+    return f"{start}-{end} minutes elapsed"
+
+
+def _active_workout_rpe_cap(rpe: int | None, readiness_label: str) -> int:
+    if rpe is not None:
+        return min(max(rpe, 6), 8)
+    if readiness_label == "red":
+        return 6
+    if readiness_label == "yellow":
+        return 7
+    return 8
+
+
 def _today_workout_coach_response(
     *,
     intensity: str,
@@ -1902,6 +1958,8 @@ def _active_workout_coach_response(
     rpe: int | None,
     current_heart_rate_bpm: int | None,
     pain: int | None,
+    elapsed_minutes: int | None,
+    planned_duration_minutes: int | None,
 ) -> dict[str, Any]:
     if decision in {"stop_and_assess", "stop_session"}:
         short_answer = "Stop the hard part now. Treat this as a safety decision, not a toughness decision."
@@ -1910,7 +1968,10 @@ def _active_workout_coach_response(
     elif decision == "modify":
         short_answer = "Modify the movement before it becomes a problem. Pain and form decide the workout now."
     else:
-        short_answer = "Keep going only if breathing, form, pain, and symptoms stay normal."
+        if rpe is not None and rpe >= 8:
+            short_answer = f"Keep it useful, not harder: RPE {rpe}/10 is already challenging."
+        else:
+            short_answer = "Keep going, but hold the effort steady and reassess before you add intensity."
 
     live_labels = ["RPE", "AZM", "Readiness"]
     if current_heart_rate_bpm is not None:
@@ -1925,6 +1986,11 @@ def _active_workout_coach_response(
         live_context.append(f"RPE (how hard it feels): {rpe}/10, which means {_rpe_plain(rpe)}.")
     if pain is not None:
         live_context.append(f"Pain: {pain}/10. Keep it 3/10 or lower, or stop that movement.")
+    if elapsed_minutes is not None and planned_duration_minutes:
+        remaining = max(0, planned_duration_minutes - elapsed_minutes)
+        live_context.append(f"Time: {elapsed_minutes} minutes done, about {remaining} planned minutes left.")
+    elif elapsed_minutes is not None:
+        live_context.append(f"Time: {elapsed_minutes} minutes into the session.")
 
     return {
         "short_answer": short_answer,

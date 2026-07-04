@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 
 
-WIDGET_URI = "ui://mehair/today-v14.html"
+WIDGET_URI = "ui://mehair/today-v15.html"
 LEGACY_WIDGET_URIS = (
     "ui://mehair/today-v1.html",
     "ui://mehair/today-v2.html",
@@ -18,6 +18,7 @@ LEGACY_WIDGET_URIS = (
     "ui://mehair/today-v11.html",
     "ui://mehair/today-v12.html",
     "ui://mehair/today-v13.html",
+    "ui://mehair/today-v14.html",
 )
 WIDGET_RESOURCE_URIS = (WIDGET_URI, *LEGACY_WIDGET_URIS)
 WIDGET_MIME_TYPE = "text/html;profile=mcp-app"
@@ -37,10 +38,10 @@ TODAY_WIDGET_HTML = """
         --muted: #667078;
         --line: #dde3df;
         --surface: #ffffff;
-        --wash: #f5f7f4;
+        --wash: #fff7fb;
         --tile: #fafbf9;
-        --accent: #39745c;
-        --accent-soft: #edf5f0;
+        --accent: #c02673;
+        --accent-soft: #fff0f6;
         --warn: #9b741c;
         --danger: #a94f43;
         --info: #386f8f;
@@ -68,8 +69,8 @@ TODAY_WIDGET_HTML = """
       }
 
       .panel {
-        --accent: #39745c;
-        --accent-soft: #edf5f0;
+        --accent: #c02673;
+        --accent-soft: #fff0f6;
         background: var(--surface);
         border: 1px solid var(--line);
         border-radius: 8px;
@@ -161,7 +162,7 @@ TODAY_WIDGET_HTML = """
       .chip.accent {
         border-color: var(--accent);
         background: var(--accent-soft);
-        color: #173d31;
+        color: #6f123d;
       }
 
       .hero {
@@ -912,8 +913,10 @@ TODAY_WIDGET_HTML = """
         const safety = data.safety_flags || [];
         const coach = data.coach_response || {};
         const evidence = coach.why || (safety.length ? safety : data.evidence || []);
+        const readinessScore = finiteNumber(readiness.score ?? dataUsed.readiness_score, 0);
+        const readinessLabel = readiness.label || dataUsed.readiness_label;
         return {
-          accent: safety.length ? "#a94f43" : readinessAccent(readiness.label || dataUsed.readiness_label),
+          accent: safety.length ? "#a94f43" : readinessAccent(readinessLabel),
           title: "Active Workout",
           eyebrow: data.planned_activity || "In-Session Check",
           date: live.elapsed_minutes != null ? `${live.elapsed_minutes} min elapsed` : data.activity_date || "",
@@ -923,19 +926,19 @@ TODAY_WIDGET_HTML = """
             live.current_rpe != null ? rpeChip(live.current_rpe) : "",
             live.pain_level != null ? `Pain ${live.pain_level}/10` : "",
           ].filter(Boolean),
-          score: finiteNumber(readiness.score ?? dataUsed.readiness_score, 0),
+          score: readinessScore,
           primaryLabel: "Readiness",
           headline: coach.short_answer || data.headline || "Use live symptoms and effort to adjust the session.",
           focusTitle: "Do Now",
           focus: coach.what_to_do || data.immediate_actions || [],
           labels: coach.labels_explained || defaultLabelKey(["HR", "RPE", "Readiness", "AZM"]),
           metrics: [
-            ["Heart rate", live.current_heart_rate_bpm != null ? `${live.current_heart_rate_bpm} bpm` : null],
-            ["RPE", live.current_rpe != null ? `${live.current_rpe}/10` : null, rpePlain(live.current_rpe)],
-            ["Pain", live.pain_level != null ? `${live.pain_level}/10` : null],
+            ["Heart rate", live.current_heart_rate_bpm != null ? `${live.current_heart_rate_bpm} bpm` : null, hrMeaning(live.current_heart_rate_bpm, live.current_rpe)],
+            ["RPE", live.current_rpe != null ? `${live.current_rpe}/10` : null, rpeMeaning(live.current_rpe)],
+            ["Pain", live.pain_level != null ? `${live.pain_level}/10` : null, painMeaning(live.pain_level)],
             ["Elapsed", live.elapsed_minutes != null ? `${live.elapsed_minutes} min` : null],
-            ["Readiness", readiness.label || dataUsed.readiness_label || null, readiness.label ? readinessChip(readiness.label) : ""],
-            ["Latest load", dataUsed.latest_training_load?.active_zone_minutes != null ? `${dataUsed.latest_training_load.active_zone_minutes} AZM` : null, "", "AZM = Fitbit hard-work minutes."],
+            ["Readiness", readinessScore ? `${readinessScore}/100` : readinessLabel || null, readinessBandText(readinessScore, readinessLabel)],
+            ["Latest load", dataUsed.latest_training_load?.active_zone_minutes != null ? `${dataUsed.latest_training_load.active_zone_minutes} AZM` : null, azmMeaning(dataUsed.latest_training_load?.active_zone_minutes), "AZM = Active Zone Minutes."],
           ],
           evidenceTitle: safety.length ? "Safety Flags" : "Evidence",
           evidence: [coach.data_story, ...evidence].filter(Boolean),
@@ -1172,9 +1175,9 @@ TODAY_WIDGET_HTML = """
 
       function freshnessChip(freshness) {
         if (!freshness || !freshness.freshness_level) return "";
-        if (freshness.freshness_level === "fresh") return "fresh today";
-        if (freshness.freshness_level === "aging") return "sync if needed";
-        if (freshness.freshness_level === "stale") return "sync recommended";
+        if (freshness.freshness_level === "fresh") return "fresh <15m";
+        if (freshness.freshness_level === "aging") return "aging 15-60m";
+        if (freshness.freshness_level === "stale") return "stale >60m";
         return "sync status unknown";
       }
 
@@ -1196,9 +1199,9 @@ TODAY_WIDGET_HTML = """
       function readinessChip(label) {
         const clean = titleCase(label || "pending");
         const lower = String(label || "").toLowerCase();
-        if (lower === "green") return `${clean}: recovery supports training`;
-        if (lower === "yellow") return `${clean}: use caution`;
-        if (lower === "red") return `${clean}: recovery first`;
+        if (lower === "green") return `${clean}: 75+ recovery supports training`;
+        if (lower === "yellow") return `${clean}: 55-74 keep controlled`;
+        if (lower === "red") return `${clean}: <55 recovery first`;
         return clean;
       }
 
@@ -1215,6 +1218,54 @@ TODAY_WIDGET_HTML = """
         if (number <= 7) return "hard but controlled";
         if (number <= 8) return "challenging";
         return "very hard";
+      }
+
+      function rpeMeaning(value) {
+        const number = Number(value);
+        if (!Number.isFinite(number)) return "";
+        if (number <= 4) return "easy enough to talk normally";
+        if (number <= 6) return "controlled; useful work without grinding";
+        if (number <= 7) return "hard but still managed";
+        if (number <= 8) return "challenging; hold or back off, do not push higher";
+        return "very hard; downshift unless this was planned";
+      }
+
+      function hrMeaning(value, rpe) {
+        if (value == null) return "";
+        if (rpe != null && Number(rpe) >= 8) return "Use with RPE: if it keeps climbing at the same pace, ease off.";
+        return "Current beats per minute; useful when compared with effort and symptoms.";
+      }
+
+      function painMeaning(value) {
+        if (value == null) return "";
+        const number = Number(value);
+        if (!Number.isFinite(number)) return "";
+        if (number <= 3) return "acceptable only if it stays steady and does not change form";
+        if (number <= 6) return "modify now; pain should not climb during training";
+        return "stop loading the painful movement";
+      }
+
+      function azmMeaning(value) {
+        const number = Number(value);
+        if (!Number.isFinite(number)) return "Fitbit hard-work minutes from elevated heart-rate zones.";
+        if (number < 15) return "light load so far; useful context, not a reason to chase intensity";
+        if (number < 45) return "moderate load; count it before adding more hard work";
+        if (number < 70) return "high load; bias the rest of the day controlled";
+        return "very high load; recovery matters more than adding intensity";
+      }
+
+      function readinessBandText(score, label) {
+        const number = Number(score);
+        const lower = String(label || "").toLowerCase();
+        if (Number.isFinite(number) && number > 0) {
+          if (number >= 75) return "green today; yellow is 55-74, red is below 55";
+          if (number >= 55) return "yellow today; good enough for controlled work, not a max-effort signal";
+          return "red today; make recovery the main workout";
+        }
+        if (lower === "green") return "green usually means 75+; still obey pain, symptoms, and RPE";
+        if (lower === "yellow") return "yellow means controlled work; avoid max efforts";
+        if (lower === "red") return "red means recovery first";
+        return "Readiness blends sleep, heart, and load signals.";
       }
 
       function workoutTitle(activity, intensity) {
@@ -1240,14 +1291,14 @@ TODAY_WIDGET_HTML = """
 
       function metricHint(label) {
         const lower = String(label || "").toLowerCase();
-        if (lower.includes("rpe")) return "RPE = how hard it feels: 1 easy, 10 max.";
+        if (lower.includes("rpe")) return "RPE = how hard it feels: 1 easy, 10 max; use it to cap effort.";
         if (lower.includes("intensity")) return "How aggressive the workout should feel.";
         if (lower.includes("hrv")) return "HRV = recovery stress signal compared with your usual.";
         if (lower === "heart rate") return "HR = current beats per minute.";
         if (lower.includes("resting") || lower.includes("rhr")) return "Resting HR = heart stress signal at rest.";
-        if (lower.includes("load") || lower.includes("azm") || lower.includes("zone")) return "AZM = Fitbit hard-work minutes.";
+        if (lower.includes("load") || lower.includes("azm") || lower.includes("zone")) return "AZM = Fitbit hard-work minutes; higher AZM means more recent load to recover from.";
         if (lower.includes("sleep")) return "Sleep is the biggest recovery input.";
-        if (lower.includes("readiness")) return "Readiness blends sleep, heart, and load signals.";
+        if (lower.includes("readiness")) return "Readiness blends sleep, heart, and load: green 75+, yellow 55-74, red below 55.";
         if (lower.includes("move")) return "Today's movement, not the whole week.";
         if (lower.includes("soreness")) return "Your check-in can override good wearable scores.";
         if (lower.includes("goal")) return "Goal pressure comes after recovery signals.";
@@ -1257,12 +1308,12 @@ TODAY_WIDGET_HTML = """
 
       function defaultLabelKey(labels) {
         const meanings = {
-          "Readiness": "sleep, heart, and recent load blended into one recovery cue",
-          "RPE": "how hard it feels from 1 easy to 10 max",
+          "Readiness": "sleep, heart, and recent load blended into one recovery cue; green 75+, yellow 55-74, red below 55",
+          "RPE": "how hard it feels from 1 easy to 10 max; use it to decide whether to hold, back off, or stop",
           "HR": "heart rate right now, in beats per minute",
           "HRV": "recovery stress signal compared with your usual",
           "Resting HR": "heart stress signal at rest",
-          "AZM": "Fitbit hard-work minutes from elevated heart-rate zones",
+          "AZM": "Fitbit hard-work minutes from elevated heart-rate zones; recent load that should change how hard you push",
         };
         return (labels || []).map((label) => ({ label, meaning: meanings[label] })).filter((item) => item.meaning);
       }
@@ -1292,15 +1343,16 @@ TODAY_WIDGET_HTML = """
       }
 
       function readinessAccent(label) {
-        if (label === "green") return "#39745c";
+        if (label === "green") return "#2f7a5f";
         if (label === "yellow") return "#9b741c";
         if (label === "red") return "#a94f43";
-        return "#667078";
+        return "#c02673";
       }
 
       function softFor(accent) {
         const map = {
-          "#39745c": "#edf5f0",
+          "#2f7a5f": "#edf5f0",
+          "#c02673": "#fff0f6",
           "#9b741c": "#fbf5e7",
           "#a94f43": "#fbefed",
           "#386f8f": "#edf5fa",
@@ -1668,10 +1720,10 @@ WIDGET_PREVIEW_STATES: dict[str, dict] = {
                 "Latest soreness check-in is 7/10. Your own body report can override a good wearable score.",
             ],
             "labels_explained": [
-                {"label": "Readiness", "meaning": "a quick recovery score built from sleep, heart, and recent load signals"},
-                {"label": "RPE", "meaning": "how hard it feels from 1 easy to 10 max"},
+                {"label": "Readiness", "meaning": "a quick recovery score built from sleep, heart, and recent load signals; green 75+, yellow 55-74, red below 55"},
+                {"label": "RPE", "meaning": "how hard it feels from 1 easy to 10 max; use it to decide whether to hold, back off, or stop"},
                 {"label": "HRV", "meaning": "recovery stress signal compared with your usual"},
-                {"label": "AZM", "meaning": "Fitbit hard-work minutes from elevated heart-rate zones"},
+                {"label": "AZM", "meaning": "Fitbit hard-work minutes from elevated heart-rate zones; recent load that should change how hard you push"},
             ],
             "stop_if": [
                 "Stop if pain rises above 3/10, becomes sharp, or changes your form.",
@@ -1779,8 +1831,8 @@ WIDGET_PREVIEW_STATES: dict[str, dict] = {
                 "User-stated lower-back or hip constraint should cap spinal loading.",
             ],
             "labels_explained": [
-                {"label": "Readiness", "meaning": "a quick recovery score built from sleep, heart, and recent load signals"},
-                {"label": "RPE", "meaning": "how hard it feels from 1 easy to 10 max"},
+                {"label": "Readiness", "meaning": "a quick recovery score built from sleep, heart, and recent load signals; green 75+, yellow 55-74, red below 55"},
+                {"label": "RPE", "meaning": "how hard it feels from 1 easy to 10 max; use it to decide whether to hold, back off, or stop"},
                 {"label": "HRV", "meaning": "recovery stress signal compared with your usual"},
                 {"label": "Resting HR", "meaning": "heart stress signal at rest, best judged against your usual"},
             ],
@@ -1845,9 +1897,9 @@ WIDGET_PREVIEW_STATES: dict[str, dict] = {
             ],
             "labels_explained": [
                 {"label": "HR", "meaning": "heart rate right now, in beats per minute"},
-                {"label": "RPE", "meaning": "how hard it feels from 1 easy to 10 max"},
-                {"label": "Readiness", "meaning": "a quick recovery score built from sleep, heart, and recent load signals"},
-                {"label": "AZM", "meaning": "Fitbit hard-work minutes from elevated heart-rate zones"},
+                {"label": "RPE", "meaning": "how hard it feels from 1 easy to 10 max; use it to decide whether to hold, back off, or stop"},
+                {"label": "Readiness", "meaning": "a quick recovery score built from sleep, heart, and recent load signals; green 75+, yellow 55-74, red below 55"},
+                {"label": "AZM", "meaning": "Fitbit hard-work minutes from elevated heart-rate zones; recent load that should change how hard you push"},
             ],
             "stop_if": [
                 "Stop if symptoms are new, severe, or worsening.",
