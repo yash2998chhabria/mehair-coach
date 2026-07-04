@@ -555,6 +555,21 @@ def test_eval_natural_prompt_mix_is_not_biased_to_off_day_language(tmp_path, mon
             {"daily_plan", "general_overview", "workout_decision"},
             {"recommend_workout_today", "plan_workout_with_health_context"},
         ),
+        (
+            "Use tools again and update the card, I only have 25 minutes.",
+            {"daily_plan", "general_overview", "workout_decision"},
+            {"recommend_workout_today"},
+        ),
+        (
+            "I feel normal. Can I push a little or should I keep it easy?",
+            {"workout_decision", "recovery", "activity_load"},
+            {"recommend_workout_today"},
+        ),
+        (
+            "My VO2 is trending up. Does that change today?",
+            {"daily_plan", "general_overview", "workout_decision", "activity_load"},
+            {"recommend_workout_today"},
+        ),
     ]
 
     for question, expected_intents, expected_tools in scenarios:
@@ -577,6 +592,14 @@ def test_eval_natural_prompt_mix_is_not_biased_to_off_day_language(tmp_path, mon
     still_training = store.health_question_clues(user_id, "I feel good and still want to train today.", days=7)
     assert "symptom_safety" not in still_training["intent_hints"]
     assert "recommend_workout_today" in still_training["recommended_tool_sequence"]
+
+    casual_push = store.health_question_clues(
+        user_id,
+        "I feel normal. Can I push a little or should I keep it easy?",
+        days=7,
+    )
+    assert "active_workout" not in casual_push["intent_hints"]
+    assert casual_push["recommended_tool_sequence"][0] == "recommend_workout_today"
 
     not_ill = store.health_question_clues(user_id, "I am not ill, just want a useful plan.", days=7)
     assert "symptom_safety" not in not_ill["intent_hints"]
@@ -716,6 +739,29 @@ def test_eval_natural_prompt_mix_is_not_biased_to_off_day_language(tmp_path, mon
         "daily-sleep-temperature-derivations",
     ]
     assert "active-zone-minutes" not in top_oxygen_metrics[:3]
+
+    metric_selection_card_request = store.health_question_clues(
+        user_id,
+        (
+            "I am not saying I feel off. I have a normal work day, might play pickleball tomorrow, "
+            "and want to build fitness without getting wrecked. Use the band data intelligently, "
+            "include oxygen/breathing/heart/load only if they matter, and show the useful card."
+        ),
+        days=7,
+    )
+    assert metric_selection_card_request["primary_conversation_flows"][0]["flow"] == "specific_activity_plan"
+    assert "specific_activity" in metric_selection_card_request["intent_hints"]
+    assert "breathing_recovery" not in metric_selection_card_request["intent_hints"]
+    assert "symptom_safety" not in metric_selection_card_request["intent_hints"]
+    assert metric_selection_card_request["recommended_tool_sequence"][0] == "plan_workout_with_health_context"
+    assert {
+        "daily-oxygen-saturation",
+        "daily-respiratory-rate",
+        "daily-sleep-temperature-derivations",
+        "daily-heart-rate-variability",
+        "daily-resting-heart-rate",
+        "active-zone-minutes",
+    } <= metric_ids(metric_selection_card_request)
 
     constrained_activity_prompts = [
         "I have a hike tomorrow. What workout keeps my legs useful?",

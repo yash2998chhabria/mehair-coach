@@ -40,6 +40,12 @@ SERVER_INSTRUCTIONS = (
     "for a metric dump. "
     "Use plain English before statistics. Keep metric labels such as HRV, RPE, AZM, and resting "
     "heart rate, but briefly explain what they mean when they appear in user-facing advice. "
+    "Treat phrases like 'include oxygen/breathing/heart/load if they matter' or 'use all the band "
+    "signals intelligently' as metric-selection and answer-shaping instructions, not as user symptoms "
+    "or a request for medical diagnosis. Do not put those metric-selection phrases into "
+    "current_feeling or symptoms arguments. Do not narrate internal failed or blocked tool attempts "
+    "to the user; silently choose the next safe mehair coach read/card tool and answer from the "
+    "successful current result. "
     "Keep source boundaries clear in every personalized answer: synced Fitbit/Google Health signals "
     "are wearable evidence, while injuries, symptoms, goals, preferences, and prior-life context are "
     "user-stated or conversation context unless a tool result explicitly says otherwise. If you use "
@@ -367,6 +373,8 @@ def create_server(settings_override: Settings | None = None) -> ServerBundle:
         description=(
             "Metric discovery for flexible questions. Use when the user asks what data you can see, "
             "what other signals matter, or an unusual question does not fit a canned coaching path. "
+            "Phrases like 'include oxygen/breathing/heart/load if they matter' are normal metric-selection "
+            "requests for this tool family, not symptoms by themselves. "
             "Returns every device-first Google Health/Fitbit metric this app can sync/query, per-user "
             "record counts, and model-facing guidance so ChatGPT can choose metrics intelligently."
         ),
@@ -383,7 +391,9 @@ def create_server(settings_override: Settings | None = None) -> ServerBundle:
             "get_health_question_clues when the answer needs details beyond an overview, such as "
             "oxygen plus respiratory rate, HRV plus resting HR, heart-rate zones, steps, or workout "
             "records over a bounded date range. Do not use a fixed recipe; choose metrics from the "
-            "user's question. For in-session HR/RPE/pain decisions, use guide_active_workout instead."
+            "user's question. Treat metric-selection wording as normal wearable context, not a symptom "
+            "report unless the user describes a current body sensation. For in-session HR/RPE/pain "
+            "decisions, use guide_active_workout instead."
         ),
         annotations=READ_ONLY,
     )
@@ -716,7 +726,10 @@ def create_server(settings_override: Settings | None = None) -> ServerBundle:
             "tool is called first for an obvious workout-card request, use its suggested_card field as the "
             "current card instead of stopping at a generic clues card. It identifies likely "
             "intents, the best synced Fitbit metrics to inspect, visible clues, recommended follow-up "
-            "tools, and conversation flow options without forcing a brittle script."
+            "tools, and conversation flow options without forcing a brittle script. If a question says "
+            "'include oxygen/breathing/heart/load only if they matter', classify that as a metric-selection "
+            "instruction, not as symptoms unless the user also reports breathing trouble, pain, dizziness, "
+            "illness, or another current sensation."
         ),
         annotations=READ_ONLY,
         meta=WIDGET_META,
@@ -767,6 +780,8 @@ def create_server(settings_override: Settings | None = None) -> ServerBundle:
             "the relevant synced signals for the decision, including sleep, HRV, resting HR, SpO2, "
             "respiratory rate, sleep temperature, AZM/load, steps, workouts, goals, check-ins, and "
             "freshness, so do not call a broad overview first for normal day-of workout-card requests. "
+            "If the user asks to include oxygen/breathing/heart/load only if they matter, still call "
+            "this tool; do not treat that metric list as symptoms or as a blocked medical request. "
             "Does not start a sync."
             " If the user asks to use tools, show the card, or asks the same day-of question again with "
             "new context, call this tool again rather than answering from an older card in the thread."
@@ -782,7 +797,9 @@ def create_server(settings_override: Settings | None = None) -> ServerBundle:
                     "The user's current plain-language feeling, symptoms, soreness, energy, time limit, "
                     "or concern, for example 'I have 30 minutes after work', 'I feel good and want to run', "
                     "or 'I feel a little off but want to work out'. Pass only current user-stated context; "
-                    "do not revive old conversation symptoms unless the user says they still apply."
+                    "do not revive old conversation symptoms unless the user says they still apply. Do not "
+                    "include metric-selection instructions such as 'use oxygen/breathing/heart/load if they "
+                    "matter' here; the tool already checks those synced signals."
                 )
             ),
         ] = None,
@@ -812,6 +829,8 @@ def create_server(settings_override: Settings | None = None) -> ServerBundle:
             "do not say the card UI is unavailable if this tool is available. This tool already includes "
             "the relevant synced signals for the plan, including sleep, HRV, resting HR, SpO2, respiratory "
             "rate, sleep temperature, AZM/load, steps, workouts, goals, check-ins, and freshness."
+            " If the user asks to include oxygen/breathing/heart/load only if they matter, still call "
+            "this tool; treat that as a data-use preference, not a symptom report. "
             " If the user says to use tools or show a workout card, call this tool for the current turn "
             "instead of reusing an older visible card."
         ),
@@ -848,7 +867,9 @@ def create_server(settings_override: Settings | None = None) -> ServerBundle:
             Field(
                 description=(
                     "User-stated guardrails, context, and preferences: time limits, soreness, pain, "
-                    "symptoms, upcoming hikes/sports/walks, energy, and what they want to avoid."
+                    "symptoms, upcoming hikes/sports/walks, energy, and what they want to avoid. Do not "
+                    "copy metric-selection instructions such as 'include oxygen/breathing/heart/load if "
+                    "they matter' into constraints unless the user reports an actual current symptom."
                 )
             ),
         ] = None,
@@ -1123,6 +1144,7 @@ def create_server(settings_override: Settings | None = None) -> ServerBundle:
                 health_store.sync_latest,
                 connected_user_id,
                 force=False,
+                include_context=False,
             )
         return response
 

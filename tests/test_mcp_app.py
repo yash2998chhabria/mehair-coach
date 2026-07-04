@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import httpx
 import pytest
+from starlette.responses import Response
 
-from app.main import SERVER_INSTRUCTIONS, app, mcp, settings as app_settings
+from app.crypto import generate_key
+from app.main import SERVER_INSTRUCTIONS, app, create_server, mcp, settings as app_settings
 from app.settings import Settings
 from app.widget import LEGACY_WIDGET_URIS, WIDGET_PREVIEW_STATES, WIDGET_URI
 
@@ -55,7 +57,11 @@ async def test_mcp_tool_list_matches_private_beta_plan() -> None:
     assert "ChatGPT can choose metrics intelligently" in by_name[
         "list_available_health_metrics"
     ].description
+    assert "metric-selection requests" in by_name["list_available_health_metrics"].description
     assert "Do not use a fixed recipe" in by_name["query_health_metrics"].description
+    assert "normal wearable context, not a symptom report" in by_name[
+        "query_health_metrics"
+    ].description
     query_schema = by_name["query_health_metrics"].inputSchema["properties"]
     assert "Metric ids to fetch" in query_schema["metrics"]["description"]
     assert "7-14 for coaching" in query_schema["days"]["description"]
@@ -95,6 +101,7 @@ async def test_mcp_tool_list_matches_private_beta_plan() -> None:
     assert "what other signals are relevant" in by_name["get_health_question_clues"].description
     assert "suggested_card" in by_name["get_health_question_clues"].description
     assert "without forcing a brittle script" in by_name["get_health_question_clues"].description
+    assert "metric-selection instruction" in by_name["get_health_question_clues"].description
     assert "oxygen/breathing signals can be named as background" in by_name[
         "get_recovery_signal_comparison"
     ].description
@@ -112,7 +119,11 @@ async def test_mcp_tool_list_matches_private_beta_plan() -> None:
         "recommend_workout_today"
     ].description
     assert "SpO2" in by_name["recommend_workout_today"].description
+    assert "metric list as symptoms" in by_name["recommend_workout_today"].description
     assert "Pass only current user-stated context" in by_name["recommend_workout_today"].inputSchema[
+        "properties"
+    ]["current_feeling"]["description"]
+    assert "metric-selection instructions" in by_name["recommend_workout_today"].inputSchema[
         "properties"
     ]["current_feeling"]["description"]
     assert "upper body but save my legs for a hike" in by_name[
@@ -122,6 +133,12 @@ async def test_mcp_tool_list_matches_private_beta_plan() -> None:
         "plan_workout_with_health_context"
     ].description
     assert "sleep temperature" in by_name["plan_workout_with_health_context"].description
+    assert "data-use preference, not a symptom report" in by_name[
+        "plan_workout_with_health_context"
+    ].description
+    assert "copy metric-selection instructions" in by_name["plan_workout_with_health_context"].inputSchema[
+        "properties"
+    ]["constraints"]["description"]
     assert "Live inputs are user-reported" in by_name["guide_active_workout"].description
     assert "not direct band telemetry" in by_name["guide_active_workout"].description
     assert "actual Apps SDK active workout card renderer" in by_name[
@@ -142,6 +159,9 @@ def test_server_instructions_keep_normal_latest_questions_fast() -> None:
     assert "Everyday prompts like 'should I run today'" in SERVER_INSTRUCTIONS
     assert "'I want to get fitter but not feel wrecked'" in SERVER_INSTRUCTIONS
     assert "Keep metric labels such as HRV, RPE, AZM" in SERVER_INSTRUCTIONS
+    assert "metric-selection and answer-shaping instructions" in SERVER_INSTRUCTIONS
+    assert "Do not put those metric-selection phrases into current_feeling" in SERVER_INSTRUCTIONS
+    assert "Do not narrate internal failed or blocked tool attempts" in SERVER_INSTRUCTIONS
     assert "Keep source boundaries clear" in SERVER_INSTRUCTIONS
     assert "synced Fitbit/Google Health signals are wearable evidence" in SERVER_INSTRUCTIONS
     assert "conversation memory or prior chat context" in SERVER_INSTRUCTIONS
@@ -216,12 +236,20 @@ async def test_widget_resource_is_registered() -> None:
     assert "function renderLabelKey(labels)" in html
     assert "function inferredLabelKey(model)" in html
     assert "label-key" in html
+    assert "Metric labels, translated" in html
     assert "score-state::before" in html
+    assert "const showScore = model.showScore !== false" in html
+    assert 'class="hero ${showScore ? "" : "no-score"}"' in html
+    assert "showScore: !safety.length" in html
     assert "band-green" in html
     assert "training available" not in html
     assert "Train available" not in html
     assert "more training room" in html
     assert "More training room (75+)" in html
+    assert "function renderPrescriptionPills(block)" in html
+    assert "workout-prescription" in html
+    assert "rx-pill" in html
+    assert 'join(" | ")' not in html
     assert 'root.style.setProperty("--state", "#d63384")' in html
     assert 'root.style.setProperty("--state", accent)' not in html
     assert "dataUsed.sleep_asleep_hours != null" in html
@@ -256,6 +284,52 @@ async def test_http_metadata_routes() -> None:
     assert oauth.json()["authorization_endpoint"].endswith("/oauth/authorize")
     assert protected.status_code == 200
     assert protected.json()["resource"].rstrip("/") == app_settings.base_url
+
+
+@pytest.mark.asyncio
+async def test_google_callback_background_sync_skips_context_payload(tmp_path) -> None:
+    bundle = create_server(
+        Settings(
+            public_base_url="http://localhost:8787",
+            database_url=f"sqlite:///{tmp_path / 'callback.sqlite3'}",
+            token_encryption_key=generate_key(),
+            google_client_id="fake-google-client",
+            google_client_secret="fake-google-secret",
+            google_redirect_uri="http://localhost:8787/oauth/callback/google",
+        )
+    )
+    sync_calls = []
+
+    async def fake_google_callback(request, on_connected=None):
+        if on_connected:
+            on_connected("user-with-google-health")
+        return Response(status_code=302, headers={"location": "https://chatgpt.com"})
+
+    async def fake_sync_latest(user_id, force=False, *, include_context=True):
+        sync_calls.append(
+            {
+                "user_id": user_id,
+                "force": force,
+                "include_context": include_context,
+            }
+        )
+        return {"status": "ok"}
+
+    bundle.auth_service.google_callback = fake_google_callback
+    bundle.health_store.sync_latest = fake_sync_latest
+
+    transport = httpx.ASGITransport(app=bundle.app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://localhost:8787") as client:
+        response = await client.get("/oauth/callback/google", follow_redirects=False)
+
+    assert response.status_code == 302
+    assert sync_calls == [
+        {
+            "user_id": "user-with-google-health",
+            "force": False,
+            "include_context": False,
+        }
+    ]
 
 
 @pytest.mark.asyncio
@@ -363,6 +437,8 @@ async def test_widget_preview_route_renders_real_card_state() -> None:
     assert "Session Blueprint" in workout_plan.text
     assert "Machine chest press" in workout_plan.text
     assert "Chest-supported row" in workout_plan.text
+    assert "Exercise prescription" in workout_plan.text
+    assert "Effort" in workout_plan.text
     assert "RPE = how hard it feels" in workout_plan.text
     assert "hard but controlled" in workout_plan.text
     assert "Bent-over row -> chest-supported row." in workout_plan.text

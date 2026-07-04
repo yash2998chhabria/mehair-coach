@@ -236,6 +236,10 @@ TODAY_WIDGET_HTML = """
         padding: 14px;
       }
 
+      .hero.no-score {
+        grid-template-columns: 1fr;
+      }
+
       .score-card {
         display: grid;
         justify-items: center;
@@ -452,12 +456,41 @@ TODAY_WIDGET_HTML = """
         line-height: 1.2;
       }
 
-      .workout-block span {
+      .workout-prescription {
+        grid-column: 1 / -1;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        min-width: 0;
+      }
+
+      .rx-pill {
+        display: inline-grid;
+        grid-template-columns: auto minmax(0, 1fr);
+        gap: 4px;
+        align-items: baseline;
+        max-width: 100%;
+        border: 1px solid #f0d5e1;
+        border-radius: 999px;
+        background: #fff5fa;
+        padding: 5px 8px;
+      }
+
+      .rx-pill b {
+        color: var(--brand-ink);
+        font-size: 10px;
+        font-weight: 840;
+        line-height: 1.2;
+        text-transform: uppercase;
+      }
+
+      .rx-pill span {
+        min-width: 0;
+        overflow-wrap: anywhere;
         color: var(--brand);
         font-size: 12px;
         font-weight: 780;
         line-height: 1.2;
-        white-space: nowrap;
       }
 
       .workout-block small {
@@ -525,6 +558,15 @@ TODAY_WIDGET_HTML = """
         gap: 8px;
         border-top: 1px solid #f7deea;
         padding: 0 14px 14px;
+      }
+
+      .label-heading {
+        grid-column: 1 / -1;
+        color: var(--brand);
+        font-size: 11px;
+        font-weight: 820;
+        line-height: 1.2;
+        text-transform: uppercase;
       }
 
       .label-pill {
@@ -1240,6 +1282,7 @@ TODAY_WIDGET_HTML = """
             freshnessChip(data.data_freshness || {}),
           ].filter(Boolean),
           score: readinessScore,
+          showScore: !safety.length,
           primaryLabel: "Readiness",
           headline: coach.short_answer || data.headline || "Use live symptoms and effort to adjust the session.",
           focusTitle: activeWorkoutFocusTitle(data, coach, safety),
@@ -1534,6 +1577,7 @@ TODAY_WIDGET_HTML = """
         const blocks = renderBlocks(model.blocks);
         const scoreContext = scoreNote(model.primaryLabel, score);
         const stateLabel = isReadinessScore ? readinessStateLabel(model.stateLabel || readinessBand(score, "")) : "";
+        const showScore = model.showScore !== false;
         root.innerHTML = `
           <div class="mast">
             <div class="identity">
@@ -1547,18 +1591,20 @@ TODAY_WIDGET_HTML = """
             ${(model.chips || ["health"]).slice(0, 4).map((item, index) => `<span class="chip ${index === 0 ? "accent" : ""}">${escapeHtml(item)}</span>`).join("")}
           </div>
           ${renderDataWindow(model.dataWindow)}
-          <div class="hero">
-            <div class="score-card">
-              <div class="gauge" aria-label="${escapeHtml(model.primaryLabel || "score")} ${score}">
-                <div class="gauge-inner">
-                  <b>${escapeHtml(score)}</b>
-                  <span>${escapeHtml(model.primaryLabel || "Score")}</span>
+          <div class="hero ${showScore ? "" : "no-score"}">
+            ${showScore ? `
+              <div class="score-card">
+                <div class="gauge" aria-label="${escapeHtml(model.primaryLabel || "score")} ${score}">
+                  <div class="gauge-inner">
+                    <b>${escapeHtml(score)}</b>
+                    <span>${escapeHtml(model.primaryLabel || "Score")}</span>
+                  </div>
                 </div>
+                ${stateLabel ? `<span class="score-state">${escapeHtml(stateLabel)}</span>` : ""}
+                ${scoreContext ? `<p class="score-note">${escapeHtml(scoreContext)}</p>` : ""}
+                ${isReadinessScore ? `<div class="band-legend" aria-label="Readiness thresholds"><span class="band-green">green 75+</span><span class="band-yellow">yellow 55-74</span><span class="band-red">red &lt;55</span></div>` : ""}
               </div>
-              ${stateLabel ? `<span class="score-state">${escapeHtml(stateLabel)}</span>` : ""}
-              ${scoreContext ? `<p class="score-note">${escapeHtml(scoreContext)}</p>` : ""}
-              ${isReadinessScore ? `<div class="band-legend" aria-label="Readiness thresholds"><span class="band-green">green 75+</span><span class="band-yellow">yellow 55-74</span><span class="band-red">red &lt;55</span></div>` : ""}
-            </div>
+            ` : ""}
             <div class="plan-box">
               <h2>${escapeHtml(model.focusTitle || "Coach Take")}</h2>
               ${renderDoseCue(model)}
@@ -1623,6 +1669,7 @@ TODAY_WIDGET_HTML = """
         if (!usable.length) return "";
         return `
           <div class="label-key" aria-label="Metric label explanations">
+            <div class="label-heading">Metric labels, translated</div>
             ${usable.map((item) => `
               <div class="label-pill">
                 <b>${escapeHtml(item.label)}</b>
@@ -1782,17 +1829,33 @@ TODAY_WIDGET_HTML = """
           return `<div class="workout-block"><b>${escapeHtml(block)}</b></div>`;
         }
         const name = block.exercise || block.name || "Exercise";
-        const prescription = [block.sets ? `${block.sets} sets` : "", block.reps || "", explainPrescription(block.intensity || "")]
-          .filter(Boolean)
-          .join(" | ");
         const note = [block.note || "", block.alternative ? `Alt: ${block.alternative}` : ""]
           .filter(Boolean)
           .join(" ");
         return `
           <div class="workout-block">
             <b>${escapeHtml(name)}</b>
-            <span>${escapeHtml(prescription)}</span>
+            ${renderPrescriptionPills(block)}
             ${note ? `<small>${escapeHtml(note)}</small>` : ""}
+          </div>
+        `;
+      }
+
+      function renderPrescriptionPills(block) {
+        const pills = [
+          { label: "Sets", value: block.sets },
+          { label: "Reps", value: block.reps },
+          { label: "Effort", value: explainPrescription(block.intensity || "") },
+        ].filter((item) => item.value);
+        if (!pills.length) return "";
+        return `
+          <div class="workout-prescription" aria-label="Exercise prescription">
+            ${pills.map((item) => `
+              <span class="rx-pill">
+                <b>${escapeHtml(item.label)}</b>
+                <span>${escapeHtml(item.value)}</span>
+              </span>
+            `).join("")}
           </div>
         `;
       }

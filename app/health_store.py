@@ -3241,6 +3241,13 @@ def _question_intents(question: str) -> list[str]:
                 "gym",
                 "hoops",
                 "basketball",
+                "pickleball",
+                "tennis",
+                "squash",
+                "match",
+                "game",
+                "court",
+                "practice",
                 "sport",
             ),
         )
@@ -3293,6 +3300,19 @@ def _question_intents(question: str) -> list[str]:
         "preserve energy",
         "stay fresh",
     )
+    metric_selection_context = has(
+        "if they matter",
+        "only if they matter",
+        "use the band data",
+        "use all the band",
+        "use all signals",
+        "include oxygen",
+        "include breathing",
+        "include heart",
+        "include load",
+        "oxygen/breathing",
+        "heart/load",
+    )
     weekly_goal_context = has(
         "weekly goal",
         "training goal",
@@ -3316,7 +3336,14 @@ def _question_intents(question: str) -> list[str]:
         "leg day",
         "gym",
         "squash",
+        "pickleball",
+        "tennis",
+        "basketball",
         "soccer",
+        "match",
+        "game",
+        "court",
+        "practice",
         "sport",
         "dinner later",
         "later today",
@@ -3383,6 +3410,12 @@ def _question_intents(question: str) -> list[str]:
         "new card",
         "show the card again",
     )
+    time_budget_context = _minutes_from_question(text) is not None or has(
+        "quick",
+        "short on time",
+        "only have",
+        "short window",
+    )
     exercise_context = has(
         "workout",
         "work out",
@@ -3396,6 +3429,8 @@ def _question_intents(question: str) -> list[str]:
         "cardio",
         "interval",
         "intervals",
+        "pickleball",
+        "tennis",
         "push",
         "harder",
         "squash",
@@ -3416,6 +3451,10 @@ def _question_intents(question: str) -> list[str]:
         "ride",
         "hoops",
         "basketball",
+        "match",
+        "game",
+        "court",
+        "practice",
         "enough movement",
         "minimum useful",
         "talk me out",
@@ -3456,7 +3495,9 @@ def _question_intents(question: str) -> list[str]:
         )
     ) or ("today" in text and any(word in text for word in ("recommend", "suggest", "plan", "focus", "best use")))
     if not asks_for_today_plan and has("minutes", "quick", "short on time", "only have"):
-        asks_for_today_plan = has("today", "workout", "work out", "train", "training", "session", "exercise")
+        asks_for_today_plan = has("today", "workout", "work out", "train", "training", "session", "exercise") or (
+            fresh_card_request and time_budget_context
+        )
     if asks_for_today_plan:
         intents.extend(
             [
@@ -3499,7 +3540,7 @@ def _question_intents(question: str) -> list[str]:
             "movement",
             "session",
             "how hard",
-        ):
+        ) or time_budget_context:
             intents.extend(["daily_plan", "general_overview", "workout_decision", "recovery", "activity_load", "heart", "sleep"])
         else:
             intents.extend(["general_overview"])
@@ -3517,7 +3558,6 @@ def _question_intents(question: str) -> list[str]:
         "active workout",
         "keep going",
         "continue",
-        "push",
         "hold steady",
         "back off",
         "slow down",
@@ -3537,9 +3577,24 @@ def _question_intents(question: str) -> list[str]:
     if has("heart", "hrv", "bpm", "pulse", "resting", "cardio"):
         intents.extend(["heart", "recovery", "activity_load"])
     if has("oxygen", "spo2", "sp02", "breathing", "breath", "respiratory", "temperature", "temp"):
-        intents.extend(["breathing_recovery", "recovery", "sleep", "heart", "workout_decision"])
+        if metric_selection_context and (
+            exercise_context or asks_for_today_plan or future_window_context or improvement_goal_context
+        ):
+            intents.extend(["recovery", "sleep", "heart", "workout_decision"])
+        else:
+            intents.extend(["breathing_recovery", "recovery", "sleep", "heart", "workout_decision"])
     if has("vo2", "capacity", "endurance", "aerobic", "cardio fitness"):
         intents.extend(["general_overview", "activity_load", "heart", "goal"])
+        if "today" in text or has(
+            "does that change",
+            "what does that change",
+            "change my plan",
+            "change the plan",
+            "change what i should do",
+            "change training",
+            "change my training",
+        ):
+            intents.extend(["daily_plan", "workout_decision", "recovery", "sleep"])
     if broad_data_context:
         intents.extend(["metric_discovery", "general_overview", "recovery", "heart", "sleep", "activity_load"])
     if has("sore", "soreness", "pain", "injury", "ache", "stress", "energy", "feel"):
@@ -3703,7 +3758,12 @@ def _recommended_tool_sequence(
         else:
             tools.append("get_health_overview")
     if any(intent in intents for intent in ("recovery", "sleep", "heart")):
-        supporting.extend(["get_recovery_signal_comparison", "get_sleep_analysis", "get_heart_trends"])
+        recovery_tools = ["get_recovery_signal_comparison", "get_sleep_analysis", "get_heart_trends"]
+        if "metric_discovery" in intents and ("workout_decision" in intents or "daily_plan" in intents):
+            tools.append("get_recovery_signal_comparison")
+            supporting.extend(recovery_tools[1:])
+        else:
+            supporting.extend(recovery_tools)
     if "activity_load" in intents:
         supporting.extend(["get_activity_load", "get_workout_history"])
     return _dedupe(tools + supporting[:3] + overview_supporting[:1])
