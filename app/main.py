@@ -46,8 +46,11 @@ SERVER_INSTRUCTIONS = (
     "When a tool returns coach_response, use it as the answer skeleton: direct human answer first, "
     "then the session_blueprint or what_to_do, then the explained metric labels, then stop conditions "
     "or caveats. Shape the answer as decision, do now, why the data matters, and what would change "
-    "the call. Also use training_decision, model_signal_context, and available_signal_snapshot as "
-    "response contract fields: summarize the relevant parts, do not recite every field. For vague, "
+    "the call. Also use training_decision, readiness_attribution, model_signal_context, "
+    "and available_signal_snapshot as response contract fields: summarize the relevant parts, "
+    "do not recite every field. Use readiness_attribution to explain which signals actually moved "
+    "the readiness score versus which signals are safety caps or context; do not say SpO2, VO2, "
+    "or another secondary metric caused the whole call unless the attribution proves it. For vague, "
     "novel, or all-data questions, use decision_frame.model_decision_policy or "
     "model_signal_context.decision_policy to select signals by safety, recovery, load, capacity, "
     "and user-context axes instead of relying on exact words in the prompt. Avoid leading "
@@ -1568,6 +1571,7 @@ def workout_recommendation(
         next_actions=deduped_next_actions,
         freshness=freshness,
     )
+    readiness_attribution = _readiness_attribution(readiness)
 
     return {
         "status": "ok",
@@ -1600,6 +1604,7 @@ def workout_recommendation(
         "workout_history_summary": workout_summary or None,
         "data_freshness": freshness,
         "training_decision": training_decision,
+        "readiness_attribution": readiness_attribution,
         "model_signal_context": model_signal_context(signal_snapshot),
         "data_used": {
             "activity_date": activity_date,
@@ -1718,6 +1723,7 @@ def workout_plan_for_activity(
     intensity = _base_intensity(readiness_label)
     rpe_cap = {"easy": 6, "moderate": 7, "moderate-to-hard": 8}.get(intensity, 6)
     limiting_factors = _normalized_readiness_evidence(context)
+    limiting_factors.extend(_readiness_attribution_evidence(context))
     limiting_factors.extend(_signal_snapshot_evidence(signal_snapshot, limit=5))
     steps_today = _safe_int(today.get("steps"))
     high_step_load = steps_today is not None and steps_today >= 15000
@@ -1963,6 +1969,7 @@ def workout_plan_for_activity(
         next_actions=session,
         freshness=context.get("data_freshness", {}),
     )
+    readiness_attribution = _readiness_attribution(readiness)
 
     return {
         "status": "ok",
@@ -1990,6 +1997,7 @@ def workout_plan_for_activity(
         "stop_conditions": stop_conditions,
         "limiting_factors": deduped_limiting_factors,
         "training_decision": training_decision,
+        "readiness_attribution": readiness_attribution,
         "model_signal_context": model_signal_context(signal_snapshot),
         "data_freshness": context.get("data_freshness", {}),
         "data_used": {
@@ -2075,6 +2083,7 @@ def active_workout_guidance(
         resting_heart_rate=resting_heart_rate,
     )
     evidence = list(readiness.get("evidence", []))
+    evidence.extend(_readiness_attribution_evidence(context))
     if current_heart_rate_bpm is not None:
         evidence.append(f"Live heart rate reported: {current_heart_rate_bpm} bpm (HR = current beats per minute).")
     if rpe is not None:
@@ -2185,6 +2194,7 @@ def active_workout_guidance(
     deduped_modifications = _dedupe(modifications)
     deduped_avoid = _dedupe(avoid)
     deduped_evidence = _dedupe(evidence)
+    readiness_attribution = _readiness_attribution(readiness)
     coach_response = _active_workout_coach_response(
         decision=decision,
         headline=headline,
@@ -2217,6 +2227,7 @@ def active_workout_guidance(
         "recent_checkins": checkins or [],
         "data_freshness": freshness,
         "model_signal_context": model_signal_context(signal_snapshot),
+        "readiness_attribution": readiness_attribution,
         "live_data_note": "In-session guidance uses user-reported live HR/RPE/pain plus the latest cloud-synced Fitbit context; it is not direct band telemetry.",
         "live_inputs": {
             "current_heart_rate_bpm": current_heart_rate_bpm,
@@ -2929,6 +2940,8 @@ def _today_workout_coach_response(
             "Use this as a flexible coaching contract, not wording to copy. Answer like a personal "
             "coach: direct recommendation first, concrete next move second, then explain the kept "
             "metric labels in one short why section. Match the current user-stated situation exactly."
+            " If readiness_attribution is present, use it to separate score movers from safety caps; "
+            "do not collapse the whole decision into SpO2, VO2, or any one secondary signal."
         ),
         "realistic_follow_ups": _today_realistic_followups(subjective_limiter, illness_flags),
     }
@@ -2980,10 +2993,13 @@ def _training_decision_frame(
         best_session_type = "normal training with a warm-up check and no blind max effort"
 
     reasons_for, reasons_against = _split_training_reasons(evidence)
+    background_context = _training_background_context(evidence)
     if has_sync_limit and not any("fresh" in item.lower() or "sync" in item.lower() for item in reasons_against):
         reasons_against.insert(0, freshness.get("recommendation") or "Data should be synced before hard time-sensitive training.")
     if has_load_limit and not any("load" in item.lower() or "step" in item.lower() for item in reasons_against):
         reasons_against.append("Recent movement or zone load should cap added intensity.")
+
+    readiness_attribution = _readiness_attribution(readiness)
 
     return {
         "hard_training": hard_training,
@@ -2991,18 +3007,192 @@ def _training_decision_frame(
         "rpe_cap": rpe_cap,
         "readiness_score": readiness.get("score"),
         "readiness_band": readiness.get("label"),
+        "readiness_attribution": readiness_attribution,
         "freshness_level": freshness.get("freshness_level"),
         "reasons_for": reasons_for[:5],
         "reasons_against": reasons_against[:5],
+        "background_context": background_context[:5],
         "do_now": next_actions[:5],
         "avoid": avoid[:5],
         "stop_or_downshift_triggers": stop_conditions[:6],
         "model_guidance": (
             "Use this as the compact decision frame, not a script. Explain the human action first, "
             "then use only the relevant reasons for/against to show how the data changed the "
-            "recommendation. Do not recite fields the user does not need."
+            "recommendation. Use readiness_attribution to separate score math from safety caps, "
+            "especially for SpO2, respiratory rate, sleep temperature, and VO2 max. Do not recite "
+            "fields the user does not need. Treat background_context as checked data that did not "
+            "materially change the call."
         ),
     }
+
+
+def _readiness_signal_label(signal: str) -> str:
+    labels = {
+        "sleep": "Sleep",
+        "hrv": "HRV",
+        "resting_heart_rate": "Resting HR",
+        "respiratory_rate": "Respiratory rate",
+        "spo2": "SpO2",
+        "sleep_temperature": "Sleep temperature",
+        "training_load": "Training load",
+        "data_timing": "Data timing",
+    }
+    return labels.get(signal, signal.replace("_", " ").title())
+
+
+def _readiness_contribution_text(contribution: dict[str, Any]) -> str:
+    signal = _readiness_signal_label(str(contribution.get("signal") or "signal"))
+    try:
+        points = int(contribution.get("points") or 0)
+    except (TypeError, ValueError):
+        points = 0
+    point_text = f"+{points}" if points > 0 else str(points)
+    role = str(contribution.get("role") or "score_input")
+    explanation = str(contribution.get("explanation") or "").strip()
+    date = contribution.get("date")
+    date_text = f" ({date})" if date else ""
+    if role == "safety_caution":
+        prefix = f"{signal} {point_text} safety cap{date_text}"
+    elif role == "data_timing":
+        prefix = f"{signal}{date_text}"
+    elif points > 0:
+        prefix = f"{signal} {point_text} support{date_text}"
+    elif points < 0:
+        prefix = f"{signal} {point_text} caution{date_text}"
+    else:
+        prefix = f"{signal} context{date_text}"
+    return f"{prefix}: {explanation}" if explanation else prefix
+
+
+def _readiness_attribution(readiness: dict[str, Any]) -> dict[str, Any]:
+    breakdown = readiness.get("score_breakdown") or {}
+    contributions = [item for item in breakdown.get("contributions", []) if isinstance(item, dict)]
+    if not breakdown or not contributions:
+        return {
+            "status": "missing",
+            "reason": "No readiness score breakdown was returned for this result.",
+            "model_guidance": (
+                "Use readiness.evidence conservatively and avoid claiming a single metric caused the "
+                "whole readiness score."
+            ),
+        }
+
+    supports: list[str] = []
+    cautions: list[str] = []
+    context: list[str] = []
+    timing: list[str] = []
+    normalized: list[dict[str, Any]] = []
+    negative_score_signals: list[str] = []
+
+    for contribution in contributions:
+        try:
+            points = int(contribution.get("points") or 0)
+        except (TypeError, ValueError):
+            points = 0
+        role = str(contribution.get("role") or "score_input")
+        signal = str(contribution.get("signal") or "signal")
+        text = _readiness_contribution_text(contribution)
+        normalized.append({**contribution, "points": points, "display": text})
+        if role == "data_timing":
+            timing.append(text)
+        elif role == "safety_caution" or points < 0:
+            cautions.append(text)
+            if points < 0:
+                negative_score_signals.append(_readiness_signal_label(signal))
+        elif points > 0:
+            supports.append(text)
+        else:
+            context.append(text)
+
+    score = breakdown.get("score", readiness.get("score"))
+    band = breakdown.get("band", readiness.get("label"))
+    support_summary = "; ".join(supports[:3]) if supports else "no strong positive score movers returned"
+    caution_summary = "; ".join(cautions[:3]) if cautions else "no material caution score movers returned"
+    timing_summary = "; ".join(timing[:2])
+    plain_summary = (
+        f"Readiness {score}/100 ({band}) starts from a 50-point baseline. "
+        f"Supports: {support_summary}. Cautions/caps: {caution_summary}."
+    )
+    if timing_summary:
+        plain_summary += f" Timing: {timing_summary}."
+
+    return {
+        "status": "ok",
+        "base": breakdown.get("base", 50),
+        "score": score,
+        "band": band,
+        "activity_date": breakdown.get("activity_date"),
+        "recovery_date": breakdown.get("recovery_date"),
+        "recovery_signal_source": breakdown.get("recovery_signal_source"),
+        "supports": supports,
+        "cautions": cautions,
+        "context": context,
+        "data_timing": timing,
+        "negative_score_signals": _dedupe(negative_score_signals),
+        "plain_summary": plain_summary,
+        "contributions": normalized,
+        "attribution_guardrail": (
+            "Score math and coaching safety are related but not identical. SpO2, respiratory rate, "
+            "sleep temperature, and VO2 max should be described as context or intensity caps unless "
+            "their contribution is clearly the dominant score mover."
+        ),
+        "model_guidance": (
+            str(breakdown.get("model_guidance") or "").strip()
+            + " Use this attribution before explaining why a workout is easy, moderate, or hard. "
+            "Do not say a low SpO2 reading produced the whole readiness score when it is only a "
+            "small negative contribution or a safety cap; say it is one caution signal and name the "
+            "supportive signals too."
+        ).strip(),
+    }
+
+
+def _readiness_attribution_evidence(context: dict[str, Any]) -> list[str]:
+    attribution = _readiness_attribution(context.get("readiness") or {})
+    if attribution.get("status") != "ok":
+        return []
+    lines = [f"Readiness attribution: {attribution['plain_summary']}"]
+    if attribution.get("data_timing"):
+        lines.append(
+            "Data timing for readiness: "
+            + " ".join(attribution["data_timing"][:2])
+            + " Use the score as a blended same-day plus latest-recovery view when dates differ."
+        )
+    if attribution.get("cautions"):
+        lines.append(
+            "Attribution guardrail: caution signals can cap intensity without being the whole reason "
+            "for the readiness band; name the supports and cautions separately."
+        )
+    return lines
+
+
+def _training_background_context(evidence: list[str]) -> list[str]:
+    background: list[str] = []
+    for item in _humanized_evidence(_prioritize_coach_evidence(evidence)):
+        lower = item.lower()
+        if ("spo2" in lower or "oxygen saturation" in lower or "oxygen is useful context" in lower) and not any(
+            term in lower
+            for term in (
+                "training caution",
+                "safety cap",
+                "below recent baseline",
+                "low spo2",
+            )
+        ):
+            background.append(item)
+            continue
+        if "respiratory rate" in lower and not (
+            " is elevated" in lower and "not elevated" not in lower
+        ):
+            background.append(item)
+            continue
+        if "sleep temperature" in lower and not any(
+            term in lower for term in ("meaningfully different", "temperature is high", "caution")
+        ):
+            background.append(item)
+            continue
+        if "vo2 max" in lower:
+            background.append(item)
+    return _dedupe(background)
 
 
 def _split_training_reasons(evidence: list[str]) -> tuple[list[str], list[str]]:
@@ -3035,6 +3225,9 @@ def _split_training_reasons(evidence: list[str]) -> tuple[list[str], list[str]]:
         "near-term",
         "obligation",
         "drain",
+        "caution",
+        "safety cap",
+        "cap intensity",
     )
     reasons_for: list[str] = []
     reasons_against: list[str] = []
@@ -3046,10 +3239,8 @@ def _split_training_reasons(evidence: list[str]) -> tuple[list[str], list[str]]:
             and "below recent baseline" not in lower
             and "training caution" not in lower
         ):
-            reasons_for.append(item)
             continue
         if "sleep temperature" in lower and "meaningfully different" not in lower and "temperature is high" not in lower:
-            reasons_for.append(item)
             continue
         if any(term in lower for term in caution_terms):
             reasons_against.append(item)
@@ -3133,7 +3324,8 @@ def _workout_plan_coach_response(
         "answer_style": (
             "Use this as a flexible workout-plan contract. Keep the workout name and metric labels, "
             "translate each label in simple words, and match the user's stated situation instead of "
-            "assuming they feel off. Prefer a usable session blueprint over a stats recap."
+            "assuming they feel off. Prefer a usable session blueprint over a stats recap. Use "
+            "readiness_attribution to explain what moved the score versus what only caps intensity."
             + (
                 " This result supersedes any older visible card in the thread: because the user has a "
                 "near-term obligation, do not present this as a normal RPE 8 workout, and do not suggest "
@@ -3220,7 +3412,8 @@ def _active_workout_coach_response(
         "answer_style": (
             "Use urgent, plain language first; explain HR, RPE, AZM, and readiness only after the "
             "action is clear. Say that live HR/RPE/pain are user-reported inputs, and never imply "
-            "this tool is streaming live band telemetry."
+            "this tool is streaming live band telemetry. Use readiness_attribution as background "
+            "context only; live pain, symptoms, breathing, and form decide immediate safety."
         ),
     }
 
@@ -3353,6 +3546,7 @@ def _workout_evidence(
     workout_summary: dict[str, Any],
 ) -> list[str]:
     evidence = _normalized_readiness_evidence(context)
+    evidence.extend(_readiness_attribution_evidence(context))
 
     freshness_level = freshness.get("freshness_level")
     if freshness.get("needs_sync_before_time_sensitive_advice") or freshness_level in {"aging", "stale", "empty"}:

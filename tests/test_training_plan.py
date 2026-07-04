@@ -1524,7 +1524,11 @@ def test_today_recommendation_returns_human_coach_response_without_losing_labels
     assert recommendation["available_signal_snapshot"]["status"] == "ok"
     assert recommendation["training_decision"]["hard_training"] == "conditional"
     assert recommendation["training_decision"]["rpe_cap"] == 7
-    assert any("breathing" in item.lower() or "oxygen" in item.lower() for item in recommendation["training_decision"]["reasons_for"])
+    assert not any("normal SpO2" in item for item in recommendation["training_decision"]["reasons_for"])
+    assert any(
+        "breathing" in item.lower() or "oxygen" in item.lower()
+        for item in recommendation["training_decision"]["background_context"]
+    )
     assert recommendation["model_signal_context"]["status"] == "ok"
     assert any(
         item["id"] == "vo2_max"
@@ -1549,6 +1553,110 @@ def test_today_recommendation_returns_human_coach_response_without_losing_labels
     assert any("SpO2" in item for item in plan["coach_response"]["why"])
     assert any("Respiratory rate" in item for item in plan["coach_response"]["why"])
     assert any("Sleep temperature" in item for item in plan["coach_response"]["why"])
+
+
+def test_workout_plan_separates_low_spo2_from_whole_readiness_score() -> None:
+    context = {
+        "status": "ok",
+        "latest_date": "2026-07-04",
+        "activity_date": "2026-07-04",
+        "recovery_date": "2026-07-03",
+        "data_freshness": {"freshness_level": "fresh", "freshness_label": "fresh <15m"},
+        "readiness": {
+            "score": 44,
+            "label": "red",
+            "recommendation": "Choose recovery movement or controlled technique today.",
+            "evidence": [
+                "Latest sleep is strong at 9.4h.",
+                "HRV is 92.1 ms; only 2 prior HRV day(s) are available, so the baseline trend is low confidence.",
+                "Resting heart rate is 60 bpm; only 2 prior resting-heart-rate day(s) are available, so the baseline trend is low confidence.",
+                "SpO2 is 80.4%, so treat oxygen context as a training caution signal.",
+                "Recovery signals are from 2026-07-03; today's activity is still partial.",
+            ],
+            "score_breakdown": {
+                "base": 50,
+                "score": 44,
+                "band": "red",
+                "activity_date": "2026-07-04",
+                "recovery_date": "2026-07-03",
+                "recovery_signal_source": "latest_completed_recovery_day",
+                "contributions": [
+                    {
+                        "signal": "spo2",
+                        "points": -6,
+                        "date": "2026-07-04",
+                        "role": "safety_caution",
+                        "confidence": "normal",
+                        "explanation": "SpO2 is 80.4%, so oxygen context should cap intensity if it matches symptoms or poor signal quality.",
+                    },
+                    {
+                        "signal": "data_timing",
+                        "points": 0,
+                        "date": "2026-07-04",
+                        "role": "data_timing",
+                        "confidence": "normal",
+                        "explanation": "Today's activity/oxygen data is from 2026-07-04, while sleep/heart recovery signals are from 2026-07-03.",
+                    },
+                ],
+                "model_guidance": "Distinguish score math from coaching/safety caps.",
+            },
+        },
+        "today": {
+            "steps": 2100,
+            "active_minutes": 20,
+            "active_zone_minutes": 23,
+            "spo2_avg": 80.4,
+            "respiratory_rate": 16.6,
+            "hrv_ms": 92.1,
+            "resting_heart_rate": 60,
+            "sleep": {"asleep_hours": 9.4, "sessions_count": 1},
+            "latest_training_load": {"date": "2026-07-04", "active_zone_minutes": 23},
+        },
+        "sections": {
+            "heart": {
+                "latest_hrv_ms": 92.1,
+                "average_hrv_ms": 70.0,
+                "latest_resting_heart_rate": 60,
+                "average_resting_heart_rate": 64,
+            }
+        },
+        "available_signal_snapshot": {
+            "status": "ok",
+            "available_signal_ids": ["spo2", "respiratory_rate", "heart_rate_zones"],
+            "signals": [
+                {
+                    "id": "spo2",
+                    "label": "SpO2 / oxygen saturation",
+                    "display": "80.4%",
+                    "coaching_use": "Use low or unusual SpO2 with respiratory rate, resting HR, sleep, and symptoms to lower intensity or recommend caution.",
+                },
+                {
+                    "id": "respiratory_rate",
+                    "label": "Respiratory rate",
+                    "display": "16.6 breaths/min",
+                    "coaching_use": "Use elevated or unusual respiratory rate as a reason to cap intensity, especially with symptoms or low sleep.",
+                },
+            ],
+        },
+    }
+
+    plan = workout_plan_for_activity(
+        context=context,
+        planned_activity="25-minute workout",
+        target_areas=[],
+        constraints="I feel normal and want a useful session today.",
+        duration_minutes=25,
+    )
+
+    attribution = plan["readiness_attribution"]
+    assert attribution["status"] == "ok"
+    assert any("SpO2 -6 safety cap" in item for item in attribution["cautions"])
+    assert any("Data timing" in item for item in attribution["data_timing"])
+    assert "small negative contribution" in attribution["model_guidance"]
+    assert any("Readiness attribution" in item for item in plan["limiting_factors"])
+    assert any("caution signals can cap intensity" in item for item in plan["limiting_factors"])
+    assert plan["training_decision"]["readiness_attribution"]["cautions"] == attribution["cautions"]
+    assert "readiness_attribution" in plan["coach_response"]["answer_style"]
 
 
 def test_today_recommendation_for_normal_green_day_does_not_assume_off_day() -> None:

@@ -140,7 +140,8 @@ def test_server_instructions_keep_normal_latest_questions_fast() -> None:
     assert "recorded step days" in SERVER_INSTRUCTIONS
     assert "When a tool returns coach_response" in SERVER_INSTRUCTIONS
     assert "If get_health_question_clues returns suggested_card" in SERVER_INSTRUCTIONS
-    assert "training_decision, model_signal_context, and available_signal_snapshot" in SERVER_INSTRUCTIONS
+    assert "training_decision, readiness_attribution, model_signal_context" in SERVER_INSTRUCTIONS
+    assert "which signals actually moved" in SERVER_INSTRUCTIONS
     assert "decision_frame.model_decision_policy" in SERVER_INSTRUCTIONS
     assert "safety, recovery, load, capacity" in SERVER_INSTRUCTIONS
     assert "Do not say a tool was blocked unless the tool result itself has an error" in SERVER_INSTRUCTIONS

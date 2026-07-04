@@ -670,6 +670,14 @@ def test_synthetic_records_calculate_context(tmp_path, monkeypatch) -> None:
     assert overview["sections"]["recovery"]["latest_respiratory_rate"] == 15.8
     assert overview["sections"]["recovery"]["latest_sleep_temperature"]["delta_celsius"] == 0.21
     assert overview["sections"]["recovery"]["latest_vo2_max"] == 43.6
+    readiness_breakdown = overview["readiness"]["score_breakdown"]
+    assert readiness_breakdown["base"] == 50
+    assert readiness_breakdown["score"] == overview["readiness"]["score"]
+    contribution_ids = {item["signal"] for item in readiness_breakdown["contributions"]}
+    assert {"sleep", "hrv", "resting_heart_rate", "spo2"} <= contribution_ids
+    spo2_contribution = next(item for item in readiness_breakdown["contributions"] if item["signal"] == "spo2")
+    assert spo2_contribution["role"] == "context_input"
+    assert "not a standalone green light" in spo2_contribution["explanation"]
     assert overview["personal_context"]["goal"]["goal"]["target"] == "Run four days per week"
     assert overview["personal_context"]["recent_checkins"][0]["checkin"]["energy"] == 8
     assert overview["data_freshness"]["freshness_level"] == "fresh"

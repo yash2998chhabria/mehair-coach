@@ -6074,21 +6074,61 @@ def data_coverage(daily: dict[str, dict[str, Any]]) -> dict[str, Any]:
 def readiness_from_day(day: dict[str, Any], daily: dict[str, dict[str, Any]] | None = None) -> dict[str, Any]:
     score = 50
     evidence: list[str] = []
+    contributions: list[dict[str, Any]] = []
     daily = daily or {}
     recovery_date = day.get("recovery_date")
     activity_date = day.get("activity_date")
+
+    def add_contribution(
+        signal: str,
+        points: int,
+        explanation: str,
+        *,
+        date_value: str | None = None,
+        role: str = "score_input",
+        confidence: str = "normal",
+    ) -> None:
+        contributions.append(
+            {
+                "signal": signal,
+                "points": points,
+                "date": date_value,
+                "role": role,
+                "confidence": confidence,
+                "explanation": explanation,
+            }
+        )
+
     sleep = day.get("sleep", {})
     sleep_hours = sleep.get("asleep_hours") or sleep.get("duration_hours")
     if sleep_hours is not None:
         if sleep_hours >= 7:
             score += 18
             evidence.append(f"Latest sleep is strong at {sleep_hours:.1f}h.")
+            add_contribution(
+                "sleep",
+                18,
+                f"Strong latest sleep at {sleep_hours:.1f}h supports training capacity.",
+                date_value=recovery_date,
+            )
         elif sleep_hours >= 6:
             score += 8
             evidence.append(f"Latest sleep is moderate at {sleep_hours:.1f}h.")
+            add_contribution(
+                "sleep",
+                8,
+                f"Moderate latest sleep at {sleep_hours:.1f}h is mildly supportive.",
+                date_value=recovery_date,
+            )
         else:
             score -= 15
             evidence.append(f"Latest sleep is short at {sleep_hours:.1f}h.")
+            add_contribution(
+                "sleep",
+                -15,
+                f"Short latest sleep at {sleep_hours:.1f}h is a recovery constraint.",
+                date_value=recovery_date,
+            )
     if day.get("hrv_ms"):
         hrv_baseline, hrv_baseline_days = _baseline_summary(daily, "hrv_ms", recovery_date)
         if hrv_baseline and hrv_baseline_days >= 3:
@@ -6096,21 +6136,53 @@ def readiness_from_day(day: dict[str, Any], daily: dict[str, dict[str, Any]] | N
             if ratio >= 1.05:
                 score += 10
                 evidence.append(f"HRV is above recent baseline: {day['hrv_ms']:.1f} ms vs {hrv_baseline:.1f} ms.")
+                add_contribution(
+                    "hrv",
+                    10,
+                    f"HRV is above baseline: {day['hrv_ms']:.1f} ms vs {hrv_baseline:.1f} ms.",
+                    date_value=recovery_date,
+                )
             elif ratio >= 0.9:
                 score += 4
                 evidence.append(f"HRV is near recent baseline: {day['hrv_ms']:.1f} ms vs {hrv_baseline:.1f} ms.")
+                add_contribution(
+                    "hrv",
+                    4,
+                    f"HRV is near baseline: {day['hrv_ms']:.1f} ms vs {hrv_baseline:.1f} ms.",
+                    date_value=recovery_date,
+                )
             else:
                 score -= 10
                 evidence.append(f"HRV is below recent baseline: {day['hrv_ms']:.1f} ms vs {hrv_baseline:.1f} ms.")
+                add_contribution(
+                    "hrv",
+                    -10,
+                    f"HRV is below baseline: {day['hrv_ms']:.1f} ms vs {hrv_baseline:.1f} ms.",
+                    date_value=recovery_date,
+                )
         elif hrv_baseline_days:
             score += 6
             evidence.append(
                 f"HRV is {day['hrv_ms']:.1f} ms; only {hrv_baseline_days} prior HRV "
                 "day(s) are available, so the baseline trend is low confidence."
             )
+            add_contribution(
+                "hrv",
+                6,
+                f"HRV is {day['hrv_ms']:.1f} ms, but baseline confidence is low.",
+                date_value=recovery_date,
+                confidence="low_baseline",
+            )
         else:
             score += 6
             evidence.append(f"HRV is {day['hrv_ms']:.1f} ms.")
+            add_contribution(
+                "hrv",
+                6,
+                f"HRV is available at {day['hrv_ms']:.1f} ms without enough baseline history.",
+                date_value=recovery_date,
+                confidence="low_baseline",
+            )
     if day.get("resting_heart_rate"):
         rhr_baseline, rhr_baseline_days = _baseline_summary(daily, "resting_heart_rate", recovery_date)
         if rhr_baseline and rhr_baseline_days >= 3:
@@ -6118,11 +6190,30 @@ def readiness_from_day(day: dict[str, Any], daily: dict[str, dict[str, Any]] | N
             if delta <= 2:
                 score += 6
                 evidence.append(f"Resting heart rate is steady: {day['resting_heart_rate']} bpm.")
+                add_contribution(
+                    "resting_heart_rate",
+                    6,
+                    f"Resting heart rate is steady at {day['resting_heart_rate']} bpm.",
+                    date_value=recovery_date,
+                )
             elif delta <= 5:
                 evidence.append(f"Resting heart rate is slightly elevated: {day['resting_heart_rate']} bpm.")
+                add_contribution(
+                    "resting_heart_rate",
+                    0,
+                    f"Resting heart rate is slightly elevated at {day['resting_heart_rate']} bpm.",
+                    date_value=recovery_date,
+                    role="context_input",
+                )
             else:
                 score -= 8
                 evidence.append(f"Resting heart rate is elevated: {day['resting_heart_rate']} bpm vs {rhr_baseline:.0f} bpm baseline.")
+                add_contribution(
+                    "resting_heart_rate",
+                    -8,
+                    f"Resting heart rate is elevated: {day['resting_heart_rate']} bpm vs {rhr_baseline:.0f} bpm baseline.",
+                    date_value=recovery_date,
+                )
         elif rhr_baseline_days:
             score += 4
             evidence.append(
@@ -6130,9 +6221,23 @@ def readiness_from_day(day: dict[str, Any], daily: dict[str, dict[str, Any]] | N
                 f"{rhr_baseline_days} prior resting-heart-rate day(s) are available, so "
                 "the baseline trend is low confidence."
             )
+            add_contribution(
+                "resting_heart_rate",
+                4,
+                f"Resting heart rate is {day['resting_heart_rate']} bpm, but baseline confidence is low.",
+                date_value=recovery_date,
+                confidence="low_baseline",
+            )
         else:
             score += 4
             evidence.append(f"Resting heart rate is {day['resting_heart_rate']} bpm.")
+            add_contribution(
+                "resting_heart_rate",
+                4,
+                f"Resting heart rate is available at {day['resting_heart_rate']} bpm without enough baseline history.",
+                date_value=recovery_date,
+                confidence="low_baseline",
+            )
     respiratory_rate = day.get("respiratory_rate")
     if respiratory_rate is not None:
         resp_baseline, resp_baseline_days = _baseline_summary(daily, "respiratory_rate", recovery_date)
@@ -6143,32 +6248,93 @@ def readiness_from_day(day: dict[str, Any], daily: dict[str, dict[str, Any]] | N
                 evidence.append(
                     f"Respiratory rate is elevated: {respiratory_rate:.1f} vs {resp_baseline:.1f} breaths/min baseline."
                 )
+                add_contribution(
+                    "respiratory_rate",
+                    -4,
+                    f"Respiratory rate is elevated: {respiratory_rate:.1f} vs {resp_baseline:.1f} baseline.",
+                    date_value=recovery_date,
+                )
             else:
                 evidence.append(f"Respiratory rate is not elevated: {respiratory_rate:.1f} breaths/min.")
+                add_contribution(
+                    "respiratory_rate",
+                    0,
+                    f"Respiratory rate is not elevated at {respiratory_rate:.1f} breaths/min.",
+                    date_value=recovery_date,
+                    role="context_input",
+                )
         else:
             evidence.append(f"Respiratory rate is {respiratory_rate:.1f} breaths/min; baseline is low confidence.")
+            add_contribution(
+                "respiratory_rate",
+                0,
+                f"Respiratory rate is {respiratory_rate:.1f} breaths/min, but baseline confidence is low.",
+                date_value=recovery_date,
+                role="context_input",
+                confidence="low_baseline",
+            )
     spo2 = day.get("spo2_avg") or (day.get("spo2_sample") or {}).get("avg")
     if spo2 is not None:
         if spo2 < 94:
             score -= 6
             evidence.append(f"SpO2 is {spo2:.1f}%, so treat oxygen context as a training caution signal.")
+            add_contribution(
+                "spo2",
+                -6,
+                f"SpO2 is {spo2:.1f}%, so oxygen context should cap intensity if it matches symptoms or poor signal quality.",
+                date_value=activity_date,
+                role="safety_caution",
+            )
         else:
             evidence.append(f"SpO2 is {spo2:.1f}%; useful context, not a standalone green light.")
+            add_contribution(
+                "spo2",
+                0,
+                f"SpO2 is {spo2:.1f}%; useful oxygen context, not a standalone green light.",
+                date_value=activity_date,
+                role="context_input",
+            )
     sleep_temperature = day.get("sleep_temperature") or {}
     temp_delta = sleep_temperature.get("delta_celsius")
     if temp_delta is not None:
         if abs(temp_delta) >= 0.6:
             score -= 4
             evidence.append(f"Sleep temperature is {temp_delta:+.2f} C versus your usual.")
+            add_contribution(
+                "sleep_temperature",
+                -4,
+                f"Sleep temperature is {temp_delta:+.2f} C versus usual.",
+                date_value=recovery_date,
+            )
         else:
             evidence.append(f"Sleep temperature is {temp_delta:+.2f} C versus your usual.")
+            add_contribution(
+                "sleep_temperature",
+                0,
+                f"Sleep temperature is {temp_delta:+.2f} C versus usual.",
+                date_value=recovery_date,
+                role="context_input",
+            )
     load_date, load_minutes = _latest_load(daily, activity_date)
     if load_minutes > 45:
         score -= 6
         when = "today" if load_date == activity_date else f"on {load_date}"
         evidence.append(f"Recent training load is high: {load_minutes} zone minutes {when}.")
+        add_contribution(
+            "training_load",
+            -6,
+            f"Recent training load is high: {load_minutes} zone minutes {when}.",
+            date_value=load_date,
+        )
     if activity_date and recovery_date and activity_date != recovery_date:
         evidence.append(f"Recovery signals are from {recovery_date}; today's activity is still partial.")
+        add_contribution(
+            "data_timing",
+            0,
+            f"Today's activity/oxygen data is from {activity_date}, while sleep/heart recovery signals are from {recovery_date}.",
+            date_value=activity_date,
+            role="data_timing",
+        )
     score = max(0, min(100, score))
     if score >= 75:
         label = "green"
@@ -6184,6 +6350,22 @@ def readiness_from_day(day: dict[str, Any], daily: dict[str, dict[str, Any]] | N
         "label": label,
         "recommendation": recommendation,
         "evidence": evidence or ["Not enough synced data to personalize readiness deeply yet."],
+        "score_breakdown": {
+            "base": 50,
+            "score": score,
+            "band": label,
+            "activity_date": activity_date,
+            "recovery_date": recovery_date,
+            "recovery_signal_source": day.get("recovery_signal_source"),
+            "contributions": contributions,
+            "model_guidance": (
+                "Use this to explain readiness attribution honestly. Distinguish score math "
+                "from coaching/safety caps: a signal such as SpO2 can be a reason to cap intensity "
+                "without being the only cause of the readiness band. If activity_date and "
+                "recovery_date differ, call the score a partial same-day signal blended with the "
+                "latest completed recovery data."
+            ),
+        },
     }
 
 
