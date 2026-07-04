@@ -39,7 +39,8 @@ SERVER_INSTRUCTIONS = (
     "total does or does not matter for the decision. "
     "When a tool returns coach_response, use it as the answer skeleton: direct human answer first, "
     "then the session_blueprint or what_to_do, then the explained metric labels, then stop conditions "
-    "or caveats. Avoid leading with raw tables or unexplained evidence logs. "
+    "or caveats. Shape the answer as decision, do now, why the data matters, and what would change "
+    "the call. Avoid leading with raw tables or unexplained evidence logs. "
     "Match the user's actual situation: do not default to 'I feel off', fatigue, soreness, or recovery "
     "framing unless the user says it or the synced/check-in signals support it. For neutral or positive "
     "questions, give normal training permission with clear guardrails and the data that would change the call. "
@@ -57,7 +58,10 @@ SERVER_INSTRUCTIONS = (
     "cloud-synced Fitbit data into their private store, so do not describe it as blocked, dangerous, "
     "or unsafe when the user requested it. For broad "
     "health, fitness, recovery, current/latest/today, or 'use all my data' overview questions that "
-    "do not explicitly request sync/refresh, call get_health_overview before answering. "
+    "do not explicitly request sync/refresh, call get_health_overview before answering. Use the "
+    "available_signal_snapshot returned by overview/clue/comparison tools for broad, oxygen, breathing, "
+    "temperature, VO2, and 'what other data matters?' questions; explain why normal secondary signals "
+    "do or do not change the workout call instead of silently ignoring them. "
     "For exploratory or unusual questions, use list_available_health_metrics to inspect the per-user "
     "metric catalog and query_health_metrics to fetch the specific signals you choose; let the user's "
     "question decide the metric mix instead of following a fixed recipe. "
@@ -432,7 +436,8 @@ def create_server(settings_override: Settings | None = None) -> ServerBundle:
         description=(
             "For a user's natural-language health, recovery, sleep, heart, soreness, or workout question, "
             "identify likely intents, the best synced Fitbit metrics to inspect, clues already visible "
-            "from overview data, and recommended follow-up tools."
+            "from overview data, and recommended follow-up tools. Use this for 'what data matters?', "
+            "'what other signals are relevant?', and ambiguous coaching prompts before the final answer."
         ),
         annotations=READ_ONLY,
         meta=WIDGET_META,
@@ -447,7 +452,8 @@ def create_server(settings_override: Settings | None = None) -> ServerBundle:
         title="Recovery signal comparison",
         description=(
             "Compare recent sleep, HRV, resting heart rate, respiratory/SpO2 context, and activity load "
-            "against baseline to explain recovery patterns."
+            "against baseline to explain recovery patterns. Includes available signal context so normal "
+            "oxygen/breathing signals can be named as background instead of ignored."
         ),
         annotations=READ_ONLY,
         meta=WIDGET_META,
@@ -496,7 +502,8 @@ def create_server(settings_override: Settings | None = None) -> ServerBundle:
         title="Plan workout with health context",
         description=(
             "Plan a specific upcoming workout, sport session, or muscle-group day using synced "
-            "sleep, HRV, resting heart rate, activity load, goals, check-ins, and user-stated constraints."
+            "sleep, HRV, resting heart rate, oxygen/breathing context, activity load, goals, check-ins, "
+            "the available signal snapshot, and user-stated constraints."
         ),
         annotations=READ_ONLY,
         meta=WIDGET_META,
@@ -569,14 +576,43 @@ def create_server(settings_override: Settings | None = None) -> ServerBundle:
         meta=WIDGET_META,
     )
     def guide_active_workout(
-        planned_activity: str,
-        current_heart_rate_bpm: int | None = None,
-        current_rpe: int | None = None,
-        pain_level: int | None = None,
-        symptoms: str | None = None,
-        elapsed_minutes: int | None = None,
-        planned_duration_minutes: int | None = None,
-        notes: str | None = None,
+        planned_activity: Annotated[
+            str,
+            Field(
+                description=(
+                    "The workout currently happening. Use 'current workout' if the user reports live "
+                    "HR/RPE/pain but does not name the activity."
+                )
+            ),
+        ] = "current workout",
+        current_heart_rate_bpm: Annotated[
+            int | None,
+            Field(description="The user's current live heart rate in bpm, if they report it."),
+        ] = None,
+        current_rpe: Annotated[
+            int | None,
+            Field(description="The user's current effort from 1 easy to 10 max, if they report RPE."),
+        ] = None,
+        pain_level: Annotated[
+            int | None,
+            Field(description="Current pain from 0 to 10, where 0 means no pain."),
+        ] = None,
+        symptoms: Annotated[
+            str | None,
+            Field(description="Any live symptoms, breathing changes, dizziness, chest tightness, nausea, or 'none' if negated."),
+        ] = None,
+        elapsed_minutes: Annotated[
+            int | None,
+            Field(description="How many minutes into the workout the user is."),
+        ] = None,
+        planned_duration_minutes: Annotated[
+            int | None,
+            Field(description="Planned total workout duration in minutes, if known."),
+        ] = None,
+        notes: Annotated[
+            str | None,
+            Field(description="Other live context such as legs heavy, form changing, heat, pace, or interval number."),
+        ] = None,
     ) -> dict[str, Any]:
         user_id = current_user_id()
         if not user_id:

@@ -48,6 +48,13 @@ async def test_mcp_tool_list_matches_private_beta_plan() -> None:
     assert by_name["sync_and_get_health_overview"].annotations.idempotentHint is True
     assert by_name["get_today_context"].meta is None
     assert by_name["get_recovery_readiness"].meta is None
+    assert "what other signals are relevant" in by_name["get_health_question_clues"].description
+    assert "oxygen/breathing signals can be named as background" in by_name[
+        "get_recovery_signal_comparison"
+    ].description
+    planned_activity = by_name["guide_active_workout"].inputSchema["properties"]["planned_activity"]
+    assert planned_activity["default"] == "current workout"
+    assert "Use 'current workout'" in planned_activity["description"]
 
 
 def test_server_instructions_keep_normal_latest_questions_fast() -> None:
@@ -55,6 +62,7 @@ def test_server_instructions_keep_normal_latest_questions_fast() -> None:
     assert "Keep metric labels such as HRV, RPE, AZM" in SERVER_INSTRUCTIONS
     assert "include the date/window" in SERVER_INSTRUCTIONS
     assert "When a tool returns coach_response" in SERVER_INSTRUCTIONS
+    assert "decision, do now, why the data matters" in SERVER_INSTRUCTIONS
     assert "do not default to 'I feel off'" in SERVER_INSTRUCTIONS
     assert "Use already-synced local data for normal current/latest/today questions" in SERVER_INSTRUCTIONS
     assert "Fresh means synced in the last 15 minutes" in SERVER_INSTRUCTIONS
@@ -68,6 +76,8 @@ def test_server_instructions_keep_normal_latest_questions_fast() -> None:
     assert "use list_available_health_metrics to inspect the per-user metric catalog" in SERVER_INSTRUCTIONS
     assert "query_health_metrics to fetch the specific signals you choose" in SERVER_INSTRUCTIONS
     assert "call get_health_overview" in SERVER_INSTRUCTIONS
+    assert "available_signal_snapshot" in SERVER_INSTRUCTIONS
+    assert "oxygen, breathing" in SERVER_INSTRUCTIONS
     assert "Do not substitute get_health_overview for live workout decisions" in SERVER_INSTRUCTIONS
 
 
@@ -168,7 +178,9 @@ async def test_widget_preview_route_renders_real_card_state() -> None:
     assert "Latest recovery comparison" in recovery_comparison.text
     assert "dizzy during the interval" in active_workout.text
     assert "green today; yellow is 55-74, red is below 55" in active_workout.text
-    assert "AZM = Active Zone Minutes" in active_workout.text
+    assert "AZM = Fitbit hard-work minutes" in active_workout.text
+    assert "SpO2 / oxygen saturation" in overview.text
+    assert "Green 75+, yellow 55-74, red below 55" in overview.text
     assert today_workout.status_code == 200
     assert "Today's Workout" in today_workout.text
     assert "Next Session" in today_workout.text

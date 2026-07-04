@@ -439,6 +439,64 @@ def test_synthetic_records_calculate_context(tmp_path, monkeypatch) -> None:
             }
         ],
     )
+    store.upsert_records(
+        user_id,
+        "daily-respiratory-rate",
+        [
+            {
+                "name": "resp-1",
+                "dailyRespiratoryRate": {"breathsPerMinute": 15.8},
+                "date": {"year": 2026, "month": 7, "day": 3},
+            }
+        ],
+    )
+    store.upsert_records(
+        user_id,
+        "respiratory-rate-sleep-summary",
+        [
+            {
+                "name": "resp-sleep-1",
+                "respiratoryRateSleepSummary": {
+                    "sampleTime": {"physicalTime": "2026-07-03T06:00:00Z"},
+                    "fullSleepStats": {
+                        "breathsPerMinute": 15.7,
+                        "standardDeviation": 0.9,
+                        "signalToNoise": 12.5,
+                    },
+                },
+            }
+        ],
+    )
+    store.upsert_records(
+        user_id,
+        "daily-sleep-temperature-derivations",
+        [
+            {
+                "name": "temp-1",
+                "dailySleepTemperatureDerivations": {
+                    "date": {"year": 2026, "month": 7, "day": 3},
+                    "nightlyTemperatureCelsius": 35.92,
+                    "baselineTemperatureCelsius": 35.71,
+                    "relativeNightlyStddev30dCelsius": 0.31,
+                },
+            }
+        ],
+    )
+    store.upsert_records(
+        user_id,
+        "daily-vo2-max",
+        [
+            {
+                "name": "vo2-1",
+                "dailyVo2Max": {
+                    "date": {"year": 2026, "month": 7, "day": 3},
+                    "vo2Max": 43.6,
+                    "cardioFitnessLevel": "GOOD",
+                    "estimated": False,
+                },
+            }
+        ],
+    )
 
     context = store.latest_context(user_id)
 
@@ -448,6 +506,8 @@ def test_synthetic_records_calculate_context(tmp_path, monkeypatch) -> None:
     assert context["today"]["active_zone_minutes"] == 35
     assert context["today"]["sleep"]["duration_hours"] == 8.0
     assert context["today"]["heart"]["avg_bpm"] == 80.0
+    assert context["today"]["respiratory_rate"] == 15.8
+    assert context["today"]["sleep_temperature"]["delta_celsius"] == 0.21
     assert context["readiness"]["label"] == "green"
     assert context["readiness"]["score"] >= 75
 
@@ -474,7 +534,7 @@ def test_synthetic_records_calculate_context(tmp_path, monkeypatch) -> None:
     assert "sleep" in catalog["model_guidance"]["metric_groups"]["recovery_readiness"]
     assert "daily-heart-rate-variability" in catalog["model_guidance"]["metric_groups"]["recovery_readiness"]
     assert "active-zone-minutes" in catalog["model_guidance"]["metric_groups"]["training_load"]
-    assert "daily-vo2-max" not in catalog["model_guidance"]["metric_groups"]["capacity"]
+    assert "daily-vo2-max" in catalog["model_guidance"]["metric_groups"]["capacity"]
 
     metrics = store.query_metrics(user_id, metrics=["steps", "sleep"], days=1)
     assert metrics["status"] == "ok"
@@ -507,12 +567,30 @@ def test_synthetic_records_calculate_context(tmp_path, monkeypatch) -> None:
     assert overview["sections"]["sleep"]["latest_asleep_hours"] == 8.0
     assert overview["sections"]["heart"]["latest_hrv_ms"] == 45.2
     assert overview["sections"]["recovery"]["latest_spo2"] == 98.4
+    assert overview["sections"]["recovery"]["latest_respiratory_rate"] == 15.8
+    assert overview["sections"]["recovery"]["latest_sleep_temperature"]["delta_celsius"] == 0.21
+    assert overview["sections"]["recovery"]["latest_vo2_max"] == 43.6
     assert overview["personal_context"]["goal"]["goal"]["target"] == "Run four days per week"
     assert overview["personal_context"]["recent_checkins"][0]["checkin"]["energy"] == 8
     assert overview["data_freshness"]["freshness_level"] == "fresh"
     assert overview["sync_state"]["needs_sync_before_time_sensitive_advice"] is False
     synced_ids = {item["id"] for item in overview["data_used"]["synced_metrics"]}
-    assert {"steps", "sleep", "heart-rate", "oxygen-saturation"} <= synced_ids
+    assert {
+        "steps",
+        "sleep",
+        "heart-rate",
+        "oxygen-saturation",
+        "daily-respiratory-rate",
+        "daily-sleep-temperature-derivations",
+        "daily-vo2-max",
+    } <= synced_ids
+    snapshot = overview["available_signal_snapshot"]
+    signal_ids = {item["id"] for item in snapshot["signals"]}
+    assert {"spo2", "respiratory_rate", "sleep_temperature", "vo2_max", "heart_rate_zones"} <= signal_ids
+    spo2_signal = next(item for item in snapshot["signals"] if item["id"] == "spo2")
+    assert spo2_signal["latest"] == 98.4
+    assert "not a green light by themselves" in spo2_signal["why_it_matters"]
+    assert overview["data_used"]["available_signal_count"] == len(snapshot["signals"])
     assert overview["daily"][-1]["time_in_hr_zones_minutes"]["fat_burn"] == 20.0
     assert overview["positives"]
     assert overview["next_actions"]
@@ -521,7 +599,7 @@ def test_synthetic_records_calculate_context(tmp_path, monkeypatch) -> None:
     assert brief["confidence"] == "high"
     assert "Training is available today" in brief["summary"]
     signal_labels = {item["label"] for item in brief["priority_signals"]}
-    assert {"Readiness", "Sleep", "HRV", "Energy", "Current goal"} <= signal_labels
+    assert {"Readiness", "Sleep", "HRV", "SpO2", "Respiratory rate", "VO2 max", "Energy", "Current goal"} <= signal_labels
     assert any("Run four days per week" in item["detail"] for item in brief["priority_signals"])
     assert brief["context_gaps"] == []
 
@@ -578,6 +656,85 @@ def test_overview_flags_stale_data_before_time_sensitive_advice(tmp_path, monkey
     assert "What should I focus on today based on my data?" in overview["daily_brief"]["prompt_suggestions"]
     assert "I only have 30 minutes. What is the best use of it?" in overview["daily_brief"]["prompt_suggestions"]
     assert "Log how my energy, soreness, and stress feel right now." in overview["daily_brief"]["prompt_suggestions"]
+
+
+def test_question_clues_reuses_summary_for_nested_context(tmp_path, monkeypatch) -> None:
+    fixed_now = datetime(2026, 7, 3, 12, 0, tzinfo=UTC)
+    monkeypatch.setattr(health_store_module, "utc_now", lambda: fixed_now)
+    monkeypatch.setattr(health_store_module, "iso_now", lambda: fixed_now.isoformat())
+    db, store = make_store(tmp_path)
+    user_id = create_user(db)
+
+    store.upsert_records(
+        user_id,
+        "steps",
+        [
+            {
+                "name": "steps",
+                "steps": {"count": 7200},
+                "interval": {"startTime": "2026-07-03T12:00:00Z"},
+            }
+        ],
+    )
+    store.upsert_records(
+        user_id,
+        "sleep",
+        [
+            {
+                "name": "sleep",
+                "sleep": {
+                    "interval": {
+                        "startTime": "2026-07-03T00:00:00Z",
+                        "endTime": "2026-07-03T07:30:00Z",
+                    },
+                    "summary": {"minutesAsleep": "420"},
+                },
+            }
+        ],
+    )
+    store.upsert_records(
+        user_id,
+        "daily-heart-rate-variability",
+        [
+            {
+                "name": "hrv",
+                "dailyHeartRateVariability": {"averageHeartRateVariabilityMilliseconds": 52.0},
+                "date": {"year": 2026, "month": 7, "day": 3},
+            }
+        ],
+    )
+    store.upsert_records(
+        user_id,
+        "daily-resting-heart-rate",
+        [
+            {
+                "name": "rhr",
+                "dailyRestingHeartRate": {"beatsPerMinute": 58},
+                "date": {"year": 2026, "month": 7, "day": 3},
+            }
+        ],
+    )
+
+    real_summarize = health_store_module.summarize_records
+    summarize_calls = 0
+
+    def counting_summarize(records):
+        nonlocal summarize_calls
+        summarize_calls += 1
+        return real_summarize(records)
+
+    monkeypatch.setattr(health_store_module, "summarize_records", counting_summarize)
+
+    clues = store.health_question_clues(
+        user_id,
+        "What should I know before training today?",
+        days=7,
+    )
+
+    assert clues["status"] == "ok"
+    assert clues["overview_context"]["daily_brief"]
+    assert clues["recovery_comparison"]["status"] == "ok"
+    assert summarize_calls == 1
 
 
 def test_question_clues_choose_recovery_heart_and_load_metrics(tmp_path, monkeypatch) -> None:
@@ -659,6 +816,42 @@ def test_question_clues_choose_recovery_heart_and_load_metrics(tmp_path, monkeyp
                 }
             ],
         )
+        store.upsert_records(
+            user_id,
+            "daily-respiratory-rate",
+            [
+                {
+                    "name": f"resp-{day}",
+                    "dailyRespiratoryRate": {"breathsPerMinute": 15.0 if day != "2026-07-03" else 17.4},
+                    "date": {"year": year, "month": month, "day": day_num},
+                }
+            ],
+        )
+        store.upsert_records(
+            user_id,
+            "daily-oxygen-saturation",
+            [
+                {
+                    "name": f"spo2-{day}",
+                    "dailyOxygenSaturation": {"averagePercentage": 97.8 if day != "2026-07-03" else 96.1},
+                    "date": {"year": year, "month": month, "day": day_num},
+                }
+            ],
+        )
+        store.upsert_records(
+            user_id,
+            "daily-sleep-temperature-derivations",
+            [
+                {
+                    "name": f"temp-{day}",
+                    "dailySleepTemperatureDerivations": {
+                        "nightlyTemperatureCelsius": 36.0 if day != "2026-07-03" else 36.55,
+                        "baselineTemperatureCelsius": 36.0,
+                    },
+                    "date": {"year": year, "month": month, "day": day_num},
+                }
+            ],
+        )
 
     comparison = store.recovery_signal_comparison(user_id, days=7)
     clues = store.health_question_clues(
@@ -671,7 +864,13 @@ def test_question_clues_choose_recovery_heart_and_load_metrics(tmp_path, monkeyp
     assert comparison["comparison_type"] == "sleep_heart_recovery"
     assert comparison["current_vs_baseline"]["hrv_percent_delta"] < -20
     assert comparison["current_vs_baseline"]["resting_heart_rate_delta"] >= 7
+    assert comparison["current_vs_baseline"]["respiratory_rate_delta"] >= 2
+    assert {"spo2", "respiratory_rate", "sleep_temperature"} <= set(comparison["data_used"]["signals"])
+    assert {"spo2", "respiratory_rate"} <= set(
+        comparison["available_signal_snapshot"]["available_signal_ids"]
+    )
     assert any("HRV" in item for item in comparison["watchouts"])
+    assert any("Respiratory rate" in item for item in comparison["watchouts"])
     assert any("hard conditioning" in item for item in comparison["next_actions"])
 
     assert clues["status"] == "ok"
@@ -690,6 +889,9 @@ def test_question_clues_choose_recovery_heart_and_load_metrics(tmp_path, monkeyp
     )
     assert any("intensity" in item.lower() for item in clues["answer_rubric"])
     assert any("HRV" in item for item in clues["clues"] + clues["watchouts"])
+    assert any("SpO2" in item for item in clues["clues"])
+    assert any("Respiratory rate" in item for item in clues["clues"] + clues["watchouts"])
+    assert "spo2" in clues["data_used"]["available_signal_ids"]
     assert any("Movement context: 27,000 steps over the last 7 days" in item for item in clues["clues"])
     assert any("not as a standalone reason to train or rest" in item for item in clues["clues"])
 

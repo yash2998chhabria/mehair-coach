@@ -184,6 +184,49 @@ class FakeGoogleHealth:
                     "date": {"year": year, "month": month, "day": day_num},
                 }
             ]
+        if spec.id == "daily-oxygen-saturation":
+            year, month, day_num = [int(part) for part in day.split("-")]
+            return [
+                {
+                    "name": "spo2-realistic",
+                    "dailyOxygenSaturation": {"averagePercentage": 97.2},
+                    "date": {"year": year, "month": month, "day": day_num},
+                }
+            ]
+        if spec.id == "daily-respiratory-rate":
+            year, month, day_num = [int(part) for part in day.split("-")]
+            return [
+                {
+                    "name": "resp-realistic",
+                    "dailyRespiratoryRate": {"breathsPerMinute": 16.1},
+                    "date": {"year": year, "month": month, "day": day_num},
+                }
+            ]
+        if spec.id == "daily-sleep-temperature-derivations":
+            year, month, day_num = [int(part) for part in day.split("-")]
+            return [
+                {
+                    "name": "sleep-temp-realistic",
+                    "dailySleepTemperatureDerivations": {
+                        "nightlyTemperatureCelsius": 36.13,
+                        "baselineTemperatureCelsius": 36.0,
+                    },
+                    "date": {"year": year, "month": month, "day": day_num},
+                }
+            ]
+        if spec.id == "daily-vo2-max":
+            year, month, day_num = [int(part) for part in day.split("-")]
+            return [
+                {
+                    "name": "vo2-realistic",
+                    "dailyVo2Max": {
+                        "vo2Max": 44.4,
+                        "cardioFitnessLevel": "GOOD",
+                        "estimated": False,
+                    },
+                    "date": {"year": year, "month": month, "day": day_num},
+                }
+            ]
         if spec.id == "exercise":
             return [
                 {
@@ -608,6 +651,8 @@ async def test_private_beta_oauth_mcp_sync_and_coaching_flow(tmp_path, monkeypat
             assert overview["sections"]["sleep"]["latest_asleep_hours"] == 7.5
             assert overview["sections"]["heart"]["latest_hrv_ms"] == 48.5
             assert overview["sections"]["workouts"]["workout_count"] == 1
+            assert overview["available_signal_snapshot"]["status"] == "ok"
+            assert "spo2" in overview["available_signal_snapshot"]["available_signal_ids"]
             assert overview["data_freshness"]["freshness_level"] == "fresh"
             assert overview["sync_state"]["needs_sync_before_time_sensitive_advice"] is False
             assert overview["personal_context"]["goal"]["goal"]["days_per_week"] == 4
@@ -633,6 +678,7 @@ async def test_private_beta_oauth_mcp_sync_and_coaching_flow(tmp_path, monkeypat
             assert comparison["comparison_type"] == "sleep_heart_recovery"
             assert comparison["latest"]["sleep_hours"] == 7.5
             assert "sleep_hours" in comparison["data_used"]["signals"]
+            assert "spo2" in comparison["data_used"]["available_signal_ids"]
 
             clues = tool_content(
                 await mcp_request(
@@ -654,6 +700,8 @@ async def test_private_beta_oauth_mcp_sync_and_coaching_flow(tmp_path, monkeypat
             assert "workout_decision" in clues["intent_hints"]
             assert "recommend_workout_today" in clues["recommended_tool_sequence"]
             assert "get_recovery_signal_comparison" in clues["recommended_tool_sequence"]
+            assert "available_signal_snapshot" in clues
+            assert "spo2" in clues["data_used"]["available_signal_ids"]
             assert {"sleep", "daily-heart-rate-variability", "daily-resting-heart-rate"} <= {
                 item["id"] for item in clues["relevant_metrics"]
             }

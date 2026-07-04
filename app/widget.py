@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 
 
-WIDGET_URI = "ui://mehair/today-v15.html"
+WIDGET_URI = "ui://mehair/today-v16.html"
 LEGACY_WIDGET_URIS = (
     "ui://mehair/today-v1.html",
     "ui://mehair/today-v2.html",
@@ -19,6 +19,7 @@ LEGACY_WIDGET_URIS = (
     "ui://mehair/today-v12.html",
     "ui://mehair/today-v13.html",
     "ui://mehair/today-v14.html",
+    "ui://mehair/today-v15.html",
 )
 WIDGET_RESOURCE_URIS = (WIDGET_URI, *LEGACY_WIDGET_URIS)
 WIDGET_MIME_TYPE = "text/html;profile=mcp-app"
@@ -34,14 +35,19 @@ TODAY_WIDGET_HTML = """
     <style>
       :root {
         color-scheme: light;
+        --brand: #d63384;
+        --brand-soft: #fff0f7;
+        --brand-ink: #81164d;
+        --state: #d63384;
+        --state-soft: #fff0f7;
         --ink: #171a1f;
         --muted: #667078;
-        --line: #dde3df;
+        --line: #f1d5e3;
         --surface: #ffffff;
-        --wash: #fff7fb;
-        --tile: #fafbf9;
-        --accent: #c02673;
-        --accent-soft: #fff0f6;
+        --wash: #fff8fc;
+        --tile: #fffafd;
+        --accent: #d63384;
+        --accent-soft: #fff0f7;
         --warn: #9b741c;
         --danger: #a94f43;
         --info: #386f8f;
@@ -69,12 +75,12 @@ TODAY_WIDGET_HTML = """
       }
 
       .panel {
-        --accent: #c02673;
-        --accent-soft: #fff0f6;
+        --accent: var(--brand);
+        --accent-soft: var(--brand-soft);
         background: var(--surface);
         border: 1px solid var(--line);
         border-radius: 8px;
-        box-shadow: 0 1px 2px rgba(17, 24, 39, 0.05);
+        box-shadow: 0 8px 28px rgba(214, 51, 132, 0.08);
         overflow: hidden;
       }
 
@@ -98,7 +104,8 @@ TODAY_WIDGET_HTML = """
         gap: 14px;
         align-items: start;
         padding: 14px 14px 8px;
-        border-bottom: 1px solid #edf0ea;
+        border-bottom: 1px solid #f7deea;
+        background: #fffafd;
       }
 
       .identity {
@@ -107,7 +114,7 @@ TODAY_WIDGET_HTML = """
 
       .eyebrow {
         margin: 0 0 4px;
-        color: var(--accent);
+        color: var(--brand);
         font-size: 11px;
         font-weight: 820;
         letter-spacing: 0;
@@ -151,7 +158,7 @@ TODAY_WIDGET_HTML = """
         max-width: 100%;
         border: 1px solid #d9e1dc;
         border-radius: 999px;
-        background: #fff;
+        background: #fffafd;
         color: #313940;
         font-size: 12px;
         font-weight: 720;
@@ -160,28 +167,36 @@ TODAY_WIDGET_HTML = """
       }
 
       .chip.accent {
-        border-color: var(--accent);
-        background: var(--accent-soft);
-        color: #6f123d;
+        border-color: #f0a9c9;
+        background: var(--brand-soft);
+        color: var(--brand-ink);
       }
 
       .hero {
         display: grid;
-        grid-template-columns: 136px 1fr;
+        grid-template-columns: minmax(128px, 150px) 1fr;
         gap: 12px;
         padding: 14px;
+      }
+
+      .score-card {
+        display: grid;
+        justify-items: center;
+        align-content: start;
+        gap: 8px;
+        min-width: 0;
       }
 
       .gauge {
         position: relative;
         display: grid;
         place-items: center;
-        width: 136px;
+        width: min(150px, 100%);
         aspect-ratio: 1;
-        min-height: 136px;
-        border: 1px solid #dfe6e1;
+        min-height: 128px;
+        border: 1px solid var(--state-soft);
         border-radius: 50%;
-        background: conic-gradient(var(--accent) calc(var(--score, 0) * 1%), #e8ece8 0);
+        background: conic-gradient(var(--state) calc(var(--score, 0) * 1%), #f8dce9 0);
         overflow: hidden;
       }
 
@@ -191,7 +206,7 @@ TODAY_WIDGET_HTML = """
         place-items: center;
         width: 92px;
         height: 92px;
-        border: 1px solid #e5eae6;
+        border: 1px solid #f0d5e1;
         border-radius: 50%;
         background: #fff;
       }
@@ -211,14 +226,24 @@ TODAY_WIDGET_HTML = """
         text-align: center;
       }
 
+      .score-note {
+        margin: 0;
+        color: #58626a;
+        font-size: 11px;
+        font-weight: 650;
+        line-height: 1.3;
+        text-align: center;
+      }
+
       .plan-box {
         display: grid;
         gap: 10px;
         align-content: start;
         min-width: 0;
-        border: 1px solid #dfe6e1;
+        border: 1px solid #f0cfe0;
+        border-left: 4px solid var(--brand);
         border-radius: 8px;
-        background: #fbfcfb;
+        background: #fffafd;
         padding: 12px;
       }
 
@@ -246,8 +271,10 @@ TODAY_WIDGET_HTML = """
       }
 
       .focus-list li {
-        border-left: 3px solid var(--accent);
-        padding-left: 8px;
+        border-left: 3px solid var(--brand);
+        border-radius: 0 6px 6px 0;
+        background: #fff5fa;
+        padding: 7px 8px;
         color: #303942;
         font-size: 12px;
         line-height: 1.34;
@@ -256,7 +283,7 @@ TODAY_WIDGET_HTML = """
       .workout-blocks {
         display: grid;
         gap: 8px;
-        border-top: 1px solid #edf0ea;
+        border-top: 1px solid #f7deea;
         padding: 0 14px 14px;
       }
 
@@ -265,9 +292,9 @@ TODAY_WIDGET_HTML = """
         grid-template-columns: minmax(0, 1fr) auto;
         gap: 5px 10px;
         align-items: start;
-        border: 1px solid #e4e9e4;
+        border: 1px solid #f0d5e1;
         border-radius: 8px;
-        background: #fbfcfb;
+        background: #fffafd;
         padding: 10px;
       }
 
@@ -280,7 +307,7 @@ TODAY_WIDGET_HTML = """
       }
 
       .workout-block span {
-        color: var(--accent);
+        color: var(--brand);
         font-size: 12px;
         font-weight: 780;
         line-height: 1.2;
@@ -305,7 +332,8 @@ TODAY_WIDGET_HTML = """
         display: grid;
         align-content: center;
         min-height: 92px;
-        border: 1px solid #e4e9e4;
+        border: 1px solid #f0d5e1;
+        border-top: 3px solid #f2b2cf;
         border-radius: 8px;
         background: var(--tile);
         padding: 10px;
@@ -349,15 +377,16 @@ TODAY_WIDGET_HTML = """
         display: grid;
         grid-template-columns: repeat(2, minmax(0, 1fr));
         gap: 8px;
-        border-top: 1px solid #edf0ea;
+        border-top: 1px solid #f7deea;
         padding: 0 14px 14px;
       }
 
       .label-pill {
         min-width: 0;
-        border: 1px solid #e4e9e4;
+        border: 1px solid #f0d5e1;
+        border-left: 3px solid var(--brand);
         border-radius: 8px;
-        background: #fbfcfb;
+        background: #fffafd;
         padding: 9px 10px;
       }
 
@@ -381,8 +410,8 @@ TODAY_WIDGET_HTML = """
         display: grid;
         grid-template-columns: 1fr 1fr;
         gap: 12px;
-        border-top: 1px solid #edf0ea;
-        background: #fcfdfb;
+        border-top: 1px solid #f7deea;
+        background: #fffafd;
         padding: 12px 14px 14px;
       }
 
@@ -419,7 +448,7 @@ TODAY_WIDGET_HTML = """
         height: 6px;
         margin-right: 7px;
         border-radius: 999px;
-        background: var(--accent);
+        background: var(--brand);
         vertical-align: 1px;
       }
 
@@ -428,6 +457,7 @@ TODAY_WIDGET_HTML = """
         .mast { grid-template-columns: 1fr; gap: 8px; }
         .stamp { min-width: 0; text-align: left; }
         .hero { grid-template-columns: 1fr; }
+        .score-card { justify-self: center; }
         .gauge { justify-self: center; min-height: 136px; }
         .workout-block { grid-template-columns: 1fr; }
         .workout-block span { white-space: normal; }
@@ -501,7 +531,7 @@ TODAY_WIDGET_HTML = """
       async function initialize() {
         try {
           await rpcRequest("ui/initialize", {
-            appInfo: { name: "mehair-coach-widget", version: "0.5.0" },
+            appInfo: { name: "mehair-coach-widget", version: "0.6.0" },
             appCapabilities: {},
             protocolVersion: "2026-01-26",
           });
@@ -526,8 +556,10 @@ TODAY_WIDGET_HTML = """
       }
 
       function renderEmpty(message, status) {
-        root.style.setProperty("--accent", "#667078");
-        root.style.setProperty("--accent-soft", "#f1f3f4");
+        root.style.setProperty("--accent", "#d63384");
+        root.style.setProperty("--accent-soft", "#fff0f7");
+        root.style.setProperty("--state", "#d63384");
+        root.style.setProperty("--state-soft", "#fff0f7");
         const title = status === "empty"
           ? "No synced data yet"
           : status === "waiting"
@@ -592,6 +624,8 @@ TODAY_WIDGET_HTML = """
         const workouts = sections.workouts || {};
         const dataUsed = data.data_used || {};
         const freshness = data.data_freshness || {};
+        const signalSnapshot = data.available_signal_snapshot || {};
+        const signalById = Object.fromEntries((signalSnapshot.signals || []).map((item) => [item.id, item]));
         const dateRange = data.date_range || {};
         const range = dateRange.start && dateRange.end ? `${dateRange.start} to ${dateRange.end}` : "";
         const windowDays = finiteNumber(data.window_days, 0) || dateRangeDays(dateRange.start, dateRange.end);
@@ -636,6 +670,8 @@ TODAY_WIDGET_HTML = """
           : recovery.latest_respiratory_rate != null
             ? `resp ${recovery.latest_respiratory_rate_date || ""}`.trim()
             : "";
+        const breathingSignal = signalById.spo2 || signalById.respiratory_rate || signalById.sleep_temperature;
+        const capacitySignal = signalById.vo2_max;
         const primaryActions = (brief.today_plan || data.next_actions || []).slice(0, 4);
         const contextGaps = brief.context_gaps || [];
         const watchoutsAndGaps = [
@@ -663,19 +699,25 @@ TODAY_WIDGET_HTML = """
           headline: brief.summary || data.headline || readiness.recommendation || "All synced health data summarized.",
           focusTitle: "Today Plan",
           focus: primaryActions,
-          labels: defaultLabelKey(["Readiness", "HRV", "Resting HR", "AZM"]),
+          labels: defaultLabelKey(["Readiness", "HRV", "Resting HR", "AZM", "SpO2", "Respiratory rate"]),
           metrics: [
             moveMetric,
             ["Training Load", latestLoadAzm != null ? `${intText(latestLoadAzm)} AZM` : null, latestLoadDetail, "AZM = Fitbit hard-work minutes."],
             ["Sleep vs Avg", sleepDelta != null ? `${signed(sleepDelta)}h` : (sleepHours != null ? `${num(sleepHours, 1)}h` : null), sleepHours != null ? `latest ${num(sleepHours, 1)}h` : ""],
             ["HRV vs Avg", hrvDelta != null ? `${signed(hrvDelta)}%` : (hrv != null ? `${num(hrv, 1)} ms` : null), hrv != null && heart.average_hrv_ms ? `${num(hrv, 1)} vs ${num(heart.average_hrv_ms, 1)} ms` : "", "HRV = recovery stress signal."],
             ["RHR vs Avg", rhrDelta != null ? `${signed(rhrDelta)} bpm` : (rhr != null ? `${num(rhr, 1)} bpm` : null), rhr != null && heart.average_resting_heart_rate ? `${num(rhr, 0)} vs ${num(heart.average_resting_heart_rate, 0)} bpm` : "", "RHR = resting heart rate."],
+            breathingSignal
+              ? signalMetric(breathingSignal, rangeLabel)
+              : null,
+            capacitySignal
+              ? signalMetric(capacitySignal, rangeLabel)
+              : null,
             workouts.workout_count > 0
               ? ["Workouts", intText(workouts.workout_count), rangeLabel || range || "synced window"]
               : vitalsValue
                 ? ["Vitals", vitalsValue, vitalsDetail]
                 : ["Freshness", titleCase(freshness.freshness_level || "unknown"), freshness.latest_observed_date ? `latest ${freshness.latest_observed_date}` : ""],
-          ],
+          ].filter(Boolean),
           evidenceTitle: prioritySignals.length ? "Priority Signals" : "Positives",
           evidence: prioritySignals.length ? prioritySignals : data.positives || [],
           secondaryTitle: contextGaps.length ? "Watchouts & Gaps" : "Watchouts",
@@ -689,10 +731,12 @@ TODAY_WIDGET_HTML = """
         const available = metrics.filter((item) => Number(item.records || 0) > 0);
         const intents = data.intent_hints || [];
         const freshness = data.data_freshness || {};
+        const signalSnapshot = data.available_signal_snapshot || {};
+        const snapshotSignals = (signalSnapshot.signals || []).filter((item) => item.display).slice(0, 6);
         const topMetrics = (available.length ? available : metrics).slice(0, 6);
         const hasSafetyFlags = (data.safety_flags || []).length > 0;
         return {
-          accent: hasSafetyFlags ? "#a94f43" : "#4b6f8f",
+          accent: hasSafetyFlags ? "#a94f43" : "#d63384",
           title: hasSafetyFlags ? "Health Check" : "Health Clues",
           eyebrow: hasSafetyFlags ? "Safety Context" : "Metric Finder",
           date: data.today?.activity_date && data.today?.recovery_date && data.today.activity_date !== data.today.recovery_date
@@ -708,13 +752,17 @@ TODAY_WIDGET_HTML = """
           headline: data.headline || "Useful Fitbit signals selected for this question.",
           focusTitle: hasSafetyFlags ? "Safety First" : "Best Clues",
           focus: hasSafetyFlags ? data.safety_flags || [] : data.clues || [],
-          metrics: topMetrics.map((item) => [
-            item.label || item.id,
-            intText(item.records ?? 0),
-            item.latest_observed_date || "not synced",
-          ]),
+          metrics: snapshotSignals.length
+            ? snapshotSignals.map((item) => signalMetric(item, "latest synced"))
+            : topMetrics.map((item) => [
+                item.label || item.id,
+                intText(item.records ?? 0),
+                item.latest_observed_date || "not synced",
+              ]),
           evidenceTitle: hasSafetyFlags ? "Relevant Metrics" : "Why These",
-          evidence: topMetrics.map((item) => `${item.label || item.id}: ${item.reason || "Useful context."}`),
+          evidence: snapshotSignals.length
+            ? snapshotSignals.map((item) => `${item.label || item.id}: ${item.why_it_matters || "Useful context."}`)
+            : topMetrics.map((item) => `${item.label || item.id}: ${item.reason || "Useful context."}`),
           secondaryTitle: hasSafetyFlags ? "Data Clues" : "Watchouts",
           secondary: hasSafetyFlags ? data.clues || [] : data.watchouts || [],
         };
@@ -726,6 +774,7 @@ TODAY_WIDGET_HTML = """
         const baseline = data.baseline || {};
         const deltas = data.current_vs_baseline || {};
         const label = readiness.label || "pending";
+        const sleepTemp = latest.sleep_temperature || {};
         return {
           accent: readinessAccent(label),
           title: "Recovery Comparison",
@@ -748,7 +797,10 @@ TODAY_WIDGET_HTML = """
             ["HRV delta", deltas.hrv_percent_delta != null ? `${signed(deltas.hrv_percent_delta)}%` : null],
             ["Resting HR", latest.resting_heart_rate != null ? `${latest.resting_heart_rate} bpm` : null, baseline.resting_heart_rate != null ? `base ${num(baseline.resting_heart_rate, 1)}` : ""],
             ["Load", latest.active_zone_minutes != null ? `${latest.active_zone_minutes} AZM` : null, baseline.active_zone_minutes != null ? `base ${num(baseline.active_zone_minutes, 1)}` : ""],
-          ],
+            ["Resp rate", latest.respiratory_rate != null ? `${num(latest.respiratory_rate, 1)}` : null, baseline.respiratory_rate != null ? `base ${num(baseline.respiratory_rate, 1)}` : "", "Breathing rate context."],
+            ["SpO2", latest.spo2_avg != null ? `${num(latest.spo2_avg, 1)}%` : null, baseline.spo2_avg != null ? `base ${num(baseline.spo2_avg, 1)}%` : "", "Oxygen context, not a standalone go signal."],
+            ["Sleep temp", sleepTemp.delta_celsius != null ? `${signed(sleepTemp.delta_celsius)} C` : null, "vs baseline", "Temperature deviation is a secondary clue."],
+          ].filter((item) => item[1] != null),
           evidenceTitle: "Positives",
           evidence: data.positives || [],
           secondaryTitle: "Watchouts",
@@ -930,7 +982,7 @@ TODAY_WIDGET_HTML = """
           primaryLabel: "Readiness",
           headline: coach.short_answer || data.headline || "Use live symptoms and effort to adjust the session.",
           focusTitle: "Do Now",
-          focus: coach.what_to_do || data.immediate_actions || [],
+          focus: activeWorkoutFocus(data, coach, safety),
           labels: coach.labels_explained || defaultLabelKey(["HR", "RPE", "Readiness", "AZM"]),
           metrics: [
             ["Heart rate", live.current_heart_rate_bpm != null ? `${live.current_heart_rate_bpm} bpm` : null, hrMeaning(live.current_heart_rate_bpm, live.current_rpe)],
@@ -938,7 +990,7 @@ TODAY_WIDGET_HTML = """
             ["Pain", live.pain_level != null ? `${live.pain_level}/10` : null, painMeaning(live.pain_level)],
             ["Elapsed", live.elapsed_minutes != null ? `${live.elapsed_minutes} min` : null],
             ["Readiness", readinessScore ? `${readinessScore}/100` : readinessLabel || null, readinessBandText(readinessScore, readinessLabel)],
-            ["Latest load", dataUsed.latest_training_load?.active_zone_minutes != null ? `${dataUsed.latest_training_load.active_zone_minutes} AZM` : null, azmMeaning(dataUsed.latest_training_load?.active_zone_minutes), "AZM = Active Zone Minutes."],
+            ["Latest load", dataUsed.latest_training_load?.active_zone_minutes != null ? `${dataUsed.latest_training_load.active_zone_minutes} AZM` : null, azmMeaning(dataUsed.latest_training_load?.active_zone_minutes), "AZM = Fitbit hard-work minutes from elevated heart-rate zones."],
           ],
           evidenceTitle: safety.length ? "Safety Flags" : "Evidence",
           evidence: [coach.data_story, ...evidence].filter(Boolean),
@@ -1074,15 +1126,18 @@ TODAY_WIDGET_HTML = """
       }
 
       function renderModel(model) {
-        const accent = model.accent || "#39745c";
-        root.style.setProperty("--accent", accent);
-        root.style.setProperty("--accent-soft", softFor(accent));
+        const accent = model.accent || "#d63384";
+        root.style.setProperty("--accent", "#d63384");
+        root.style.setProperty("--accent-soft", "#fff0f7");
+        root.style.setProperty("--state", accent);
+        root.style.setProperty("--state-soft", softFor(accent));
         const score = clamp(Math.round(Number(model.score || 0)), 0, 100);
         root.style.setProperty("--score", String(score));
         const primaryFocus = listItems(model.focus, "Health context synced.");
         const secondaryTitle = model.secondaryTitle || "Evidence";
         const secondary = model.secondary || model.evidence || [];
         const blocks = renderBlocks(model.blocks);
+        const scoreContext = scoreNote(model.primaryLabel, score);
         root.innerHTML = `
           <div class="mast">
             <div class="identity">
@@ -1096,11 +1151,14 @@ TODAY_WIDGET_HTML = """
             ${(model.chips || ["health"]).slice(0, 4).map((item, index) => `<span class="chip ${index === 0 ? "accent" : ""}">${escapeHtml(item)}</span>`).join("")}
           </div>
           <div class="hero">
-            <div class="gauge" aria-label="${escapeHtml(model.primaryLabel || "score")} ${score}">
-              <div class="gauge-inner">
-                <b>${escapeHtml(score)}</b>
-                <span>${escapeHtml(model.primaryLabel || "Score")}</span>
+            <div class="score-card">
+              <div class="gauge" aria-label="${escapeHtml(model.primaryLabel || "score")} ${score}">
+                <div class="gauge-inner">
+                  <b>${escapeHtml(score)}</b>
+                  <span>${escapeHtml(model.primaryLabel || "Score")}</span>
+                </div>
               </div>
+              ${scoreContext ? `<p class="score-note">${escapeHtml(scoreContext)}</p>` : ""}
             </div>
             <div class="plan-box">
               <h2>${escapeHtml(model.focusTitle || "Coach Take")}</h2>
@@ -1126,7 +1184,7 @@ TODAY_WIDGET_HTML = """
       }
 
       function renderLabelKey(labels) {
-        const usable = (labels || []).filter((item) => item && item.label && item.meaning).slice(0, 4);
+        const usable = (labels || []).filter((item) => item && item.label && item.meaning).slice(0, 6);
         if (!usable.length) return "";
         return `
           <div class="label-key" aria-label="Metric label explanations">
@@ -1144,7 +1202,44 @@ TODAY_WIDGET_HTML = """
         const detailHtml = detail ? `<small>${escapeHtml(detail)}</small>` : "";
         const explain = explanation || metricHint(label);
         const explainHtml = explain ? `<em>${escapeHtml(explain)}</em>` : "";
-        return `<div class="metric"><b>${escapeHtml(value ?? "No data")}</b><span>${escapeHtml(label)}</span>${detailHtml}${explainHtml}</div>`;
+        return `<div class="metric"><b>${escapeHtml(value ?? "Not synced")}</b><span>${escapeHtml(label)}</span>${detailHtml}${explainHtml}</div>`;
+      }
+
+      function signalMetric(signal, fallbackDate) {
+        const label = signal.label || titleCase(signal.id || "signal");
+        const detail = signal.latest_date || signal.window || signal.category || fallbackDate || "";
+        const explanation = signal.coaching_use || signal.why_it_matters || metricHint(label);
+        return [label, signal.display ?? signal.latest, detail, explanation];
+      }
+
+      function activeWorkoutFocus(data, coach, safety) {
+        const live = data.live_inputs || {};
+        const decision = String(data.decision || "").toLowerCase();
+        const base = coach.what_to_do || data.immediate_actions || [];
+        const concrete = [];
+        if (!safety.length && decision.includes("continue") && (live.current_rpe != null || live.current_heart_rate_bpm != null)) {
+          const targets = [
+            live.current_rpe != null ? `RPE ${live.current_rpe}/10 or easier` : "",
+            live.current_heart_rate_bpm != null ? `around ${live.current_heart_rate_bpm} bpm or lower` : "",
+          ].filter(Boolean).join(" and ");
+          concrete.push(`Next 5-10 minutes: hold steady at ${targets}; do not surge yet.`);
+        }
+        if (!safety.length && (decision.includes("modify") || decision.includes("downshift"))) {
+          concrete.push("Next block: reduce pace, load, or reps first; only build back up if breathing and form normalize.");
+        }
+        return dedupe([...concrete, ...base]).slice(0, 5);
+      }
+
+      function dedupe(items) {
+        const seen = new Set();
+        const result = [];
+        for (const item of items || []) {
+          const key = String(item || "").trim();
+          if (!key || seen.has(key)) continue;
+          seen.add(key);
+          result.push(key);
+        }
+        return result;
       }
 
       function renderBlocks(blocks) {
@@ -1268,6 +1363,16 @@ TODAY_WIDGET_HTML = """
         return "Readiness blends sleep, heart, and load signals.";
       }
 
+      function scoreNote(primaryLabel, score) {
+        const label = String(primaryLabel || "").toLowerCase();
+        if (label.includes("readiness")) {
+          return "Green 75+, yellow 55-74, red below 55. Pain, dizziness, or feeling sick overrides the score.";
+        }
+        if (label.includes("load")) return "Higher load means more recovery cost, especially for legs and intervals.";
+        if (label.includes("sleep")) return "This is a sleep target cue, not a medical score.";
+        return "";
+      }
+
       function workoutTitle(activity, intensity) {
         const normalized = String(activity || "").trim().toLowerCase();
         if (!normalized || normalized === "general workout" || normalized === "workout plan") {
@@ -1298,6 +1403,11 @@ TODAY_WIDGET_HTML = """
         if (lower.includes("resting") || lower.includes("rhr")) return "Resting HR = heart stress signal at rest.";
         if (lower.includes("load") || lower.includes("azm") || lower.includes("zone")) return "AZM = Fitbit hard-work minutes; higher AZM means more recent load to recover from.";
         if (lower.includes("sleep")) return "Sleep is the biggest recovery input.";
+        if (lower.includes("spo2") || lower.includes("oxygen")) return "SpO2 = oxygen saturation; useful breathing context, not a standalone green light.";
+        if (lower.includes("resp")) return "Respiratory rate = breaths per minute; unusual changes can hint stress, illness, or recovery strain.";
+        if (lower.includes("temperature") || lower.includes("temp")) return "Sleep temperature change can hint body stress when it differs from your usual.";
+        if (lower.includes("vo2")) return "VO2 max estimates cardio capacity; it changes slowly and is not today's stop/go signal.";
+        if (lower.includes("steps")) return "Steps are movement load for this window, especially useful for leg fatigue.";
         if (lower.includes("readiness")) return "Readiness blends sleep, heart, and load: green 75+, yellow 55-74, red below 55.";
         if (lower.includes("move")) return "Today's movement, not the whole week.";
         if (lower.includes("soreness")) return "Your check-in can override good wearable scores.";
@@ -1314,6 +1424,10 @@ TODAY_WIDGET_HTML = """
           "HRV": "recovery stress signal compared with your usual",
           "Resting HR": "heart stress signal at rest",
           "AZM": "Fitbit hard-work minutes from elevated heart-rate zones; recent load that should change how hard you push",
+          "SpO2": "oxygen saturation from Fitbit; useful breathing context, not a standalone reason to train hard",
+          "Respiratory rate": "breaths per minute, mostly useful when it changes from your usual or matches symptoms",
+          "VO2 max": "cardio capacity estimate that changes slowly, not a same-day green light",
+          "Sleep temp": "temperature change during sleep, useful as a secondary stress or illness clue",
         };
         return (labels || []).map((label) => ({ label, meaning: meanings[label] })).filter((item) => item.meaning);
       }
@@ -1332,6 +1446,15 @@ TODAY_WIDGET_HTML = """
         if (/Active Zone Minutes/.test(text) && !text.includes("hard-work minutes")) {
           text = text.replaceAll("Active Zone Minutes", "Active Zone Minutes (Fitbit hard-work minutes)");
         }
+        if (text.includes("AZM") && !text.includes("hard-work minutes")) {
+          text = text.replaceAll("AZM", "AZM (Fitbit hard-work minutes)");
+        }
+        if (text.includes("SpO2") && !text.includes("oxygen saturation")) {
+          text = text.replaceAll("SpO2", "SpO2 (oxygen saturation)");
+        }
+        if (text.includes("RPE") && !text.includes("how hard it feels")) {
+          text = text.replaceAll("RPE", "RPE (how hard it feels)");
+        }
         return text;
       }
 
@@ -1346,12 +1469,13 @@ TODAY_WIDGET_HTML = """
         if (label === "green") return "#2f7a5f";
         if (label === "yellow") return "#9b741c";
         if (label === "red") return "#a94f43";
-        return "#c02673";
+        return "#d63384";
       }
 
       function softFor(accent) {
         const map = {
           "#2f7a5f": "#edf5f0",
+          "#d63384": "#fff0f7",
           "#c02673": "#fff0f6",
           "#9b741c": "#fbf5e7",
           "#a94f43": "#fbefed",
@@ -1568,6 +1692,61 @@ WIDGET_PREVIEW_STATES: dict[str, dict] = {
             "Bias toward recovery, mobility, walking, and earlier sleep.",
             "Do not add another max-effort conditioning block today.",
         ],
+        "available_signal_snapshot": {
+            "status": "ok",
+            "available_signal_ids": ["spo2", "respiratory_rate", "sleep_temperature", "vo2_max", "heart_rate_zones"],
+            "signals": [
+                {
+                    "id": "spo2",
+                    "label": "SpO2 / oxygen saturation",
+                    "display": "98.1%",
+                    "latest": 98.1,
+                    "latest_date": "2026-07-03",
+                    "category": "breathing",
+                    "why_it_matters": "Oxygen context helps explain breathing and recovery, but it is not a green light by itself.",
+                    "coaching_use": "Use with respiratory rate, symptoms, and effort before deciding to push hard.",
+                },
+                {
+                    "id": "respiratory_rate",
+                    "label": "Respiratory rate",
+                    "display": "17.2/min",
+                    "latest": 17.2,
+                    "latest_date": "2026-07-03",
+                    "category": "breathing",
+                    "why_it_matters": "Breathing rate can rise with stress, illness, poor sleep, or hard recent training.",
+                    "coaching_use": "If this is up with bad sleep or symptoms, make the day easier.",
+                },
+                {
+                    "id": "sleep_temperature",
+                    "label": "Sleep temp",
+                    "display": "+0.4 C",
+                    "latest_date": "2026-07-03",
+                    "category": "recovery",
+                    "why_it_matters": "Temperature shifts are secondary clues for body stress.",
+                    "coaching_use": "Treat a clear rise as a reason to avoid max-effort work.",
+                },
+                {
+                    "id": "vo2_max",
+                    "label": "VO2 max",
+                    "display": "43.6",
+                    "latest": 43.6,
+                    "latest_date": "2026-07-03",
+                    "category": "capacity",
+                    "why_it_matters": "Cardio capacity changes slowly and helps set training direction.",
+                    "coaching_use": "Use for long-term fitness trends, not as today's green light.",
+                },
+                {
+                    "id": "heart_rate_zones",
+                    "label": "Heart zones",
+                    "display": "72 AZM",
+                    "latest": 72,
+                    "latest_date": "2026-07-02",
+                    "category": "training_load",
+                    "why_it_matters": "Zone minutes show how much hard work your body already absorbed.",
+                    "coaching_use": "High recent AZM should cap extra intensity today.",
+                },
+            ],
+        },
         "data_used": {"synced_metric_count": 9},
         "data_freshness": {"freshness_level": "fresh", "latest_observed_date": "2026-07-03"},
     },
@@ -1621,6 +1800,66 @@ WIDGET_PREVIEW_STATES: dict[str, dict] = {
             "Sleep is short while HRV is suppressed or resting heart rate is elevated.",
             "High zone-minute load can suppress HRV or elevate resting heart rate.",
         ],
+        "available_signal_snapshot": {
+            "status": "ok",
+            "available_signal_ids": ["sleep", "hrv", "resting_heart_rate", "spo2", "respiratory_rate", "active_zone_minutes"],
+            "signals": [
+                {
+                    "id": "sleep",
+                    "label": "Sleep",
+                    "display": "5.1h",
+                    "latest_date": "2026-07-03",
+                    "category": "recovery",
+                    "why_it_matters": "Short sleep is one of the clearest reasons to cap intensity.",
+                    "coaching_use": "Make hard training earn its place only if the rest of the signals look good.",
+                },
+                {
+                    "id": "hrv",
+                    "label": "HRV",
+                    "display": "36 ms",
+                    "latest_date": "2026-07-03",
+                    "category": "heart",
+                    "why_it_matters": "HRV below your usual can mean your body is under more stress.",
+                    "coaching_use": "Use it to cap RPE and choose controlled work.",
+                },
+                {
+                    "id": "resting_heart_rate",
+                    "label": "Resting HR",
+                    "display": "67 bpm",
+                    "latest_date": "2026-07-03",
+                    "category": "heart",
+                    "why_it_matters": "Resting HR above usual can point to fatigue, stress, or illness.",
+                    "coaching_use": "Elevated resting HR makes max-effort work less attractive.",
+                },
+                {
+                    "id": "spo2",
+                    "label": "SpO2 / oxygen saturation",
+                    "display": "98.1%",
+                    "latest_date": "2026-07-03",
+                    "category": "breathing",
+                    "why_it_matters": "Oxygen looks reassuring here, but it should not overrule sleep, HRV, soreness, or symptoms.",
+                    "coaching_use": "Useful context for breathing questions; not a standalone go signal.",
+                },
+                {
+                    "id": "respiratory_rate",
+                    "label": "Respiratory rate",
+                    "display": "17.2/min",
+                    "latest_date": "2026-07-03",
+                    "category": "breathing",
+                    "why_it_matters": "Breathing rate helps explain recovery when it changes from your usual.",
+                    "coaching_use": "Pair it with SpO2, sleep, and symptoms.",
+                },
+                {
+                    "id": "active_zone_minutes",
+                    "label": "AZM",
+                    "display": "72 min",
+                    "latest_date": "2026-07-02",
+                    "category": "training_load",
+                    "why_it_matters": "Active Zone Minutes are recent hard-work minutes your body must recover from.",
+                    "coaching_use": "High recent load should reduce extra intensity.",
+                },
+            ],
+        },
         "positives": ["The comparison has enough data to ground the recovery discussion."],
         "personal_context": {
             "goal": {"goal": {"target": "Train four days per week", "days_per_week": 4}},
@@ -1921,12 +2160,17 @@ WIDGET_PREVIEW_STATES: dict[str, dict] = {
             "hrv_ms": 36,
             "resting_heart_rate": 67,
             "active_zone_minutes": 0,
+            "spo2_avg": 98.1,
+            "respiratory_rate": 17.2,
+            "sleep_temperature": {"delta_celsius": 0.4},
         },
         "baseline": {
             "sleep_hours": 7.3,
             "hrv_ms": 56.5,
             "resting_heart_rate": 57.5,
             "active_zone_minutes": 42,
+            "spo2_avg": 97.8,
+            "respiratory_rate": 16.1,
         },
         "current_vs_baseline": {
             "sleep_hours_delta": -2.2,
@@ -1943,6 +2187,30 @@ WIDGET_PREVIEW_STATES: dict[str, dict] = {
             "High zone-minute load can suppress HRV or elevate resting heart rate.",
         ],
         "readiness": {"score": 38, "label": "red"},
+        "available_signal_snapshot": {
+            "status": "ok",
+            "available_signal_ids": ["sleep", "hrv", "resting_heart_rate", "spo2", "respiratory_rate", "sleep_temperature"],
+            "signals": [
+                {
+                    "id": "spo2",
+                    "label": "SpO2 / oxygen saturation",
+                    "display": "98.1%",
+                    "latest_date": "2026-07-03",
+                    "category": "breathing",
+                    "why_it_matters": "Reassuring oxygen context, but not enough alone to train hard.",
+                    "coaching_use": "Use as one secondary breathing clue.",
+                },
+                {
+                    "id": "respiratory_rate",
+                    "label": "Respiratory rate",
+                    "display": "17.2/min",
+                    "latest_date": "2026-07-03",
+                    "category": "breathing",
+                    "why_it_matters": "Breathing rate compared with usual can hint recovery strain.",
+                    "coaching_use": "Use with sleep, HRV, resting HR, and symptoms.",
+                },
+            ],
+        },
         "data_used": {"days_compared": 4},
         "data_freshness": {"freshness_level": "fresh"},
     },

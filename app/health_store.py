@@ -16,7 +16,17 @@ from .google_health import GoogleHealthClient, SYNC_DATA_TYPE_IDS, SYNC_DATA_TYP
 from .settings import Settings
 from .time_utils import iso_now, utc_now
 
-RECOVERY_KEYS = ("sleep", "hrv_ms", "resting_heart_rate", "spo2_avg", "respiratory_rate")
+RECOVERY_KEYS = (
+    "sleep",
+    "hrv_ms",
+    "hrv_sample_ms",
+    "resting_heart_rate",
+    "spo2_avg",
+    "spo2_sample",
+    "respiratory_rate",
+    "respiratory_rate_sleep",
+    "sleep_temperature",
+)
 ILLNESS_PHRASES = (
     "fever",
     "flu",
@@ -54,6 +64,9 @@ INTENT_METRICS = {
         "daily-resting-heart-rate",
         "daily-heart-rate-variability",
         "sleep",
+        "daily-respiratory-rate",
+        "daily-oxygen-saturation",
+        "daily-sleep-temperature-derivations",
     ],
     "active_workout": [
         "heart-rate",
@@ -92,9 +105,15 @@ INTENT_METRICS = {
     "activity_load": [
         "active-zone-minutes",
         "time-in-heart-rate-zone",
+        "calories-in-heart-rate-zone",
+        "activity-level",
         "active-minutes",
         "steps",
         "distance",
+        "floors",
+        "sedentary-period",
+        "active-energy-burned",
+        "total-calories",
         "exercise",
     ],
     "subjective": ["sleep", "exercise", "active-zone-minutes", "daily-heart-rate-variability"],
@@ -113,10 +132,18 @@ INTENT_METRICS = {
         "daily-heart-rate-variability",
         "daily-resting-heart-rate",
         "active-zone-minutes",
+        "time-in-heart-rate-zone",
+        "activity-level",
         "steps",
+        "active-minutes",
+        "distance",
         "exercise",
         "daily-respiratory-rate",
+        "respiratory-rate-sleep-summary",
         "daily-oxygen-saturation",
+        "oxygen-saturation",
+        "daily-sleep-temperature-derivations",
+        "daily-vo2-max",
     ],
 }
 
@@ -137,6 +164,13 @@ METRIC_COACHING_REASONS = {
     "daily-oxygen-saturation": "SpO2 can provide extra overnight recovery context when available.",
     "oxygen-saturation": "SpO2 samples can provide extra recovery context when daily summaries are sparse.",
     "daily-sleep-temperature-derivations": "Sleep temperature deviation can be a useful recovery clue when available.",
+    "daily-vo2-max": "VO2 max is long-term cardio capacity context, not a same-day readiness signal.",
+    "activity-level": "Activity levels show whether movement was light, moderate, vigorous, or sedentary.",
+    "sedentary-period": "Sedentary time helps balance movement breaks and total daily load.",
+    "calories-in-heart-rate-zone": "Calories by heart-rate zone add intensity context when zone minutes are present.",
+    "active-energy-burned": "Active calories are rough movement workload context, not a precise fueling target.",
+    "total-calories": "Total calories can provide broad energy-expenditure context when available.",
+    "floors": "Floors can matter for leg load, hikes, and climbing-heavy days.",
 }
 
 SYNC_PRIORITY = (
@@ -954,6 +988,17 @@ class HealthStore:
             for row in rows
         ]
 
+    def _records_summary_context(
+        self,
+        user_id: str,
+    ) -> tuple[list[dict[str, Any]], dict[str, Any], dict[str, Any]]:
+        records = self.records_for_user(user_id)
+        if not records:
+            return records, {}, empty_data()
+        summary = summarize_records(records)
+        context = _context_from_summary(summary, self.freshness(user_id))
+        return records, summary, context
+
     def available_metrics(self, user_id: str | None) -> dict[str, Any]:
         stats = {}
         if user_id:
@@ -1130,46 +1175,28 @@ class HealthStore:
         }
 
     def latest_context(self, user_id: str) -> dict[str, Any]:
-        records = self.records_for_user(user_id)
-        if not records:
-            return empty_data()
-        summary = summarize_records(records)
-        latest_date = summary["latest_date"]
-        activity_date = _latest_day_with(summary["daily"], ("steps", "active_minutes", "heart", "distance_mm"))
-        activity_date = activity_date or latest_date
-        recovery_date = _latest_day_with(summary["daily"], RECOVERY_KEYS) or activity_date
-        activity_day = dict(summary["daily"].get(activity_date, {}))
-        recovery_day = summary["daily"].get(recovery_date, {})
-        today = combine_daily_context(activity_day, recovery_day, activity_date, recovery_date)
-        load_date, load_minutes = _latest_load(summary["daily"], activity_date)
-        today["latest_training_load"] = {
-            "date": load_date,
-            "active_zone_minutes": load_minutes,
-        }
-        readiness = readiness_from_day(today, summary["daily"])
-        return {
-            "status": "ok",
-            "latest_date": latest_date,
-            "activity_date": activity_date,
-            "recovery_date": recovery_date,
-            "readiness": readiness,
-            "today": today,
-            "evidence": readiness["evidence"],
-            "data_coverage": data_coverage(summary["daily"]),
-            "data_freshness": self.freshness(user_id),
-        }
+        _, _, context = self._records_summary_context(user_id)
+        return context
 
-    def health_overview(self, user_id: str, days: int = 14) -> dict[str, Any]:
-        records = self.records_for_user(user_id)
+    def health_overview(
+        self,
+        user_id: str,
+        days: int = 14,
+        *,
+        _records: list[dict[str, Any]] | None = None,
+        _summary: dict[str, Any] | None = None,
+        _context: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        records = _records if _records is not None else self.records_for_user(user_id)
         if not records:
             return empty_data()
 
         safe_days = max(1, min(int(days or 14), 30))
-        context = self.latest_context(user_id)
+        summary = _summary if _summary is not None else summarize_records(records)
+        context = _context if _context is not None else _context_from_summary(summary, self.freshness(user_id))
         if context.get("status") != "ok":
             return context
 
-        summary = summarize_records(records)
         recent_items = sorted(summary["daily"].items())[-safe_days:]
         daily_rows = [{"date": day, **_public_daily_values(values)} for day, values in recent_items]
         metric_counts = Counter(item["data_type"] for item in records)
@@ -1188,6 +1215,7 @@ class HealthStore:
         sleep = _overview_sleep(daily_rows)
         heart = _overview_heart(daily_rows)
         recovery = _overview_recovery(daily_rows)
+        signal_snapshot = _available_signal_snapshot(daily_rows)
         workouts = _overview_workouts(
             [
                 item
@@ -1244,6 +1272,7 @@ class HealthStore:
                 "workouts": workouts,
             },
             "daily_brief": daily_brief,
+            "available_signal_snapshot": signal_snapshot,
             "positives": positives,
             "watchouts": watchouts,
             "next_actions": next_actions,
@@ -1266,6 +1295,8 @@ class HealthStore:
                 "synced_metric_count": len(synced_metrics),
                 "synced_metrics": synced_metrics,
                 "missing_supported_metrics": missing_supported_metrics,
+                "available_signal_count": len(signal_snapshot.get("signals", [])),
+                "available_signal_ids": signal_snapshot.get("available_signal_ids", []),
                 "raw_record_count": len(records),
                 "activity_date": context.get("activity_date"),
                 "recovery_date": context.get("recovery_date"),
@@ -1275,10 +1306,9 @@ class HealthStore:
         }
 
     def sleep_analysis(self, user_id: str, days: int = 7) -> dict[str, Any]:
-        context = self.latest_context(user_id)
+        _, summary, context = self._records_summary_context(user_id)
         if context.get("status") != "ok":
             return context
-        summary = summarize_records(self.records_for_user(user_id))
         sleep_days = [
             {"date": day, **values.get("sleep", {})}
             for day, values in sorted(summary["daily"].items())[-days:]
@@ -1308,10 +1338,9 @@ class HealthStore:
         }
 
     def activity_load(self, user_id: str, days: int = 7) -> dict[str, Any]:
-        context = self.latest_context(user_id)
+        _, summary, context = self._records_summary_context(user_id)
         if context.get("status") != "ok":
             return context
-        summary = summarize_records(self.records_for_user(user_id))
         days_out = []
         for day, values in sorted(summary["daily"].items())[-days:]:
             days_out.append(
@@ -1332,10 +1361,9 @@ class HealthStore:
         return {"status": "ok", "days": days_out, "totals": totals, "highest_load_day": highest_load}
 
     def heart_trends(self, user_id: str, days: int = 7) -> dict[str, Any]:
-        context = self.latest_context(user_id)
+        _, summary, context = self._records_summary_context(user_id)
         if context.get("status") != "ok":
             return context
-        summary = summarize_records(self.records_for_user(user_id))
         days_out = []
         for day, values in sorted(summary["daily"].items())[-days:]:
             heart = values.get("heart", {})
@@ -1360,12 +1388,24 @@ class HealthStore:
             },
         }
 
-    def recovery_signal_comparison(self, user_id: str, days: int = 14) -> dict[str, Any]:
-        context = self.latest_context(user_id)
+    def recovery_signal_comparison(
+        self,
+        user_id: str,
+        days: int = 14,
+        *,
+        _summary: dict[str, Any] | None = None,
+        _context: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        if _summary is None or _context is None:
+            _, summary, context = self._records_summary_context(user_id)
+        else:
+            summary = _summary
+            context = _context
         if context.get("status") != "ok":
             return context
-        summary = summarize_records(self.records_for_user(user_id))
         recent_days = sorted(summary["daily"].items())[-max(1, min(days, 30)):]
+        daily_rows = [{"date": day, **_public_daily_values(values)} for day, values in recent_days]
+        signal_snapshot = _available_signal_snapshot(daily_rows)
         rows = [_recovery_row(day, values) for day, values in recent_days]
         rows = [row for row in rows if _has_recovery_comparison_signal(row)]
         if not rows:
@@ -1378,6 +1418,11 @@ class HealthStore:
             "hrv_ms": _average([row["hrv_ms"] for row in baseline_rows]),
             "resting_heart_rate": _average([row["resting_heart_rate"] for row in baseline_rows]),
             "active_zone_minutes": _average([row["active_zone_minutes"] for row in baseline_rows]),
+            "respiratory_rate": _average([row["respiratory_rate"] for row in baseline_rows]),
+            "spo2_avg": _average([row["spo2_avg"] for row in baseline_rows]),
+            "sleep_temperature_delta_celsius": _average(
+                [row["sleep_temperature_delta_celsius"] for row in baseline_rows]
+            ),
         }
         current_vs_baseline = _current_vs_baseline(latest, baseline)
         insights, watchouts, positives, next_actions = _recovery_comparison_takeaways(
@@ -1421,17 +1466,19 @@ class HealthStore:
             "readiness": context["readiness"],
             "data_freshness": context["data_freshness"],
             "daily": rows,
+            "available_signal_snapshot": signal_snapshot,
             "data_used": {
                 "activity_date": context.get("activity_date"),
                 "recovery_date": context.get("recovery_date"),
                 "days_compared": len(rows),
-                "signals": ["sleep_hours", "hrv_ms", "resting_heart_rate", "active_zone_minutes"],
+                "signals": _recovery_signal_ids(rows),
+                "available_signal_ids": signal_snapshot.get("available_signal_ids", []),
             },
             "safety_note": "This is fitness coaching context, not medical advice.",
         }
 
     def health_question_clues(self, user_id: str, question: str, days: int = 14) -> dict[str, Any]:
-        context = self.latest_context(user_id)
+        records, summary, context = self._records_summary_context(user_id)
         if context.get("status") != "ok":
             return context
 
@@ -1442,8 +1489,19 @@ class HealthStore:
         catalog_by_id = {item["id"]: item for item in catalog.get("metrics", [])}
         metric_ids = _metric_ids_for_intents(intents)
         relevant_metrics = _relevant_metric_cards(metric_ids, catalog_by_id, intents)
-        overview = self.health_overview(user_id, safe_days)
-        comparison = self.recovery_signal_comparison(user_id, safe_days)
+        overview = self.health_overview(
+            user_id,
+            safe_days,
+            _records=records,
+            _summary=summary,
+            _context=context,
+        )
+        comparison = self.recovery_signal_comparison(
+            user_id,
+            safe_days,
+            _summary=summary,
+            _context=context,
+        )
         clues, positives, watchouts, next_actions = _question_clue_takeaways(
             intents=intents,
             context=context,
@@ -1452,6 +1510,7 @@ class HealthStore:
         )
         personal_context = overview.get("personal_context", {}) if overview.get("status") == "ok" else {}
         workout_context = overview.get("sections", {}).get("workouts", {}) if overview.get("status") == "ok" else {}
+        signal_snapshot = overview.get("available_signal_snapshot", {}) if overview.get("status") == "ok" else {}
         illness_flags = _question_illness_flags(question_text, personal_context)
         if illness_flags:
             intents = _dedupe(["symptom_safety", *intents])
@@ -1487,13 +1546,16 @@ class HealthStore:
             "readiness": context["readiness"],
             "today": _compact_today_context(context["today"]),
             "overview_context": _compact_overview_context(overview),
+            "available_signal_snapshot": signal_snapshot,
             "personal_context": personal_context,
             "recovery_comparison": _compact_recovery_comparison(comparison),
             "data_freshness": context["data_freshness"],
             "answering_guidance": [
                 "Use the relevant_metrics list to decide which synced signals to inspect next.",
+                "Use available_signal_snapshot for broad, all-data, oxygen, breathing, or unusual-pattern questions so secondary signals are not ignored.",
+                "Mention normal secondary signals briefly as context when they do not change the workout call.",
                 "Treat missing metrics as absent, not zero.",
-                "For workout decisions, combine readiness, sleep, HRV, resting HR, load, recent workouts, goals, and check-ins.",
+                "For workout decisions, combine readiness, sleep, HRV, resting HR, oxygen/breathing/temperature context, load, recent workouts, goals, and check-ins.",
                 "For symptom, pain, illness, or abnormal-heart-rate concerns, recommend appropriate clinical care instead of diagnosing.",
             ],
             "answer_rubric": _answer_rubric_for_intents(intents),
@@ -1503,6 +1565,8 @@ class HealthStore:
                 "synced_metric_count": catalog.get("synced_metric_count", 0),
                 "supported_metric_count": catalog.get("supported_metric_count", 0),
                 "comparison_available": comparison.get("status") == "ok",
+                "available_signal_count": len(signal_snapshot.get("signals", [])),
+                "available_signal_ids": signal_snapshot.get("available_signal_ids", []),
                 "goal_present": bool((personal_context.get("goal") or {}).get("goal")),
                 "recent_checkins_count": len(personal_context.get("recent_checkins") or []),
                 "recent_workout_count": workout_context.get("workout_count", 0),
@@ -1832,38 +1896,432 @@ def _overview_heart(daily_rows: list[dict[str, Any]]) -> dict[str, Any]:
 def _overview_recovery(daily_rows: list[dict[str, Any]]) -> dict[str, Any]:
     spo2_day = _last_with(daily_rows, ("spo2_avg", "spo2_sample"))
     resp_day = _last_with(daily_rows, ("respiratory_rate",))
+    resp_sleep_day = _last_with(daily_rows, ("respiratory_rate_sleep",))
+    temp_day = _last_with(daily_rows, ("sleep_temperature",))
     vo2_day = _last_with(daily_rows, ("vo2_max",))
     latest_spo2 = None
     if spo2_day:
         latest_spo2 = spo2_day.get("spo2_avg") or spo2_day.get("spo2_sample", {}).get("avg")
+    latest_resp_sleep = None
+    if resp_sleep_day:
+        latest_resp_sleep = resp_sleep_day.get("respiratory_rate_sleep", {}).get("full_sleep_breaths_per_minute")
     return {
-        "status": "ok" if spo2_day or resp_day or vo2_day else "missing",
+        "status": "ok" if spo2_day or resp_day or resp_sleep_day or temp_day or vo2_day else "missing",
         "latest_spo2": latest_spo2,
         "latest_spo2_date": spo2_day.get("date") if spo2_day else None,
         "latest_respiratory_rate": resp_day.get("respiratory_rate") if resp_day else None,
         "latest_respiratory_rate_date": resp_day.get("date") if resp_day else None,
+        "latest_respiratory_rate_sleep": latest_resp_sleep,
+        "latest_respiratory_rate_sleep_date": resp_sleep_day.get("date") if resp_sleep_day else None,
+        "latest_sleep_temperature": temp_day.get("sleep_temperature") if temp_day else None,
+        "latest_sleep_temperature_date": temp_day.get("date") if temp_day else None,
         "latest_vo2_max": vo2_day.get("vo2_max") if vo2_day else None,
         "latest_vo2_max_date": vo2_day.get("date") if vo2_day else None,
     }
 
 
+def _available_signal_snapshot(daily_rows: list[dict[str, Any]]) -> dict[str, Any]:
+    signals: list[dict[str, Any]] = []
+    date_range = {
+        "start": daily_rows[0]["date"] if daily_rows else None,
+        "end": daily_rows[-1]["date"] if daily_rows else None,
+    }
+
+    def add_signal(
+        *,
+        signal_id: str,
+        label: str,
+        category: str,
+        latest_value: Any | None = None,
+        unit: str = "",
+        latest_date: str | None = None,
+        value_display: str | None = None,
+        window_summary: dict[str, Any] | None = None,
+        details: dict[str, Any] | None = None,
+        why_it_matters: str,
+        coaching_use: str,
+        use_when: list[str],
+        confidence: str = "context",
+    ) -> None:
+        if latest_value is None and not value_display and not window_summary and not details:
+            return
+        signals.append(
+            {
+                "id": signal_id,
+                "label": label,
+                "category": category,
+                "latest": latest_value,
+                "unit": unit,
+                "latest_date": latest_date,
+                "display": value_display or _format_signal_value(latest_value, unit),
+                "window_summary": window_summary or {},
+                "details": details or {},
+                "why_it_matters": why_it_matters,
+                "coaching_use": coaching_use,
+                "use_when": use_when,
+                "confidence": confidence,
+            }
+        )
+
+    sleep_day = _last_with(daily_rows, ("sleep",))
+    if sleep_day:
+        sleep = sleep_day.get("sleep", {})
+        sleep_hours = sleep.get("asleep_hours") or sleep.get("duration_hours")
+        sleep_values = [
+            value
+            for day in daily_rows
+            if (value := (day.get("sleep") or {}).get("asleep_hours") or (day.get("sleep") or {}).get("duration_hours"))
+            is not None
+        ]
+        add_signal(
+            signal_id="sleep_duration",
+            label="Sleep",
+            category="sleep",
+            latest_value=_round_optional(sleep_hours, 1),
+            unit="h",
+            latest_date=sleep_day.get("date"),
+            window_summary={
+                "average_hours": _average(sleep_values),
+                "days_with_sleep": len(sleep_values),
+            },
+            details={"stages_minutes": sleep.get("stages_minutes") or {}},
+            why_it_matters="Sleep is the biggest recovery budget signal for hard training.",
+            coaching_use="Use short or fragmented sleep to cap intensity; use supportive sleep as room to train, not permission for max effort.",
+            use_when=["workout_intensity", "fatigue", "recovery", "daily_plan"],
+            confidence="strong" if len(sleep_values) >= 3 else "low_baseline",
+        )
+
+    hrv_day = _last_with(daily_rows, ("hrv_ms", "hrv_sample_ms"))
+    if hrv_day:
+        hrv = hrv_day.get("hrv_ms") or (hrv_day.get("hrv_sample_ms") or {}).get("avg")
+        hrv_values = [
+            value
+            for day in daily_rows
+            if (value := day.get("hrv_ms") or (day.get("hrv_sample_ms") or {}).get("avg")) is not None
+        ]
+        add_signal(
+            signal_id="hrv",
+            label="HRV",
+            category="heart",
+            latest_value=_round_optional(hrv, 1),
+            unit="ms",
+            latest_date=hrv_day.get("date"),
+            window_summary={"average_ms": _average(hrv_values), "days": len(hrv_values)},
+            why_it_matters="HRV is a recovery-stress clue that only becomes meaningful against your usual pattern.",
+            coaching_use="Lower-than-usual HRV should reduce intensity; normal or high HRV supports training only when sleep, symptoms, and load agree.",
+            use_when=["recovery", "hard_training", "fatigue", "stress"],
+            confidence="strong" if len(hrv_values) >= 3 else "low_baseline",
+        )
+
+    rhr_day = _last_with(daily_rows, ("resting_heart_rate",))
+    if rhr_day:
+        rhr_values = [day.get("resting_heart_rate") for day in daily_rows if day.get("resting_heart_rate") is not None]
+        add_signal(
+            signal_id="resting_heart_rate",
+            label="Resting HR",
+            category="heart",
+            latest_value=rhr_day.get("resting_heart_rate"),
+            unit="bpm",
+            latest_date=rhr_day.get("date"),
+            window_summary={"average_bpm": _average(rhr_values), "days": len(rhr_values)},
+            why_it_matters="Resting heart rate can rise with stress, poor recovery, illness, or dehydration.",
+            coaching_use="Elevated resting HR should make hard training harder to justify, especially with poor sleep or symptoms.",
+            use_when=["recovery", "illness_clues", "fatigue", "hard_training"],
+            confidence="strong" if len(rhr_values) >= 3 else "low_baseline",
+        )
+
+    heart_day = _last_with(daily_rows, ("heart",))
+    if heart_day:
+        heart = heart_day.get("heart") or {}
+        add_signal(
+            signal_id="heart_rate_samples",
+            label="Heart rate samples",
+            category="heart",
+            latest_value=heart.get("avg_bpm"),
+            unit="bpm avg",
+            latest_date=heart_day.get("date"),
+            details={
+                "min_bpm": heart.get("min_bpm"),
+                "max_bpm": heart.get("max_bpm"),
+                "samples": heart.get("samples"),
+            },
+            why_it_matters="Heart-rate samples explain intensity and unusual spikes better than steps alone.",
+            coaching_use="Use sample heart rate for recent effort context; use live user-reported HR for in-session decisions.",
+            use_when=["active_workout", "cardio", "intensity", "heart_questions"],
+        )
+
+    spo2_day = _last_with(daily_rows, ("spo2_avg", "spo2_sample"))
+    if spo2_day:
+        spo2 = spo2_day.get("spo2_avg") or (spo2_day.get("spo2_sample") or {}).get("avg")
+        add_signal(
+            signal_id="spo2",
+            label="SpO2 / oxygen saturation",
+            category="breathing_recovery",
+            latest_value=_round_optional(spo2, 1),
+            unit="%",
+            latest_date=spo2_day.get("date"),
+            details=spo2_day.get("spo2_sample") or {},
+            why_it_matters="SpO2 is an oxygen-context signal; normal values are reassuring background but not a green light by themselves.",
+            coaching_use="Use low or unusual SpO2 with respiratory rate, resting HR, sleep, and symptoms to lower intensity or recommend caution.",
+            use_when=["oxygen_questions", "breathing", "illness_clues", "recovery"],
+            confidence="context_not_standalone",
+        )
+
+    resp_day = _last_with(daily_rows, ("respiratory_rate", "respiratory_rate_sleep"))
+    if resp_day:
+        resp_sleep = resp_day.get("respiratory_rate_sleep") or {}
+        resp = resp_day.get("respiratory_rate") or resp_sleep.get("full_sleep_breaths_per_minute")
+        resp_values = [
+            value
+            for day in daily_rows
+            if (
+                value := day.get("respiratory_rate")
+                or (day.get("respiratory_rate_sleep") or {}).get("full_sleep_breaths_per_minute")
+            )
+            is not None
+        ]
+        add_signal(
+            signal_id="respiratory_rate",
+            label="Respiratory rate",
+            category="breathing_recovery",
+            latest_value=_round_optional(resp, 1),
+            unit="breaths/min",
+            latest_date=resp_day.get("date"),
+            window_summary={"average_breaths_per_minute": _average(resp_values), "days": len(resp_values)},
+            details=resp_sleep,
+            why_it_matters="Overnight breathing rate can add recovery, illness, or stress context when it moves away from baseline.",
+            coaching_use="Use elevated or unusual respiratory rate as a reason to cap intensity, especially with symptoms or low sleep.",
+            use_when=["breathing", "illness_clues", "recovery", "sleep_quality"],
+            confidence="strong" if len(resp_values) >= 3 else "low_baseline",
+        )
+
+    temp_day = _last_with(daily_rows, ("sleep_temperature",))
+    if temp_day:
+        temp = temp_day.get("sleep_temperature") or {}
+        add_signal(
+            signal_id="sleep_temperature",
+            label="Sleep temperature",
+            category="breathing_recovery",
+            latest_value=temp.get("delta_celsius")
+            if temp.get("delta_celsius") is not None
+            else temp.get("nightly_celsius"),
+            unit="C",
+            latest_date=temp_day.get("date"),
+            value_display=_sleep_temperature_display(temp),
+            details=temp,
+            why_it_matters="Sleep temperature deviation can be an early stress or illness clue when it is unusual for you.",
+            coaching_use="Use an elevated deviation as context to keep training controlled; do not diagnose from it.",
+            use_when=["illness_clues", "sleep_quality", "recovery", "fatigue"],
+            confidence="context_not_standalone",
+        )
+
+    vo2_day = _last_with(daily_rows, ("vo2_max", "vo2_max_detail"))
+    if vo2_day:
+        vo2_detail = vo2_day.get("vo2_max_detail") or {}
+        add_signal(
+            signal_id="vo2_max",
+            label="VO2 max",
+            category="capacity",
+            latest_value=_round_optional(vo2_day.get("vo2_max") or vo2_detail.get("vo2_max"), 1),
+            unit="ml/kg/min",
+            latest_date=vo2_day.get("date"),
+            details=vo2_detail,
+            why_it_matters="VO2 max estimates long-term cardio capacity, not how recovered you are today.",
+            coaching_use="Use it for endurance planning and progress, not as the main same-day train-or-rest signal.",
+            use_when=["endurance", "cardio_capacity", "progress", "running"],
+            confidence="capacity_not_readiness",
+        )
+
+    latest_load = _last_with(daily_rows, ("active_zone_minutes",))
+    if latest_load:
+        azm_values = [day.get("active_zone_minutes") for day in daily_rows if day.get("active_zone_minutes") is not None]
+        add_signal(
+            signal_id="active_zone_minutes",
+            label="Active Zone Minutes (AZM)",
+            category="activity_load",
+            latest_value=latest_load.get("active_zone_minutes"),
+            unit="min",
+            latest_date=latest_load.get("date"),
+            window_summary={"total_minutes": round(sum(azm_values), 1), "average_minutes": _average(azm_values)},
+            why_it_matters="AZM are Fitbit's compact hard-work minutes from elevated heart-rate zones.",
+            coaching_use="High recent AZM means recovery cost is already present; avoid stacking another hard conditioning block.",
+            use_when=["workout_intensity", "load_stacking", "cardio", "recovery"],
+        )
+
+    zones = _sum_daily_mapping(daily_rows, "time_in_hr_zones_minutes")
+    if zones:
+        add_signal(
+            signal_id="heart_rate_zones",
+            label="Heart-rate zones",
+            category="activity_load",
+            value_display=_format_minutes_mapping(zones),
+            window_summary={"minutes_by_zone": zones},
+            why_it_matters="Zone split shows whether recent load was easy, moderate, or hard.",
+            coaching_use="More peak/cardio zone time should push the next session toward easy volume, technique, or strength away from fatigue.",
+            use_when=["cardio", "intervals", "load_stacking", "active_workout"],
+        )
+
+    latest_steps = _last_with(daily_rows, ("steps",))
+    if latest_steps:
+        step_values = [day.get("steps") for day in daily_rows if day.get("steps") is not None]
+        add_signal(
+            signal_id="steps",
+            label="Steps",
+            category="activity_load",
+            latest_value=latest_steps.get("steps"),
+            unit="steps",
+            latest_date=latest_steps.get("date"),
+            window_summary={"total_steps": round(sum(step_values)), "average_steps": round(sum(step_values) / len(step_values)) if step_values else None},
+            why_it_matters="Steps show movement volume and leg load, especially before runs, hikes, or lower-body work.",
+            coaching_use="Use high step volume as fatigue context; low steps alone do not mean the user needs hard training.",
+            use_when=["walking", "running", "hiking", "leg_fatigue", "daily_load"],
+        )
+
+    latest_active = _last_with(daily_rows, ("active_minutes",))
+    if latest_active:
+        active_values = [day.get("active_minutes") for day in daily_rows if day.get("active_minutes") is not None]
+        add_signal(
+            signal_id="active_minutes",
+            label="Active minutes",
+            category="activity_load",
+            latest_value=latest_active.get("active_minutes"),
+            unit="min",
+            latest_date=latest_active.get("date"),
+            window_summary={"total_minutes": round(sum(active_values), 1), "average_minutes": _average(active_values)},
+            why_it_matters="Active minutes capture movement that may not be intense enough to count as AZM.",
+            coaching_use="Use this for total day load and consistency, especially when heart-zone data is sparse.",
+            use_when=["daily_load", "consistency", "light_activity"],
+        )
+
+    latest_distance = _last_with(daily_rows, ("distance_mm",))
+    if latest_distance:
+        distance_values = [day.get("distance_mm") / 1_000_000 for day in daily_rows if day.get("distance_mm") is not None]
+        latest_km = latest_distance.get("distance_mm") / 1_000_000 if latest_distance.get("distance_mm") is not None else None
+        add_signal(
+            signal_id="distance",
+            label="Distance",
+            category="activity_load",
+            latest_value=_round_optional(latest_km, 2),
+            unit="km",
+            latest_date=latest_distance.get("date"),
+            window_summary={"total_km": round(sum(distance_values), 2), "average_km": _average(distance_values)},
+            why_it_matters="Distance matters when the question involves running, walking, hiking, or leg fatigue.",
+            coaching_use="Use distance with steps and zones to protect legs before long walks, hikes, or runs.",
+            use_when=["running", "walking", "hiking", "leg_fatigue"],
+        )
+
+    levels = _sum_daily_mapping(daily_rows, "activity_levels_minutes")
+    if levels:
+        add_signal(
+            signal_id="activity_levels",
+            label="Activity levels",
+            category="activity_load",
+            value_display=_format_minutes_mapping(levels),
+            window_summary={"minutes_by_level": levels},
+            why_it_matters="Activity levels separate light movement from moderate or vigorous work.",
+            coaching_use="Use vigorous minutes as load; use light movement as recovery-supporting background.",
+            use_when=["daily_load", "fatigue", "movement_breaks"],
+        )
+
+    latest_sedentary = _last_with(daily_rows, ("sedentary_minutes",))
+    if latest_sedentary:
+        sedentary_values = [day.get("sedentary_minutes") for day in daily_rows if day.get("sedentary_minutes") is not None]
+        add_signal(
+            signal_id="sedentary_minutes",
+            label="Sedentary time",
+            category="activity_load",
+            latest_value=_round_optional(latest_sedentary.get("sedentary_minutes"), 0),
+            unit="min",
+            latest_date=latest_sedentary.get("date"),
+            window_summary={"average_minutes": _average(sedentary_values)},
+            why_it_matters="Sedentary time helps decide whether easy movement breaks may be more useful than a hard workout.",
+            coaching_use="Use high sedentary time to suggest walking, mobility, or movement snacks when recovery does not support intensity.",
+            use_when=["daily_plan", "movement_breaks", "recovery_day"],
+        )
+
+    latest_floors = _last_with(daily_rows, ("floors",))
+    if latest_floors:
+        add_signal(
+            signal_id="floors",
+            label="Floors",
+            category="activity_load",
+            latest_value=latest_floors.get("floors"),
+            unit="floors",
+            latest_date=latest_floors.get("date"),
+            window_summary={"total_floors": round(sum(day.get("floors") for day in daily_rows if day.get("floors") is not None))},
+            why_it_matters="Floors can add hidden calf, quad, and hiking/climbing load.",
+            coaching_use="Use floors when planning hikes, stairs, runs, or lower-body sessions.",
+            use_when=["hiking", "stairs", "leg_fatigue"],
+        )
+
+    latest_active_kcal = _last_with(daily_rows, ("active_kcal",))
+    if latest_active_kcal:
+        kcal_values = [day.get("active_kcal") for day in daily_rows if day.get("active_kcal") is not None]
+        add_signal(
+            signal_id="active_energy",
+            label="Active energy",
+            category="activity_load",
+            latest_value=_round_optional(latest_active_kcal.get("active_kcal"), 0),
+            unit="kcal",
+            latest_date=latest_active_kcal.get("date"),
+            window_summary={"total_kcal": round(sum(kcal_values), 1)},
+            why_it_matters="Active calories are a rough workload clue; wearable calorie estimates are imperfect.",
+            coaching_use="Use as secondary load context, not as the main reason to train or rest.",
+            use_when=["daily_load", "fueling_context", "long_activity"],
+            confidence="rough_estimate",
+        )
+
+    return {
+        "status": "ok" if signals else "missing",
+        "window_days": len(daily_rows),
+        "date_range": date_range,
+        "available_signal_ids": [signal["id"] for signal in signals],
+        "available_categories": sorted({signal["category"] for signal in signals}),
+        "signals": signals,
+        "question_guidance": [
+            "For broad questions, inspect this snapshot first so normal context signals are not silently ignored.",
+            "Explain why a signal changes the workout call, or why it is only background context.",
+            "SpO2, respiratory rate, and sleep temperature are context or caution signals; do not use them alone as permission to train hard or as a diagnosis.",
+            "VO2 max is capacity/progress context, not same-day readiness.",
+        ],
+    }
+
+
 def _recovery_row(day: str, values: dict[str, Any]) -> dict[str, Any]:
     sleep = values.get("sleep", {})
+    hrv_sample = values.get("hrv_sample_ms") or {}
+    respiratory_sleep = values.get("respiratory_rate_sleep") or {}
+    sleep_temperature = values.get("sleep_temperature") or {}
     return {
         "date": day,
         "sleep_hours": sleep.get("asleep_hours") or sleep.get("duration_hours"),
         "sleep_sessions": sleep.get("sessions_count"),
-        "hrv_ms": values.get("hrv_ms"),
+        "hrv_ms": values.get("hrv_ms") or hrv_sample.get("avg"),
         "resting_heart_rate": values.get("resting_heart_rate"),
         "active_zone_minutes": values.get("active_zone_minutes", 0),
         "steps": values.get("steps", 0),
-        "respiratory_rate": values.get("respiratory_rate"),
+        "respiratory_rate": values.get("respiratory_rate")
+        or respiratory_sleep.get("full_sleep_breaths_per_minute"),
+        "respiratory_rate_sleep": respiratory_sleep or None,
         "spo2_avg": values.get("spo2_avg") or values.get("spo2_sample", {}).get("avg"),
+        "sleep_temperature_delta_celsius": sleep_temperature.get("delta_celsius"),
+        "sleep_temperature": sleep_temperature or None,
+        "vo2_max": values.get("vo2_max"),
     }
 
 
 def _has_recovery_comparison_signal(row: dict[str, Any]) -> bool:
-    return any(row.get(key) is not None for key in ("sleep_hours", "hrv_ms", "resting_heart_rate"))
+    return any(
+        row.get(key) is not None
+        for key in (
+            "sleep_hours",
+            "hrv_ms",
+            "resting_heart_rate",
+            "respiratory_rate",
+            "spo2_avg",
+            "sleep_temperature_delta_celsius",
+        )
+    )
 
 
 def _latest_recovery_row(rows: list[dict[str, Any]]) -> dict[str, Any]:
@@ -1884,7 +2342,33 @@ def _current_vs_baseline(latest: dict[str, Any], baseline: dict[str, Any]) -> di
         "active_zone_minutes_delta": _delta(
             latest.get("active_zone_minutes"), baseline.get("active_zone_minutes")
         ),
+        "respiratory_rate_delta": _delta(
+            latest.get("respiratory_rate"), baseline.get("respiratory_rate")
+        ),
+        "spo2_delta": _delta(latest.get("spo2_avg"), baseline.get("spo2_avg")),
+        "sleep_temperature_delta_change_celsius": _delta(
+            latest.get("sleep_temperature_delta_celsius"),
+            baseline.get("sleep_temperature_delta_celsius"),
+        ),
     }
+
+
+def _recovery_signal_ids(rows: list[dict[str, Any]]) -> list[str]:
+    signal_keys = [
+        ("sleep_hours", "sleep_hours"),
+        ("hrv_ms", "hrv_ms"),
+        ("resting_heart_rate", "resting_heart_rate"),
+        ("active_zone_minutes", "active_zone_minutes"),
+        ("respiratory_rate", "respiratory_rate"),
+        ("spo2_avg", "spo2"),
+        ("sleep_temperature_delta_celsius", "sleep_temperature"),
+        ("vo2_max", "vo2_max"),
+    ]
+    return [
+        signal_id
+        for key, signal_id in signal_keys
+        if any(row.get(key) is not None for row in rows)
+    ]
 
 
 def _recovery_comparison_takeaways(
@@ -1900,9 +2384,15 @@ def _recovery_comparison_takeaways(
     sleep = latest.get("sleep_hours")
     hrv = latest.get("hrv_ms")
     rhr = latest.get("resting_heart_rate")
+    spo2 = latest.get("spo2_avg")
+    respiratory_rate = latest.get("respiratory_rate")
+    sleep_temp_delta = latest.get("sleep_temperature_delta_celsius")
     hrv_pct_delta = current_vs_baseline.get("hrv_percent_delta")
     rhr_delta = current_vs_baseline.get("resting_heart_rate_delta")
     sleep_delta = current_vs_baseline.get("sleep_hours_delta")
+    resp_delta = current_vs_baseline.get("respiratory_rate_delta")
+    spo2_delta = current_vs_baseline.get("spo2_delta")
+    temp_delta_change = current_vs_baseline.get("sleep_temperature_delta_change_celsius")
     load = latest.get("active_zone_minutes") or 0
 
     if sleep is not None and sleep < 6 and ((hrv_pct_delta is not None and hrv_pct_delta <= -10) or (rhr_delta is not None and rhr_delta >= 4)):
@@ -1936,6 +2426,34 @@ def _recovery_comparison_takeaways(
             watchouts.append(f"Resting heart rate is {round(rhr_delta, 1)} bpm above baseline.")
         elif rhr_delta <= 2:
             positives.append("Resting heart rate is near baseline.")
+    if respiratory_rate is not None:
+        if resp_delta is not None and resp_delta >= 2:
+            watchouts.append(
+                f"Respiratory rate is {round(resp_delta, 1)} breaths/min above baseline."
+            )
+            next_actions.append("Treat breathing rate as a reason to keep intensity controlled today.")
+        elif resp_delta is not None and resp_delta <= 1:
+            positives.append("Respiratory rate is not elevated versus recent baseline.")
+        else:
+            insights.append(
+                f"Respiratory rate is {respiratory_rate:.1f} breaths/min; use it as context with sleep and heart signals."
+            )
+    if spo2 is not None:
+        if spo2 < 94:
+            watchouts.append(
+                f"SpO2 is {spo2:.1f}%, which should be treated as a caution signal with symptoms and breathing."
+            )
+            next_actions.append("Avoid hard training if oxygen, breathing, symptoms, or warm-up feel abnormal.")
+        elif spo2_delta is not None and spo2_delta <= -2:
+            watchouts.append(f"SpO2 is {abs(round(spo2_delta, 1))}% below recent baseline.")
+        else:
+            positives.append("SpO2 is available as reassuring background context, not a standalone reason to train hard.")
+    if sleep_temp_delta is not None:
+        if abs(sleep_temp_delta) >= 0.6 or (temp_delta_change is not None and temp_delta_change >= 0.5):
+            watchouts.append("Sleep temperature is meaningfully different from baseline.")
+            next_actions.append("Use sleep temperature as a caution clue and keep intensity predictable.")
+        else:
+            insights.append("Sleep temperature is available as a secondary recovery clue.")
 
     freshness = context.get("data_freshness", {})
     if freshness.get("needs_sync_before_time_sensitive_advice"):
@@ -1969,6 +2487,14 @@ def _recovery_comparison_headline(
         parts.append(
             f"RHR {latest['resting_heart_rate']} bpm" + (f" ({delta:+.1f})" if delta is not None else "")
         )
+    if latest.get("respiratory_rate") is not None:
+        delta = current_vs_baseline.get("respiratory_rate_delta")
+        parts.append(
+            f"resp {latest['respiratory_rate']:.1f}"
+            + (f" ({delta:+.1f})" if delta is not None else "")
+        )
+    if latest.get("spo2_avg") is not None:
+        parts.append(f"SpO2 {latest['spo2_avg']:.1f}%")
     return "Latest recovery comparison: " + "; ".join(parts) + "."
 
 
@@ -2071,6 +2597,12 @@ def _question_intents(question: str) -> list[str]:
         intents.extend(["sleep", "recovery", "heart"])
     if has("heart", "hrv", "bpm", "pulse", "resting", "cardio"):
         intents.extend(["heart", "recovery", "activity_load"])
+    if has("oxygen", "spo2", "sp02", "breathing", "breath", "respiratory", "temperature", "temp"):
+        intents.extend(["recovery", "sleep", "heart"])
+    if has("vo2", "capacity", "endurance", "aerobic", "cardio fitness"):
+        intents.extend(["general_overview", "activity_load", "heart"])
+    if has("all data", "all my data", "all signals", "all metrics", "everything", "full picture", "other stats", "other signals"):
+        intents.extend(["general_overview", "recovery", "heart", "sleep", "activity_load"])
     if has("sore", "soreness", "pain", "injury", "ache", "stress", "energy", "feel"):
         intents.extend(["subjective", "recovery", "activity_load", "sleep"])
     if has(
@@ -2163,7 +2695,8 @@ def metric_catalog_model_guidance(metrics: list[dict[str, Any]]) -> dict[str, An
         "query_strategy": [
             "Start with 7-14 days for coaching decisions; expand to 30 days for baseline or trend questions.",
             "Pair sleep with HRV/resting heart rate for recovery questions.",
-            "Pair activity-zone minutes, exercises, and steps for training-load questions.",
+            "Pair oxygen saturation, respiratory rate, and sleep temperature with sleep/heart recovery instead of treating them as standalone train-or-rest signals.",
+            "Pair activity-zone minutes, heart-rate zones, activity levels, exercises, steps, distance, and floors for training-load questions.",
             "Pair live user input with guide_active_workout for in-session decisions.",
         ],
     }
@@ -2231,8 +2764,18 @@ def _metric_query_suggestions(
     groups = [
         (
             "recovery",
-            "Compare sleep, HRV, resting heart rate, and load.",
-            ["sleep", "daily-heart-rate-variability", "daily-resting-heart-rate", "active-zone-minutes"],
+            "Compare sleep, HRV, resting heart rate, breathing/oxygen context, sleep temperature, and load.",
+            [
+                "sleep",
+                "daily-heart-rate-variability",
+                "daily-resting-heart-rate",
+                "daily-respiratory-rate",
+                "respiratory-rate-sleep-summary",
+                "daily-oxygen-saturation",
+                "oxygen-saturation",
+                "daily-sleep-temperature-derivations",
+                "active-zone-minutes",
+            ],
         ),
         (
             "heart",
@@ -2242,7 +2785,18 @@ def _metric_query_suggestions(
         (
             "load",
             "Inspect movement and workout load.",
-            ["active-zone-minutes", "time-in-heart-rate-zone", "active-minutes", "steps", "exercise"],
+            [
+                "active-zone-minutes",
+                "time-in-heart-rate-zone",
+                "calories-in-heart-rate-zone",
+                "activity-level",
+                "active-minutes",
+                "steps",
+                "distance",
+                "floors",
+                "sedentary-period",
+                "exercise",
+            ],
         ),
         (
             "sleep",
@@ -2288,7 +2842,7 @@ def _metric_query_suggestions(
 def _answer_rubric_for_intents(intents: list[str]) -> list[str]:
     rubric = [
         "Start with the direct answer, then name the strongest supporting signals.",
-        "Keep labels like HRV, RPE, AZM, Readiness, and Resting HR, but explain each one in simple words the first time it appears.",
+        "Keep metric labels visible, but explain every label you use in simple words the first time it appears.",
         "When steps or movement totals are used, name the date/window and explain why they matter or do not matter for this decision.",
         "Separate wearable evidence, user-reported context, and missing data.",
         "Mention freshness when the user asks about today, latest data, or real-time decisions.",
@@ -2299,7 +2853,9 @@ def _answer_rubric_for_intents(intents: list[str]) -> list[str]:
     if "active_workout" in intents:
         rubric.append("For in-session advice, prioritize stop/continue/downshift guidance from symptoms, RPE, pain, and heart rate.")
     if any(intent in intents for intent in ("recovery", "sleep", "heart")):
-        rubric.append("For recovery explanations, compare latest sleep, HRV, resting heart rate, and load against recent baseline.")
+        rubric.append(
+            "For recovery explanations, compare latest sleep, HRV, resting heart rate, oxygen/breathing context, sleep temperature when available, and load against recent baseline."
+        )
     if "symptom_safety" in intents:
         rubric.append("For symptoms or illness, avoid diagnosis, advise rest or easy movement, and suggest clinical care for severe or worsening symptoms.")
     if "goal" in intents:
@@ -2323,6 +2879,11 @@ def _decision_frame_for_question(
         ),
         "user_context_cues": _question_context_cues(question),
         "signal_roles": _signal_roles_for_intents(intents, overview, comparison),
+        "available_signal_ids": (overview.get("available_signal_snapshot") or {}).get(
+            "available_signal_ids", []
+        )
+        if overview.get("status") == "ok"
+        else [],
         "output_contract": _output_contract_for_intents(intents, freshness),
         "plain_language_labels": [
             "Readiness = quick recovery score from sleep, heart, and load signals; green supports normal training, not max effort by itself.",
@@ -2330,6 +2891,9 @@ def _decision_frame_for_question(
             "AZM = Active Zone Minutes, Fitbit's harder-effort minutes from elevated heart-rate zones.",
             "HRV = recovery stress signal; compare it to the user's usual before treating it as meaningful.",
             "Resting HR = heart stress at rest; higher than usual can point to stress, illness, fatigue, or poor recovery.",
+            "SpO2 = oxygen saturation context; normal is reassuring background, low or unusual should be interpreted with symptoms and breathing.",
+            "Respiratory rate = overnight breaths per minute; compare to usual before treating it as meaningful.",
+            "VO2 max = longer-term cardio capacity, not same-day recovery.",
         ],
         "do_not_do": [
             "Do not list stats without saying how each stat changes today's decision.",
@@ -2370,15 +2934,19 @@ def _question_context_cues(question: str) -> list[dict[str, str]]:
                 "how_to_use": "Make the recommendation fit the available time and avoid turning a short window into an all-out session.",
             }
         )
-    if any(
-        term in text
-        for term in (
+    if _contains_context_term(
+        text,
+        (
             "later",
             "tonight",
             "tomorrow",
             "dinner",
             "meeting",
-            "work",
+            "after work",
+            "before work",
+            "work later",
+            "workday",
+            "shift",
             "travel",
             "plans",
             "long walk",
@@ -2393,7 +2961,7 @@ def _question_context_cues(question: str) -> list[dict[str, str]]:
             "save energy",
             "drained",
             "wiped",
-        )
+        ),
     ):
         cues.append(
             {
@@ -2402,13 +2970,14 @@ def _question_context_cues(question: str) -> list[dict[str, str]]:
                 "how_to_use": "Protect the rest of the day by lowering volume, avoiding finishers, and leaving reps or effort in reserve.",
             }
         )
-    if any(
-        term in text
-        for term in (
+    if _contains_context_term(
+        text,
+        (
             "walked",
             "steps",
             "long walk",
             "run",
+            "running",
             "hike",
             "legs",
             "leg day",
@@ -2417,7 +2986,7 @@ def _question_context_cues(question: str) -> list[dict[str, str]]:
             "soccer",
             "squash",
             "tennis",
-        )
+        ),
     ):
         cues.append(
             {
@@ -2463,6 +3032,17 @@ def _minutes_from_question(text: str) -> int | None:
     return max(5, min(int(matches[0]), 180))
 
 
+def _contains_context_term(text: str, terms: tuple[str, ...]) -> bool:
+    for term in terms:
+        if " " in term or "-" in term:
+            if term in text:
+                return True
+            continue
+        if re.search(rf"\b{re.escape(term)}\b", text):
+            return True
+    return False
+
+
 def _signal_roles_for_intents(
     intents: list[str],
     overview: dict[str, Any],
@@ -2498,8 +3078,28 @@ def _signal_roles_for_intents(
                     "how_to_use": "Use HRV and resting HR together, and mention low-confidence baselines when sample size is small.",
                 },
                 {
+                    "signal": "breathing_oxygen_temperature_context",
+                    "metric_ids": [
+                        "daily-respiratory-rate",
+                        "respiratory-rate-sleep-summary",
+                        "daily-oxygen-saturation",
+                        "oxygen-saturation",
+                        "daily-sleep-temperature-derivations",
+                    ],
+                    "role": "secondary recovery and safety context",
+                    "how_to_use": "Use unusual oxygen, respiratory-rate, or sleep-temperature signals as caution context; normal values are background, not permission for max effort.",
+                },
+                {
                     "signal": "training_load",
-                    "metric_ids": ["active-zone-minutes", "time-in-heart-rate-zone", "exercise", "steps"],
+                    "metric_ids": [
+                        "active-zone-minutes",
+                        "time-in-heart-rate-zone",
+                        "activity-level",
+                        "exercise",
+                        "steps",
+                        "distance",
+                        "floors",
+                    ],
                     "role": "load already accumulated",
                     "how_to_use": "High AZM, hard workouts, or lots of steps should make the next session more controlled.",
                 },
@@ -2524,7 +3124,16 @@ def _signal_roles_for_intents(
         roles.append(
             {
                 "signal": "recovery_comparison",
-                "metric_ids": ["sleep", "daily-heart-rate-variability", "daily-resting-heart-rate", "daily-respiratory-rate", "daily-oxygen-saturation"],
+                "metric_ids": [
+                    "sleep",
+                    "daily-heart-rate-variability",
+                    "daily-resting-heart-rate",
+                    "daily-respiratory-rate",
+                    "respiratory-rate-sleep-summary",
+                    "daily-oxygen-saturation",
+                    "oxygen-saturation",
+                    "daily-sleep-temperature-derivations",
+                ],
                 "role": "pattern explanation",
                 "how_to_use": "Explain which recovery signals agree, which conflict, and whether the baseline has enough samples.",
                 "available": comparison.get("status") == "ok",
@@ -2548,7 +3157,15 @@ def _signal_roles_for_intents(
             0,
             {
                 "signal": "symptoms_and_red_flags",
-                "metric_ids": ["daily-resting-heart-rate", "heart-rate", "sleep", "daily-respiratory-rate", "daily-oxygen-saturation"],
+                "metric_ids": [
+                    "daily-resting-heart-rate",
+                    "heart-rate",
+                    "sleep",
+                    "daily-respiratory-rate",
+                    "respiratory-rate-sleep-summary",
+                    "daily-oxygen-saturation",
+                    "daily-sleep-temperature-derivations",
+                ],
                 "role": "safety override",
                 "how_to_use": "Symptoms, chest tightness, dizziness, severe shortness of breath, faintness, fever, or worsening illness override training optimization.",
             },
@@ -2560,7 +3177,7 @@ def _output_contract_for_intents(intents: list[str], freshness: dict[str, Any]) 
     contract = [
         "Start with a one-sentence decision in plain language.",
         "Name the data used and why each signal changes the recommendation.",
-        "Explain labels the first time they appear: Readiness, RPE, AZM, HRV, Resting HR.",
+        "Explain labels the first time they appear, including Readiness, RPE, AZM, HRV, Resting HR, SpO2, respiratory rate, or VO2 max when used.",
     ]
     if "active_workout" in intents:
         contract.extend(
@@ -2577,7 +3194,9 @@ def _output_contract_for_intents(intents: list[str], freshness: dict[str, Any]) 
             ]
         )
     if any(intent in intents for intent in ("recovery", "sleep", "heart")):
-        contract.append("Say which recovery signals agree or disagree, and whether baselines are low confidence.")
+        contract.append(
+            "Say which recovery signals agree or disagree, including oxygen/breathing context when available, and whether baselines are low confidence."
+        )
     if "activity_load" in intents:
         contract.append("When using steps or load, include the window/date and whether it matters for legs, fatigue, or intensity.")
     if "symptom_safety" in intents:
@@ -2603,6 +3222,7 @@ def _question_clue_takeaways(
     sleep = sections.get("sleep", {})
     heart = sections.get("heart", {})
     activity = sections.get("activity", {})
+    signal_snapshot = overview.get("available_signal_snapshot", {}) if overview.get("status") == "ok" else {}
     workouts = sections.get("workouts", {})
     freshness = context.get("data_freshness", {})
     personal_context = overview.get("personal_context", {}) if overview.get("status") == "ok" else {}
@@ -2638,6 +3258,8 @@ def _question_clue_takeaways(
         current = comparison.get("current_vs_baseline", {})
         hrv_pct = current.get("hrv_percent_delta")
         rhr_delta = current.get("resting_heart_rate_delta")
+        resp_delta = current.get("respiratory_rate_delta")
+        spo2_delta = current.get("spo2_delta")
         if hrv_pct is not None:
             direction = "above" if hrv_pct >= 0 else "below"
             clues.append(f"HRV is {abs(round(hrv_pct))}% {direction} recent baseline.")
@@ -2650,9 +3272,22 @@ def _question_clue_takeaways(
             clues.append(f"Resting heart rate is {abs(round(rhr_delta, 1))} bpm {direction} baseline.")
             if rhr_delta >= 5:
                 watchouts.append("Resting heart rate is elevated versus baseline.")
+        if resp_delta is not None:
+            direction = "above" if resp_delta >= 0 else "below"
+            clues.append(
+                f"Respiratory rate is {abs(round(resp_delta, 1))} breaths/min {direction} baseline."
+            )
+            if resp_delta >= 2:
+                watchouts.append("Respiratory rate is elevated versus baseline.")
+        if spo2_delta is not None:
+            direction = "above" if spo2_delta >= 0 else "below"
+            clues.append(f"SpO2 is {abs(round(spo2_delta, 1))}% {direction} baseline.")
         clues.extend(comparison.get("insights", [])[:3])
         positives.extend(comparison.get("positives", [])[:2])
         watchouts.extend(comparison.get("watchouts", [])[:3])
+
+    for line in _snapshot_takeaway_lines(signal_snapshot, intents):
+        clues.append(line)
 
     latest_load = today.get("latest_training_load", {})
     active_zone_minutes = today.get("active_zone_minutes") or latest_load.get("active_zone_minutes")
@@ -2734,7 +3369,9 @@ def _question_clue_takeaways(
         next_actions.append("Use recommend_workout_today for the broad daily intensity call.")
         next_actions.append("Use plan_workout_with_health_context when the user names a specific workout.")
     if any(intent in intents for intent in ("recovery", "sleep", "heart")):
-        next_actions.append("Use get_recovery_signal_comparison to explain sleep, HRV, resting heart rate, and load together.")
+        next_actions.append(
+            "Use get_recovery_signal_comparison to explain sleep, HRV, resting heart rate, breathing/oxygen context, and load together."
+        )
     if "activity_load" in intents:
         next_actions.append("Use get_activity_load and get_workout_history to understand recent load before prescribing intensity.")
     if freshness.get("freshness_level") == "fresh":
@@ -2747,6 +3384,33 @@ def _question_clue_takeaways(
     if not next_actions:
         next_actions.append("Use get_health_overview before answering broad health and fitness questions.")
     return clues, positives, watchouts, next_actions
+
+
+def _snapshot_takeaway_lines(snapshot: dict[str, Any], intents: list[str]) -> list[str]:
+    if snapshot.get("status") != "ok":
+        return []
+    signals = snapshot.get("signals") or []
+    wanted_ids: list[str] = []
+    if any(intent in intents for intent in ("recovery", "sleep", "heart", "symptom_safety")):
+        wanted_ids.extend(["spo2", "respiratory_rate", "sleep_temperature", "heart_rate_samples"])
+    if any(intent in intents for intent in ("activity_load", "workout_decision", "daily_plan")):
+        wanted_ids.extend(["heart_rate_zones", "activity_levels", "sedentary_minutes", "floors", "distance"])
+    if "general_overview" in intents:
+        wanted_ids.extend(["spo2", "respiratory_rate", "sleep_temperature", "vo2_max", "heart_rate_zones"])
+    wanted = set(wanted_ids)
+    lines: list[str] = []
+    for signal in signals:
+        if signal.get("id") not in wanted:
+            continue
+        display = signal.get("display")
+        if not display:
+            continue
+        lines.append(
+            f"{signal.get('label')}: latest {display}. {signal.get('coaching_use')}"
+        )
+        if len(lines) >= 5:
+            break
+    return lines
 
 
 def _question_safety_flags(question: str, context: dict[str, Any]) -> list[str]:
@@ -2843,6 +3507,11 @@ def _compact_today_context(today: dict[str, Any]) -> dict[str, Any]:
         "sleep_sessions": sleep.get("sessions_count"),
         "hrv_ms": today.get("hrv_ms"),
         "resting_heart_rate": today.get("resting_heart_rate"),
+        "spo2_avg": today.get("spo2_avg") or (today.get("spo2_sample") or {}).get("avg"),
+        "respiratory_rate": today.get("respiratory_rate")
+        or (today.get("respiratory_rate_sleep") or {}).get("full_sleep_breaths_per_minute"),
+        "sleep_temperature": today.get("sleep_temperature"),
+        "vo2_max": today.get("vo2_max"),
         "heart": today.get("heart"),
         "latest_training_load": today.get("latest_training_load"),
     }
@@ -2864,6 +3533,7 @@ def _compact_overview_context(overview: dict[str, Any]) -> dict[str, Any]:
         "workouts": sections.get("workouts"),
         "personal_context": overview.get("personal_context"),
         "data_coverage": overview.get("data_coverage"),
+        "available_signal_snapshot": overview.get("available_signal_snapshot"),
     }
 
 
@@ -2880,6 +3550,7 @@ def _compact_recovery_comparison(comparison: dict[str, Any]) -> dict[str, Any]:
         "insights": comparison.get("insights"),
         "watchouts": comparison.get("watchouts"),
         "positives": comparison.get("positives"),
+        "available_signal_snapshot": comparison.get("available_signal_snapshot"),
     }
 
 
@@ -2992,7 +3663,18 @@ def _overview_coaching(
             positives.append("Resting heart rate is not elevated versus the recent average.")
 
     if recovery.get("latest_spo2"):
-        positives.append(f"Latest SpO2 is {recovery['latest_spo2']:.1f}%.")
+        positives.append(f"Latest SpO2 is {recovery['latest_spo2']:.1f}% as context, not a standalone training signal.")
+    if recovery.get("latest_respiratory_rate"):
+        positives.append(f"Latest respiratory rate is {recovery['latest_respiratory_rate']:.1f} breaths/min.")
+    sleep_temp = recovery.get("latest_sleep_temperature") or {}
+    if sleep_temp.get("delta_celsius") is not None:
+        delta = sleep_temp["delta_celsius"]
+        if abs(delta) >= 0.6:
+            watchouts.append(f"Sleep temperature is {delta:+.2f} C versus baseline.")
+        else:
+            positives.append(f"Sleep temperature is {delta:+.2f} C versus baseline.")
+    if recovery.get("latest_vo2_max") is not None:
+        positives.append(f"VO2 max is available at {recovery['latest_vo2_max']:.1f} ml/kg/min for capacity context.")
     if workouts.get("workout_count"):
         positives.append(f"{workouts['workout_count']} workout sessions are available in this window.")
 
@@ -3203,6 +3885,32 @@ def _daily_coaching_brief(
             "Use alongside respiratory and heart signals, not as a standalone diagnosis.",
             "context",
         )
+    if recovery.get("latest_respiratory_rate") is not None:
+        add_signal(
+            "recovery",
+            "Respiratory rate",
+            f"{recovery['latest_respiratory_rate']:.1f} breaths/min latest.",
+            "Use against your usual breathing rate; elevated values can support a controlled training call.",
+            "context",
+        )
+    sleep_temp = recovery.get("latest_sleep_temperature") or {}
+    if sleep_temp.get("delta_celsius") is not None:
+        delta = sleep_temp["delta_celsius"]
+        add_signal(
+            "recovery",
+            "Sleep temperature",
+            f"{delta:+.2f} C versus baseline.",
+            "Temperature deviation can be a stress or illness clue, but it is not diagnostic.",
+            "watchout" if abs(delta) >= 0.6 else "context",
+        )
+    if recovery.get("latest_vo2_max") is not None:
+        add_signal(
+            "capacity",
+            "VO2 max",
+            f"{recovery['latest_vo2_max']:.1f} ml/kg/min latest.",
+            "Use for endurance capacity and progress, not same-day readiness.",
+            "context",
+        )
 
     if freshness.get("needs_sync_before_time_sensitive_advice"):
         training_bias = "sync-first"
@@ -3255,7 +3963,7 @@ def _daily_coaching_brief(
         "summary": summary,
         "training_bias": training_bias,
         "today_plan": _dedupe(next_actions)[:5],
-        "priority_signals": priority_signals[:9],
+        "priority_signals": priority_signals[:14],
         "context_gaps": _dedupe(context_gaps)[:5],
         "prompt_suggestions": _dedupe(prompt_suggestions)[:6],
         "confidence": confidence,
@@ -3296,6 +4004,55 @@ def _latest_number(daily_rows: list[dict[str, Any]], key: str) -> float | None:
     if not latest:
         return None
     return _float({"value": latest.get(key)}, ["value"])
+
+
+def _round_optional(value: Any, digits: int = 1) -> float | int | None:
+    if value is None:
+        return None
+    try:
+        rounded = round(float(value), digits)
+    except (TypeError, ValueError):
+        return None
+    if digits == 0 or float(rounded).is_integer():
+        return int(rounded)
+    return rounded
+
+
+def _format_signal_value(value: Any, unit: str = "") -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, float):
+        text = f"{value:.1f}" if not value.is_integer() else str(int(value))
+    else:
+        text = str(value)
+    return f"{text} {unit}".strip()
+
+
+def _sleep_temperature_display(temp: dict[str, Any]) -> str | None:
+    if not temp:
+        return None
+    delta = temp.get("delta_celsius")
+    nightly = temp.get("nightly_celsius")
+    if delta is not None:
+        return f"{delta:+.2f} C vs baseline"
+    if nightly is not None:
+        return f"{nightly:.2f} C nightly"
+    return None
+
+
+def _sum_daily_mapping(daily_rows: list[dict[str, Any]], key: str) -> dict[str, float]:
+    totals: dict[str, float] = defaultdict(float)
+    for day in daily_rows:
+        for name, amount in (day.get(key) or {}).items():
+            totals[str(name)] += _float({"value": amount}, ["value"])
+    return {name: round(amount, 1) for name, amount in sorted(totals.items()) if amount}
+
+
+def _format_minutes_mapping(values: dict[str, float]) -> str | None:
+    if not values:
+        return None
+    parts = [f"{name.replace('_', ' ')} {amount:g}m" for name, amount in values.items()]
+    return ", ".join(parts[:4])
 
 
 def _date_from_iso(value: str | None) -> date | None:
@@ -3505,8 +4262,66 @@ def summarize_records(records: list[dict[str, Any]]) -> dict[str, Any]:
                 spo2_samples[day].append(spo2)
         elif data_type == "daily-respiratory-rate":
             values["respiratory_rate"] = _float(payload, ["dailyRespiratoryRate", "breathsPerMinute"])
+        elif data_type == "respiratory-rate-sleep-summary":
+            summary = payload.get("respiratoryRateSleepSummary", {})
+            full_stats = _sleep_resp_stats(summary, "fullSleepStats")
+            stage_stats = {
+                "deep": _sleep_resp_stats(summary, "deepSleepStats"),
+                "light": _sleep_resp_stats(summary, "lightSleepStats"),
+                "rem": _sleep_resp_stats(summary, "remSleepStats"),
+            }
+            if full_stats:
+                values["respiratory_rate_sleep"] = {
+                    "full_sleep_breaths_per_minute": full_stats.get("breaths_per_minute"),
+                    "full_sleep_signal_to_noise": full_stats.get("signal_to_noise"),
+                    "stages": {stage: stats for stage, stats in stage_stats.items() if stats},
+                }
+                if values.get("respiratory_rate") is None:
+                    values["respiratory_rate"] = full_stats.get("breaths_per_minute")
+        elif data_type == "daily-sleep-temperature-derivations":
+            temp = payload.get("dailySleepTemperatureDerivations", {})
+            nightly = _first_float(
+                temp,
+                ("nightlyTemperatureCelsius", "nightly_temperature_celsius"),
+            )
+            baseline = _first_float(
+                temp,
+                ("baselineTemperatureCelsius", "baseline_temperature_celsius"),
+            )
+            relative_stddev = _first_float(
+                temp,
+                (
+                    "relativeNightlyStddev30dCelsius",
+                    "relative_nightly_stddev_30d_celsius",
+                ),
+            )
+            if nightly is not None or baseline is not None or relative_stddev is not None:
+                values["sleep_temperature"] = {
+                    "nightly_celsius": _round_optional(nightly, 2),
+                    "baseline_celsius": _round_optional(baseline, 2),
+                    "delta_celsius": _round_optional(nightly - baseline, 2)
+                    if nightly is not None and baseline is not None
+                    else None,
+                    "relative_nightly_stddev_30d_celsius": _round_optional(relative_stddev, 2),
+                }
         elif data_type == "daily-vo2-max":
-            values["vo2_max"] = _float(payload, ["dailyVo2Max", "millilitersPerMinuteKilogram"])
+            vo2_payload = payload.get("dailyVo2Max", {})
+            vo2 = _first_float(
+                vo2_payload,
+                ("vo2Max", "vo2_max", "millilitersPerMinuteKilogram"),
+            )
+            if vo2 is not None:
+                values["vo2_max"] = vo2
+                values["vo2_max_detail"] = {
+                    "vo2_max": _round_optional(vo2, 1),
+                    "estimated": vo2_payload.get("estimated"),
+                    "cardio_fitness_level": vo2_payload.get("cardioFitnessLevel")
+                    or vo2_payload.get("cardio_fitness_level"),
+                    "vo2_max_covariance": _round_optional(
+                        _first_float(vo2_payload, ("vo2MaxCovariance", "vo2_max_covariance")),
+                        2,
+                    ),
+                }
         elif data_type == "floors":
             values["floors"] = values.get("floors", 0) + _int(payload, ["floors", "countSum"])
         elif data_type == "activity-level":
@@ -3604,11 +4419,57 @@ def combine_daily_context(
     return combined
 
 
+def _context_from_summary(summary: dict[str, Any], freshness: dict[str, Any]) -> dict[str, Any]:
+    daily = summary.get("daily") or {}
+    latest_date = summary.get("latest_date")
+    if not daily or not latest_date:
+        return empty_data()
+
+    activity_date = _latest_day_with(daily, ("steps", "active_minutes", "heart", "distance_mm"))
+    activity_date = activity_date or latest_date
+    recovery_date = _latest_day_with(daily, RECOVERY_KEYS) or activity_date
+    activity_day = dict(daily.get(activity_date, {}))
+    recovery_day = daily.get(recovery_date, {})
+    today = combine_daily_context(activity_day, recovery_day, activity_date, recovery_date)
+    load_date, load_minutes = _latest_load(daily, activity_date)
+    today["latest_training_load"] = {
+        "date": load_date,
+        "active_zone_minutes": load_minutes,
+    }
+    readiness = readiness_from_day(today, daily)
+    return {
+        "status": "ok",
+        "latest_date": latest_date,
+        "activity_date": activity_date,
+        "recovery_date": recovery_date,
+        "readiness": readiness,
+        "today": today,
+        "evidence": readiness["evidence"],
+        "data_coverage": data_coverage(daily),
+        "data_freshness": freshness,
+    }
+
+
 def data_coverage(daily: dict[str, dict[str, Any]]) -> dict[str, Any]:
     return {
         "activity_days": sum(1 for values in daily.values() if any(key in values for key in ("steps", "active_minutes", "distance_mm"))),
         "sleep_days": sum(1 for values in daily.values() if "sleep" in values),
         "heart_days": sum(1 for values in daily.values() if any(key in values for key in ("heart", "resting_heart_rate", "hrv_ms"))),
+        "breathing_recovery_days": sum(
+            1
+            for values in daily.values()
+            if any(
+                key in values
+                for key in (
+                    "spo2_avg",
+                    "spo2_sample",
+                    "respiratory_rate",
+                    "respiratory_rate_sleep",
+                    "sleep_temperature",
+                )
+            )
+        ),
+        "capacity_days": sum(1 for values in daily.values() if "vo2_max" in values),
         "first_date": min(daily) if daily else None,
         "last_date": max(daily) if daily else None,
     }
@@ -3676,6 +4537,35 @@ def readiness_from_day(day: dict[str, Any], daily: dict[str, dict[str, Any]] | N
         else:
             score += 4
             evidence.append(f"Resting heart rate is {day['resting_heart_rate']} bpm.")
+    respiratory_rate = day.get("respiratory_rate")
+    if respiratory_rate is not None:
+        resp_baseline, resp_baseline_days = _baseline_summary(daily, "respiratory_rate", recovery_date)
+        if resp_baseline and resp_baseline_days >= 3:
+            resp_delta = respiratory_rate - resp_baseline
+            if resp_delta >= 2:
+                score -= 4
+                evidence.append(
+                    f"Respiratory rate is elevated: {respiratory_rate:.1f} vs {resp_baseline:.1f} breaths/min baseline."
+                )
+            else:
+                evidence.append(f"Respiratory rate is not elevated: {respiratory_rate:.1f} breaths/min.")
+        else:
+            evidence.append(f"Respiratory rate is {respiratory_rate:.1f} breaths/min; baseline is low confidence.")
+    spo2 = day.get("spo2_avg") or (day.get("spo2_sample") or {}).get("avg")
+    if spo2 is not None:
+        if spo2 < 94:
+            score -= 6
+            evidence.append(f"SpO2 is {spo2:.1f}%, so treat oxygen context as a training caution signal.")
+        else:
+            evidence.append(f"SpO2 is {spo2:.1f}%; useful context, not a standalone green light.")
+    sleep_temperature = day.get("sleep_temperature") or {}
+    temp_delta = sleep_temperature.get("delta_celsius")
+    if temp_delta is not None:
+        if abs(temp_delta) >= 0.6:
+            score -= 4
+            evidence.append(f"Sleep temperature is {temp_delta:+.2f} C versus baseline.")
+        else:
+            evidence.append(f"Sleep temperature is {temp_delta:+.2f} C versus baseline.")
     load_date, load_minutes = _latest_load(daily, activity_date)
     if load_minutes > 45:
         score -= 6
@@ -4249,6 +5139,40 @@ def _float(value: dict[str, Any], path: list[str]) -> float:
         return float(current)
     except (TypeError, ValueError):
         return 0.0
+
+
+def _first_float(value: dict[str, Any], keys: tuple[str, ...]) -> float | None:
+    for key in keys:
+        if key not in value or value.get(key) is None:
+            continue
+        try:
+            return float(value[key])
+        except (TypeError, ValueError):
+            continue
+    return None
+
+
+def _sleep_resp_stats(summary: dict[str, Any], camel_key: str) -> dict[str, Any]:
+    snake_key = _camel_to_snake(camel_key)
+    stats = summary.get(camel_key) or summary.get(snake_key) or {}
+    breaths = _first_float(stats, ("breathsPerMinute", "breaths_per_minute"))
+    if breaths is None:
+        return {}
+    return {
+        "breaths_per_minute": _round_optional(breaths, 1),
+        "standard_deviation": _round_optional(
+            _first_float(stats, ("standardDeviation", "standard_deviation")),
+            2,
+        ),
+        "signal_to_noise": _round_optional(
+            _first_float(stats, ("signalToNoise", "signal_to_noise")),
+            2,
+        ),
+    }
+
+
+def _camel_to_snake(value: str) -> str:
+    return re.sub(r"(?<!^)(?=[A-Z])", "_", value).lower()
 
 
 def _duration_minutes(value: str | None) -> float | None:

@@ -478,6 +478,11 @@ def test_eval_natural_prompt_mix_is_not_biased_to_off_day_language(tmp_path, mon
             {"daily_plan", "general_overview", "workout_decision"},
             {"get_health_overview", "recommend_workout_today"},
         ),
+        (
+            "Can I work out today if I feel normal?",
+            {"workout_decision", "recovery", "activity_load"},
+            {"recommend_workout_today"},
+        ),
     ]
 
     for question, expected_intents, expected_tools in scenarios:
@@ -491,6 +496,11 @@ def test_eval_natural_prompt_mix_is_not_biased_to_off_day_language(tmp_path, mon
         assert any("date/window" in item.lower() for item in clues["answer_rubric"])
         assert "i feel a little off" not in joined
         assert "feel cooked" not in joined
+
+    plain_workout = store.health_question_clues(user_id, "Can I work out today if I feel normal?", days=7)
+    plain_cues = {item["cue"] for item in plain_workout["decision_frame"]["user_context_cues"]}
+    assert "reserve_energy_or_future_event" not in plain_cues
+    assert "no_special_constraint_detected" in plain_cues
 
 
 def test_eval_question_clues_include_human_decision_frame_for_life_constraints(tmp_path, monkeypatch) -> None:
@@ -534,6 +544,7 @@ def test_eval_question_clues_include_human_decision_frame_for_life_constraints(t
     assert "load_stacking" in context_cues
     assert {"readiness", "sleep", "heart_recovery", "training_load", "personal_context"} <= role_signals
     assert any("rpe cap" in item.lower() for item in frame["output_contract"])
+    assert any("SpO2" in item and "VO2 max" in item for item in frame["output_contract"])
     assert any("azm =" in item.lower() for item in frame["plain_language_labels"])
     assert any("green readiness" in item.lower() or "green" in item.lower() for item in frame["do_not_do"])
     assert "i feel a little off" not in joined
