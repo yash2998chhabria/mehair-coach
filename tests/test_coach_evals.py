@@ -576,6 +576,11 @@ def test_eval_natural_prompt_mix_is_not_biased_to_off_day_language(tmp_path, mon
             {"recommend_workout_today"},
         ),
         (
+            "I feel normal but only have 20 minutes before work. What is useful without feeling drained?",
+            {"daily_plan", "general_overview", "workout_decision", "recovery", "activity_load"},
+            {"recommend_workout_today", "plan_workout_with_health_context"},
+        ),
+        (
             "My VO2 is trending up. Does that change today?",
             {"daily_plan", "general_overview", "workout_decision", "activity_load"},
             {"recommend_workout_today"},
@@ -610,6 +615,17 @@ def test_eval_natural_prompt_mix_is_not_biased_to_off_day_language(tmp_path, mon
     )
     assert "active_workout" not in casual_push["intent_hints"]
     assert casual_push["recommended_tool_sequence"][0] == "recommend_workout_today"
+
+    minimum_before_work = store.health_question_clues(
+        user_id,
+        "I feel normal but only have 20 minutes before work. What is useful without feeling drained?",
+        days=7,
+    )
+    assert minimum_before_work["primary_conversation_flows"][0]["flow"] == "daily_training_decision"
+    assert "workout_decision" in minimum_before_work["intent_hints"]
+    assert any(flow["flow"] == "specific_activity_plan" for flow in minimum_before_work["primary_conversation_flows"])
+    assert minimum_before_work["recommended_tool_sequence"][0] == "recommend_workout_today"
+    assert "plan_workout_with_health_context" in minimum_before_work["recommended_tool_sequence"]
 
     standalone_oxygen = store.health_question_clues(user_id, "Why was my SpO2 lower last night?", days=7)
     assert "breathing_recovery" in standalone_oxygen["intent_hints"]
@@ -758,6 +774,29 @@ def test_eval_natural_prompt_mix_is_not_biased_to_off_day_language(tmp_path, mon
         assert clues["primary_conversation_flows"][0]["flow"] == "weekly_training_planning"
         assert "get_activity_load" in clues["recommended_tool_sequence"]
         assert "recommend_workout_today" not in clues["recommended_tool_sequence"]
+
+    zone_history = store.health_question_clues(
+        user_id,
+        "What were my active zone minutes and heart-rate zones yesterday?",
+        days=7,
+    )
+    assert "heart" not in zone_history["intent_hints"]
+    assert "recovery" not in zone_history["intent_hints"]
+    assert "get_recovery_signal_comparison" not in zone_history["recommended_tool_sequence"]
+    zone_metric_ids = [item["id"] for item in zone_history["relevant_metrics"][:4]]
+    assert zone_metric_ids[0] == "active-zone-minutes"
+    assert "time-in-heart-rate-zone" in [item["id"] for item in zone_history["relevant_metrics"]]
+
+    no_workout_advice = store.health_question_clues(
+        user_id,
+        "Show me steps and distance so far today, no workout advice.",
+        days=7,
+    )
+    assert "workout_decision" not in no_workout_advice["intent_hints"]
+    assert "recovery" not in no_workout_advice["intent_hints"]
+    assert "recommend_workout_today" not in no_workout_advice["recommended_tool_sequence"]
+    assert "get_recovery_signal_comparison" not in no_workout_advice["recommended_tool_sequence"]
+    assert [item["id"] for item in no_workout_advice["relevant_metrics"][:2]] == ["steps", "distance"]
 
     oxygen_question = store.health_question_clues(
         user_id,

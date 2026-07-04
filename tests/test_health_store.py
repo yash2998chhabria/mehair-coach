@@ -599,6 +599,7 @@ def test_synthetic_records_calculate_context(tmp_path, monkeypatch) -> None:
     sleep = store.sleep_analysis(user_id)
     activity = store.activity_load(user_id)
     heart = store.heart_trends(user_id)
+    comparison = store.recovery_signal_comparison(user_id, days=7)
 
     assert sleep["latest"]["duration_hours"] == 8.0
     assert sleep["summary"]["average_asleep_hours"] == 8.0
@@ -615,6 +616,7 @@ def test_synthetic_records_calculate_context(tmp_path, monkeypatch) -> None:
     assert heart["coverage"]["days_with_heart_data"] == 1
     assert heart["data_freshness"]["latest_observed_date"] == "2026-07-03"
     assert heart["date_range"]["end"] == "2026-07-03"
+    assert comparison["headline"] == "Today's recovery snapshot looks usable, but baseline history is still limited."
 
     catalog = store.available_metrics(user_id)
     steps_metric = next(item for item in catalog["metrics"] if item["id"] == "steps")
@@ -1066,6 +1068,10 @@ def test_question_clues_choose_recovery_heart_and_load_metrics(tmp_path, monkeyp
 
     assert comparison["status"] == "ok"
     assert comparison["comparison_type"] == "sleep_heart_recovery"
+    assert comparison["headline"] == (
+        "Recovery looks limited today: short sleep is lining up with weaker heart signals."
+    )
+    assert "Latest recovery comparison" not in comparison["headline"]
     assert comparison["current_vs_baseline"]["hrv_percent_delta"] < -20
     assert comparison["current_vs_baseline"]["resting_heart_rate_delta"] >= 7
     assert comparison["current_vs_baseline"]["respiratory_rate_delta"] >= 2
@@ -1154,6 +1160,7 @@ def test_question_clues_choose_recovery_heart_and_load_metrics(tmp_path, monkeyp
         "recommended_tool_sequence"
     ].index("recommend_workout_today")
     assert any(item["purpose"] == "heart" for item in active_prompt["query_suggestions"])
+    assert active_prompt["relevant_metrics"][0]["id"] == "heart-rate"
     assert any("in-session" in item for item in active_prompt["answer_rubric"])
 
 

@@ -295,6 +295,18 @@ METRIC_COACHING_REASONS = {
 }
 
 INTENT_SPECIFIC_METRIC_RANKS = {
+    "active_workout": (
+        "heart-rate",
+        "time-in-heart-rate-zone",
+        "active-zone-minutes",
+        "exercise",
+        "daily-resting-heart-rate",
+        "daily-heart-rate-variability",
+        "sleep",
+        "daily-respiratory-rate",
+        "daily-oxygen-saturation",
+        "daily-sleep-temperature-derivations",
+    ),
     "breathing_recovery": (
         "daily-oxygen-saturation",
         "oxygen-saturation",
@@ -1937,8 +1949,14 @@ class HealthStore:
         safety_flags = _dedupe(_question_safety_flags(question_text, context) + illness_flags)
         catalog = self.available_metrics(user_id)
         catalog_by_id = {item["id"]: item for item in catalog.get("metrics", [])}
-        metric_ids = _metric_ids_for_intents(intents)
-        relevant_metrics = _relevant_metric_cards(metric_ids, catalog_by_id, intents)
+        explicit_metric_ids = _explicit_metric_ids_for_question(question_text)
+        metric_ids = _dedupe(explicit_metric_ids + _metric_ids_for_intents(intents))
+        relevant_metrics = _relevant_metric_cards(
+            metric_ids,
+            catalog_by_id,
+            intents,
+            explicit_metric_ids=explicit_metric_ids,
+        )
         clues, positives, watchouts, next_actions = _question_clue_takeaways(
             intents=intents,
             context=context,
@@ -3257,27 +3275,38 @@ def _recovery_comparison_headline(
     latest: dict[str, Any],
     current_vs_baseline: dict[str, Any],
 ) -> str:
-    parts = []
-    if latest.get("sleep_hours") is not None:
-        delta = current_vs_baseline.get("sleep_hours_delta")
-        parts.append(f"sleep {latest['sleep_hours']:.1f}h" + (f" ({delta:+.1f}h)" if delta is not None else ""))
-    if latest.get("hrv_ms") is not None:
-        pct = current_vs_baseline.get("hrv_percent_delta")
-        parts.append(f"HRV {latest['hrv_ms']:.1f} ms" + (f" ({pct:+.0f}%)" if pct is not None else ""))
-    if latest.get("resting_heart_rate") is not None:
-        delta = current_vs_baseline.get("resting_heart_rate_delta")
-        parts.append(
-            f"RHR {latest['resting_heart_rate']} bpm" + (f" ({delta:+.1f})" if delta is not None else "")
-        )
-    if latest.get("respiratory_rate") is not None:
-        delta = current_vs_baseline.get("respiratory_rate_delta")
-        parts.append(
-            f"resp {latest['respiratory_rate']:.1f}"
-            + (f" ({delta:+.1f})" if delta is not None else "")
-        )
-    if latest.get("spo2_avg") is not None:
-        parts.append(f"SpO2 {latest['spo2_avg']:.1f}%")
-    return "Latest recovery comparison: " + "; ".join(parts) + "."
+    sleep = latest.get("sleep_hours")
+    hrv_pct_delta = current_vs_baseline.get("hrv_percent_delta")
+    rhr_delta = current_vs_baseline.get("resting_heart_rate_delta")
+    resp_delta = current_vs_baseline.get("respiratory_rate_delta")
+    spo2 = latest.get("spo2_avg")
+    sleep_temp = latest.get("sleep_temperature") or {}
+    sleep_temp_delta = sleep_temp.get("delta_celsius")
+
+    sleep_short = sleep is not None and sleep < 6
+    sleep_supportive = sleep is not None and sleep >= 7
+    hrv_lagging = hrv_pct_delta is not None and hrv_pct_delta <= -10
+    hrv_supportive = hrv_pct_delta is not None and hrv_pct_delta >= -5
+    rhr_elevated = rhr_delta is not None and rhr_delta >= 4
+    rhr_normal = rhr_delta is not None and rhr_delta <= 2
+    breathing_caution = (resp_delta is not None and resp_delta >= 2) or (spo2 is not None and spo2 < 94)
+    temp_caution = sleep_temp_delta is not None and abs(sleep_temp_delta) >= 0.6
+
+    if sleep_short and (hrv_lagging or rhr_elevated):
+        return "Recovery looks limited today: short sleep is lining up with weaker heart signals."
+    if breathing_caution:
+        return "Recovery needs a caution check today: breathing or oxygen signals deserve context before hard training."
+    if temp_caution:
+        return "Recovery has a body-stress clue today: sleep temperature is farther from usual."
+    if sleep_supportive and hrv_lagging:
+        return "Sleep duration looks okay, but HRV is still lagging; keep intensity controlled until warm-up agrees."
+    if sleep_supportive and (hrv_supportive or rhr_normal):
+        return "Recovery looks supportive: sleep and heart signals are close to your usual."
+    if hrv_lagging or rhr_elevated:
+        return "Heart recovery looks constrained today; treat intensity as conditional."
+    if sleep_supportive and (latest.get("hrv_ms") is not None or latest.get("resting_heart_rate") is not None):
+        return "Today's recovery snapshot looks usable, but baseline history is still limited."
+    return "Recovery signals are available; use the detailed metrics below to decide how hard to train."
 
 
 def _question_intents(question: str) -> list[str]:
@@ -3298,6 +3327,9 @@ def _question_intents(question: str) -> list[str]:
                 "smarter",
                 "enough movement",
                 "minimum useful",
+                "what is useful",
+                "what's useful",
+                "whats useful",
                 "what is enough",
             ),
         )
@@ -3374,6 +3406,9 @@ def _question_intents(question: str) -> list[str]:
         "overdo it",
         "too drained",
         "feel drained",
+        "feeling drained",
+        "without feeling drained",
+        "not feeling drained",
         "leave energy",
         "preserve energy",
         "preserving energy",
@@ -3410,6 +3445,25 @@ def _question_intents(question: str) -> list[str]:
         "on track",
         "track for my",
         "track with my",
+    )
+    explicit_no_workout_advice = has(
+        "no workout advice",
+        "no training advice",
+        "without workout advice",
+        "without training advice",
+        "not looking for workout advice",
+        "not looking for training advice",
+    )
+    heart_zone_load_context = has(
+        "heart-rate zone",
+        "heart rate zone",
+        "heart-rate zones",
+        "heart rate zones",
+        "hr zone",
+        "hr zones",
+        "zone minutes",
+        "time in zone",
+        "time in zones",
     )
     activity_metric_context = has("step", "steps", "calorie", "calories", "zone", "active", "load", "distance", "walk")
     retrospective_data_context = activity_metric_context and (
@@ -3468,12 +3522,14 @@ def _question_intents(question: str) -> list[str]:
         "dinner later",
         "dinner tonight",
         "later today",
+        "before work",
         "tomorrow",
         "next session",
         "preserve",
         "preserving energy",
         "flat later",
         "wiped later",
+        "feeling drained",
         "keep my legs",
         "keeps my legs",
         "feel drained",
@@ -3540,7 +3596,7 @@ def _question_intents(question: str) -> list[str]:
         "only have",
         "short window",
     )
-    exercise_context = has(
+    exercise_context = (not explicit_no_workout_advice) and has(
         "workout",
         "work out",
         "working out",
@@ -3610,6 +3666,9 @@ def _question_intents(question: str) -> list[str]:
             "best use of it",
             "best use of my time",
             "best use of today",
+            "what is useful",
+            "what's useful",
+            "whats useful",
             "quick useful",
             "enough movement",
             "minimum useful",
@@ -3621,6 +3680,17 @@ def _question_intents(question: str) -> list[str]:
     if not asks_for_today_plan and has("minutes", "quick", "short on time", "only have"):
         asks_for_today_plan = has("today", "workout", "work out", "train", "training", "session", "exercise") or (
             fresh_card_request and time_budget_context
+        ) or (
+            time_budget_context
+            and has(
+                "what is useful",
+                "what's useful",
+                "whats useful",
+                "useful without",
+                "smallest useful",
+                "minimum useful",
+                "enough movement",
+            )
         )
     if asks_for_today_plan:
         intents.extend(
@@ -3707,7 +3777,11 @@ def _question_intents(question: str) -> list[str]:
         intents.extend(["recovery", "sleep", "heart", "activity_load", "subjective"])
     if has("sleep", "slept", "nap", "bed", "insomnia", "awake", "restless"):
         intents.extend(["sleep", "recovery", "heart"])
-    if has("heart", "hrv", "bpm", "pulse", "resting", "cardio"):
+    if heart_zone_load_context:
+        intents.append("activity_load")
+        if retrospective_data_context:
+            intents.append("activity_history")
+    if has("heart", "hrv", "bpm", "pulse", "resting", "cardio") and not heart_zone_load_context:
         intents.extend(["heart", "recovery", "activity_load"])
     if has("oxygen", "spo2", "sp02", "breathing", "breath", "respiratory", "temperature", "temp"):
         training_context = exercise_context or asks_for_today_plan or practical_decision_context or future_window_context or improvement_goal_context
@@ -3741,7 +3815,7 @@ def _question_intents(question: str) -> list[str]:
         intents.append("activity_load")
         if retrospective_data_context:
             intents.append("activity_history")
-        if not retrospective_data_context:
+        if not retrospective_data_context and not explicit_no_workout_advice:
             intents.append("workout_decision")
     if has("goal", "goals", "progress", "week", "weekly"):
         intents.extend(["goal", "activity_load"])
@@ -3758,6 +3832,62 @@ def _metric_ids_for_intents(intents: list[str]) -> list[str]:
     for intent in intents:
         metric_ids.extend(INTENT_METRICS.get(intent, []))
     return _dedupe(metric_ids)
+
+
+def _explicit_metric_ids_for_question(question: str) -> list[str]:
+    text = question.lower()
+
+    def has(*words: str) -> bool:
+        return any(word in text for word in words)
+
+    no_workout_advice = has(
+        "no workout advice",
+        "no training advice",
+        "without workout advice",
+        "without training advice",
+        "not looking for workout advice",
+        "not looking for training advice",
+    )
+    explicit: list[str] = []
+    if has("active zone", "active-zone", "azm"):
+        explicit.append("active-zone-minutes")
+    if has("heart-rate zone", "heart rate zone", "heart zones", "hr zone", "zone minutes"):
+        explicit.append("time-in-heart-rate-zone")
+        if has("calorie", "calories", "calorie burn"):
+            explicit.append("calories-in-heart-rate-zone")
+    if has("step", "steps"):
+        explicit.append("steps")
+    if has("distance", "miles", "mile", "kilometers", "kilometres", "km"):
+        explicit.append("distance")
+    if has("floor", "floors", "climb", "climbing", "stairs"):
+        explicit.append("floors")
+    if has("active minutes", "activity level", "sedentary"):
+        explicit.extend(["active-minutes", "activity-level", "sedentary-period"])
+    if not no_workout_advice and has("workout", "work out", "exercise", "run", "lift", "ride", "session"):
+        explicit.append("exercise")
+    if has("sleep", "slept", "restless", "awake", "bed"):
+        explicit.append("sleep")
+    if has("hrv", "heart rate variability"):
+        explicit.append("daily-heart-rate-variability")
+        if has("sample", "samples", "detail", "details", "raw"):
+            explicit.append("heart-rate-variability")
+    if has("resting heart", "resting hr", "rhr"):
+        explicit.append("daily-resting-heart-rate")
+    if has("heart rate", "heart-rate", "bpm", "pulse") or re.search(r"\bhr\b", text):
+        explicit.append("heart-rate")
+    if has("oxygen", "spo2", "sp02"):
+        explicit.append("daily-oxygen-saturation")
+        if has("sample", "samples", "detail", "details", "raw"):
+            explicit.append("oxygen-saturation")
+    if has("respiratory", "breathing", "breath"):
+        explicit.append("daily-respiratory-rate")
+        if has("summary", "summaries", "detail", "details", "raw"):
+            explicit.append("respiratory-rate-sleep-summary")
+    if has("temperature", "temp"):
+        explicit.append("daily-sleep-temperature-derivations")
+    if has("vo2", "cardio fitness", "aerobic capacity"):
+        explicit.append("daily-vo2-max")
+    return _dedupe(explicit)
 
 
 def metric_catalog_model_guidance(metrics: list[dict[str, Any]]) -> dict[str, Any]:
@@ -3830,12 +3960,16 @@ def _relevant_metric_cards(
     metric_ids: list[str],
     catalog_by_id: dict[str, dict[str, Any]],
     intents: list[str],
+    *,
+    explicit_metric_ids: list[str] | None = None,
 ) -> list[dict[str, Any]]:
     cards = []
+    explicit_metric_set = set(explicit_metric_ids or [])
     for priority, metric_id in enumerate(metric_ids):
         item = catalog_by_id.get(metric_id)
         if not item:
             continue
+        question_matched = metric_id in explicit_metric_set
         cards.append(
             {
                 "id": metric_id,
@@ -3847,9 +3981,27 @@ def _relevant_metric_cards(
                 "reason": _metric_reason(metric_id, intents, item),
                 "priority": priority,
                 "intent_rank": _intent_specific_metric_rank(metric_id, intents),
+                "question_matched": question_matched,
             }
         )
-    return sorted(cards, key=lambda item: (item["records"] == 0, item["intent_rank"], item["priority"]))
+    def sort_key(item: dict[str, Any]) -> tuple[int, int, int]:
+        if (
+            "active_workout" in intents
+            and item["id"] == "heart-rate"
+            and item["question_matched"]
+        ):
+            availability_group = 0
+        elif item["question_matched"] and item["records"] > 0:
+            availability_group = 1
+        elif item["question_matched"]:
+            availability_group = 2
+        elif item["records"] > 0:
+            availability_group = 3
+        else:
+            availability_group = 4
+        return availability_group, item["intent_rank"], item["priority"]
+
+    return sorted(cards, key=sort_key)
 
 
 def _intent_specific_metric_rank(metric_id: str, intents: list[str]) -> int:

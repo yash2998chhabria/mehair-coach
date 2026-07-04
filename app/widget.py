@@ -2443,7 +2443,7 @@ WIDGET_PREVIEW_STATES: dict[str, dict] = {
         "status": "ok",
         "clue_type": "health_question_clues",
         "question": "I feel cooked today. Which metrics matter?",
-        "headline": "Latest recovery comparison: sleep 5.1h (-2.2h); HRV 36.0 ms (-36%); RHR 67 bpm (+9.5).",
+        "headline": "Recovery looks limited today: short sleep is lining up with weaker heart signals.",
         "intent_hints": ["workout_decision", "recovery", "sleep", "heart", "activity_load"],
         "relevant_metrics": [
             {
@@ -2986,7 +2986,7 @@ WIDGET_PREVIEW_STATES: dict[str, dict] = {
     "recovery-comparison": {
         "status": "ok",
         "comparison_type": "sleep_heart_recovery",
-        "headline": "Latest recovery comparison: sleep 5.1h (-2.2h); HRV 36.0 ms (-36%); RHR 67 bpm (+9.5).",
+        "headline": "Recovery looks limited today: short sleep is lining up with weaker heart signals.",
         "date_range": {"start": "2026-06-30", "end": "2026-07-03"},
         "window_days": 7,
         "latest": {

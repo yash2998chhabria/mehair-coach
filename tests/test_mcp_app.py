@@ -430,7 +430,8 @@ async def test_widget_preview_route_renders_real_card_state() -> None:
     assert recovery_comparison.status_code == 200
     assert "Recovery Signals" in recovery_comparison.text
     assert "What This Means For Training" in recovery_comparison.text
-    assert "Latest recovery comparison" in recovery_comparison.text
+    assert "Recovery looks limited today" in recovery_comparison.text
+    assert "Latest recovery comparison" not in recovery_comparison.text
     assert "Metric label explanations" in recovery_comparison.text
     assert "HRV = recovery stress signal" in recovery_comparison.text
     assert "SpO2 = oxygen saturation" in recovery_comparison.text
