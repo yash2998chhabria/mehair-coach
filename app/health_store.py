@@ -6363,7 +6363,9 @@ def readiness_from_day(day: dict[str, Any], daily: dict[str, dict[str, Any]] | N
                 "from coaching/safety caps: a signal such as SpO2 can be a reason to cap intensity "
                 "without being the only cause of the readiness band. If activity_date and "
                 "recovery_date differ, call the score a partial same-day signal blended with the "
-                "latest completed recovery data."
+                "latest completed recovery data. Treat the readiness score as a composite summary; "
+                "for user-facing explanations, unpack the component contributions instead of listing "
+                "the score itself as a standalone reason."
             ),
         },
     }

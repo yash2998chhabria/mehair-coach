@@ -1653,6 +1653,9 @@ def test_workout_plan_separates_low_spo2_from_whole_readiness_score() -> None:
     assert any("SpO2 -6 safety cap" in item for item in attribution["cautions"])
     assert any("Data timing" in item for item in attribution["data_timing"])
     assert "small negative contribution" in attribution["model_guidance"]
+    assert "composite readiness score" in attribution["model_guidance"]
+    assert "component supports" in attribution["model_guidance"]
+    assert "readiness score itself as a separate reason" in plan["training_decision"]["model_guidance"]
     assert any("Readiness attribution" in item for item in plan["limiting_factors"])
     assert any("caution signals can cap intensity" in item for item in plan["limiting_factors"])
     assert plan["training_decision"]["readiness_attribution"]["cautions"] == attribution["cautions"]

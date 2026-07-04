@@ -50,7 +50,10 @@ SERVER_INSTRUCTIONS = (
     "and available_signal_snapshot as response contract fields: summarize the relevant parts, "
     "do not recite every field. Use readiness_attribution to explain which signals actually moved "
     "the readiness score versus which signals are safety caps or context; do not say SpO2, VO2, "
-    "or another secondary metric caused the whole call unless the attribution proves it. For vague, "
+    "or another secondary metric caused the whole call unless the attribution proves it. Treat the "
+    "readiness score as a summary, not an independent reason: do not list 'readiness 44/red' as a "
+    "standalone signal when the attribution can unpack the sleep, heart, oxygen, temperature, load, "
+    "or freshness components. For vague, "
     "novel, or all-data questions, use decision_frame.model_decision_policy or "
     "model_signal_context.decision_policy to select signals by safety, recovery, load, capacity, "
     "and user-context axes instead of relying on exact words in the prompt. Avoid leading "
@@ -3026,8 +3029,10 @@ def _training_decision_frame(
             "then use only the relevant reasons for/against to show how the data changed the "
             "recommendation. Use readiness_attribution to separate score math from safety caps, "
             "especially for SpO2, respiratory rate, sleep temperature, and VO2 max. Do not recite "
-            "fields the user does not need. Treat background_context as checked data that did not "
-            "materially change the call."
+            "fields the user does not need. Treat readiness_score/readiness_band as the composite "
+            "summary; when explaining why intensity was capped, unpack readiness_attribution instead "
+            "of listing the readiness score itself as a separate reason. Treat background_context as "
+            "checked data that did not materially change the call."
         ),
     }
 
@@ -3140,14 +3145,16 @@ def _readiness_attribution(readiness: dict[str, Any]) -> dict[str, Any]:
         "attribution_guardrail": (
             "Score math and coaching safety are related but not identical. SpO2, respiratory rate, "
             "sleep temperature, and VO2 max should be described as context or intensity caps unless "
-            "their contribution is clearly the dominant score mover."
+            "their contribution is clearly the dominant score mover. The readiness number is the "
+            "summary of these components; do not present the number itself as separate evidence."
         ),
         "model_guidance": (
             str(breakdown.get("model_guidance") or "").strip()
             + " Use this attribution before explaining why a workout is easy, moderate, or hard. "
             "Do not say a low SpO2 reading produced the whole readiness score when it is only a "
             "small negative contribution or a safety cap; say it is one caution signal and name the "
-            "supportive signals too."
+            "supportive signals too. Do not list the composite readiness score as its own reason; "
+            "translate it into the component supports, cautions, and data timing shown here."
         ).strip(),
     }
 

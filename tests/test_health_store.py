@@ -673,6 +673,8 @@ def test_synthetic_records_calculate_context(tmp_path, monkeypatch) -> None:
     readiness_breakdown = overview["readiness"]["score_breakdown"]
     assert readiness_breakdown["base"] == 50
     assert readiness_breakdown["score"] == overview["readiness"]["score"]
+    assert "composite summary" in readiness_breakdown["model_guidance"]
+    assert "component contributions" in readiness_breakdown["model_guidance"]
     contribution_ids = {item["signal"] for item in readiness_breakdown["contributions"]}
     assert {"sleep", "hrv", "resting_heart_rate", "spo2"} <= contribution_ids
     spo2_contribution = next(item for item in readiness_breakdown["contributions"] if item["signal"] == "spo2")
