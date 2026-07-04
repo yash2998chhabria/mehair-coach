@@ -1046,6 +1046,9 @@ def workout_plan_for_activity(
     limiting_factors = _normalized_readiness_evidence(context)
     steps_today = _safe_int(today.get("steps"))
     high_step_load = steps_today is not None and steps_today >= 15000
+    if localized_soreness_away_from_target and intensity == "moderate-to-hard":
+        intensity = "moderate"
+        rpe_cap = min(rpe_cap, 7)
     if soreness_rating and soreness_rating >= 7:
         intensity = "easy"
         rpe_cap = min(rpe_cap, 6)

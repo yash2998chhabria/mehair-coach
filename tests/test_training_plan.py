@@ -146,7 +146,7 @@ def test_upper_body_plan_with_sore_legs_stays_useful_and_leg_sparing() -> None:
         ]
     ).lower()
 
-    assert plan["recommended_intensity"] == "moderate-to-hard"
+    assert plan["recommended_intensity"] == "moderate"
     assert plan["rpe_cap"] == 7
     assert plan["data_used"]["localized_soreness_away_from_target"] is True
     assert plan["data_used"]["illness_flags"] == []
