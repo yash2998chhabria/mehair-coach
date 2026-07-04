@@ -566,6 +566,16 @@ def test_eval_natural_prompt_mix_is_not_biased_to_off_day_language(tmp_path, mon
             {"recommend_workout_today"},
         ),
         (
+            "I feel normal but I'm preserving energy for dinner tonight.",
+            {"daily_plan", "general_overview", "workout_decision", "recovery", "activity_load"},
+            {"recommend_workout_today"},
+        ),
+        (
+            "I feel normal but don't want to be flat later. What is the smallest useful move?",
+            {"daily_plan", "general_overview", "workout_decision", "recovery", "activity_load"},
+            {"recommend_workout_today"},
+        ),
+        (
             "My VO2 is trending up. Does that change today?",
             {"daily_plan", "general_overview", "workout_decision", "activity_load"},
             {"recommend_workout_today"},

@@ -1463,19 +1463,19 @@ def workout_recommendation(
         if label == "green":
             plan = (
                 "Do a controlled, useful session today. Your recovery signals support training, "
-                "but because you do not feel fully right, do enough to feel better, not something "
+                "but because you said you feel below normal, do enough to feel better, not something "
                 "you have to survive. Let the first 10-15 minutes decide whether to continue."
             )
         else:
             plan += (
-                " Since you do not feel fully right, do enough to feel better, not something you "
+                " Since you said you feel below normal, do enough to feel better, not something you "
                 "have to survive. Let the warm-up decide whether to continue."
             )
         if intensity == "moderate-to-hard":
             intensity = "moderate"
         rpe_cap = min(rpe_cap, 7)
         next_actions.append("Use the first 10-15 minutes as a pass/fail readiness screen before doing any hard work.")
-        avoid.append("Turning a not-100% day into a max-effort or high-volume session")
+        avoid.append("Turning a below-normal body-feel day into max-effort or high-volume work")
     if today.get("active_zone_minutes", 0) > 45:
         plan += " You already have a high zone-minute load today, so avoid stacking another hard effort."
         avoid.append("Another hard conditioning block today")
@@ -1925,7 +1925,7 @@ def workout_plan_for_activity(
     if subjective_limiter:
         focus.insert(0, "Make this a minimum useful session, not a proving-ground session.")
         session.insert(0, "Use the first 10-15 minutes as a pass/fail readiness screen before adding intensity.")
-        avoid.append("Chasing PRs, extra finishers, or high-volume work on a not-100% day")
+        avoid.append("Chasing PRs, extra finishers, or high-volume work when your body feels below normal")
     if stated_high_movement or high_step_load:
         focus.insert(0, "Account for today's walking or step volume as leg load before choosing the workout.")
         session.insert(0, "If legs feel heavy in the warm-up, bias toward upper-body, technique, mobility, or easy zone 2.")
@@ -2565,9 +2565,15 @@ def _coach_metric_glossary(labels: list[str] | tuple[str, ...] | None = None) ->
 SUBJECTIVE_LIMITER_PHRASES = (
     "feel off",
     "off today",
+    "below normal",
+    "not my best",
+    "not myself",
     "not fresh",
+    "not 100",
+    "less than 100",
     "run down",
     "rundown",
+    "under the weather",
     "under-recovered",
     "under recovered",
     "not recovered",
@@ -2577,7 +2583,6 @@ SUBJECTIVE_LIMITER_PHRASES = (
     "tired",
     "drained",
     "cooked",
-    "heavy",
     "heavy legs",
     "low energy",
     "sore",
@@ -2595,6 +2600,16 @@ def _evidence_item_has_subjective_limiter(item: str) -> bool:
         return False
     _, _, feeling = item.partition(":")
     return _subjective_limiter_from_text(feeling.strip())
+
+
+def _evidence_item_has_future_session_priority(item: str) -> bool:
+    if "preserve readiness for" in item or "wants to preserve readiness" in item:
+        return True
+    if "another sport" in item or "future session" in item:
+        return True
+    if any(term in item for term in ("tomorrow", "tonight", "game", "match", "race", "hike", "squash", "basketball")):
+        return any(term in item for term in ("preserve", "protect", "save", "fresh", "available", "priority"))
+    return False
 
 
 def _coach_data_story(readiness: dict[str, Any], evidence: list[str]) -> str:
@@ -2655,11 +2670,7 @@ def _coach_data_story(readiness: dict[str, Any], evidence: list[str]) -> str:
         )
     ]
     subjective_items = [item for item in evidence_items if _evidence_item_has_subjective_limiter(item)]
-    preserve_items = [
-        item
-        for item in evidence_items
-        if "preserve readiness" in item or "preserve" in item or "another sport" in item or "tomorrow" in item
-    ]
+    preserve_items = [item for item in evidence_items if _evidence_item_has_future_session_priority(item)]
 
     if safety_items:
         constraints.append("live symptoms override the workout plan")
@@ -2667,6 +2678,8 @@ def _coach_data_story(readiness: dict[str, Any], evidence: list[str]) -> str:
         constraints.append("symptoms override the wearable score")
     if any("stale" in item or "sync latest" in item for item in freshness_items):
         constraints.append("data needs a fresh sync before a hard call")
+    if preserve_items:
+        constraints.append("your next session is the priority")
 
     if any("short" in item or "below" in item for item in sleep_items):
         constraints.append("sleep is limiting recovery")
@@ -2732,8 +2745,6 @@ def _coach_data_story(readiness: dict[str, Any], evidence: list[str]) -> str:
         supports.append("your check-in supports training")
     if subjective_items:
         constraints.append("your current body feel caps the ceiling")
-    if preserve_items:
-        constraints.append("your next session is the priority")
 
     if constraints:
         return "The useful read: " + "; ".join(_dedupe(constraints)[:4]) + "."
@@ -3034,7 +3045,7 @@ def _today_workout_coach_response(
             short_answer = "Training is available today if the warm-up feels normal and your breathing, form, and pain stay calm."
 
     if subjective_limiter and not illness_flags and not positive_current_feeling:
-        short_answer += " Because you do not feel fully right, let the first 10-15 minutes decide whether to continue."
+        short_answer += " Because you said you feel below normal, let the first 10-15 minutes decide whether to continue."
     if time_limit_minutes is not None and time_limit_minutes <= 35 and not has_stale_data:
         short_answer += f" Since you have {time_limit_minutes} minutes, make the plan compact instead of adding extra volume."
     elif reserve_energy_obligation and time_limit_minutes is not None and not has_stale_data:
@@ -3513,7 +3524,7 @@ def _workout_plan_coach_response(
         short_answer = f"For {display_activity}, a normal session is reasonable if the warm-up feels good."
 
     if subjective_limiter and not illness_flags and not preserving_next_session and not positive_current_feeling:
-        short_answer += " This is a not-100% day, so treat the warm-up as the test."
+        short_answer += " Because you said you feel below normal, treat the warm-up as the test."
     elif subjective_limiter and preserving_next_session and not illness_flags:
         short_answer += f" If the warm-up feels bad, downshift immediately so {(future_session_label or 'the next session')} stays protected."
 
@@ -3628,7 +3639,9 @@ def _active_workout_coach_response(
         "what_to_do": _dedupe([headline, *immediate_actions, *modifications])[:5],
         "live_context": live_context,
         "why": _humanized_evidence(safety_flags or evidence)[:6],
-        "labels_explained": _coach_metric_glossary(_dedupe(live_labels)),
+        "labels_explained": _coach_metric_glossary(
+            _dedupe([*live_labels, *_metric_labels_from_evidence(evidence), *_metric_labels_from_evidence(safety_flags)])
+        ),
         "stop_if": safety_flags[:5] or [
             "Stop if symptoms are new, severe, or worsening.",
             "Stop if heart rate or breathing does not settle after 3-5 easy minutes.",
@@ -3844,7 +3857,7 @@ def _workout_evidence(
     if current_feeling:
         evidence.append(f"Current user-stated feeling: {current_feeling}.")
     if subjective_limiter:
-        evidence.append("User-stated they do not feel fully right, so subjective readiness caps the session.")
+        evidence.append("User-stated they feel below normal, so subjective readiness caps the session.")
     for flag in illness_flags:
         evidence.append(flag)
 
@@ -4247,7 +4260,23 @@ def _reserve_energy_obligation_from_text(text: str) -> bool:
         "need energy for",
         "save energy",
         "preserve energy",
+        "preserving energy",
         "leave energy",
+        "not be wiped",
+        "not feel wiped",
+        "do not want to be wiped",
+        "don't want to be wiped",
+        "dont want to be wiped",
+        "do not want to feel wiped",
+        "don't want to feel wiped",
+        "dont want to feel wiped",
+        "wiped later",
+        "not be flat",
+        "do not want to be flat",
+        "don't want to be flat",
+        "dont want to be flat",
+        "flat later",
+        "feel good later",
         "not be cooked",
         "not feel cooked",
     )

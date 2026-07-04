@@ -220,6 +220,9 @@ async def test_widget_resource_is_registered() -> None:
     assert "Preparing card" in html
     assert 'appInfo: { name: "mehair coach", version: "0.8.0" }' in html
     assert "mehair-coach-widget" not in html
+    assert "\x08" not in html
+    assert "text-transform: none" in html
+    assert "Fitbit pull timestamp unavailable; freshness says" in html
     assert 'renderEmpty("Preparing the health card from the latest tool result.", "waiting")' in html
     assert "window.openai?.toolOutput" in html
     assert "openai:set_globals" in html

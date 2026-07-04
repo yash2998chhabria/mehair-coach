@@ -134,7 +134,7 @@ TODAY_WIDGET_HTML = """
         font-size: 11px;
         font-weight: 820;
         letter-spacing: 0;
-        text-transform: uppercase;
+        text-transform: none;
       }
 
       h1 {
@@ -1483,9 +1483,12 @@ TODAY_WIDGET_HTML = """
         const level = normalizedFreshnessLevel(freshness);
         const pullAge = pullAgeText(freshness);
         const latestDay = explicitLatestDateFromPayload(source) || explicitLatestDateFromPayload(data);
-        const pull = pullAge
+        const hasPullTimestamp = Boolean(freshness?.last_sync);
+        const pull = pullAge && hasPullTimestamp
           ? `Latest Fitbit data pull was ${pullAge}`
-          : "Fitbit timing unavailable for this card";
+          : pullAge
+            ? `Fitbit pull timestamp unavailable; freshness says ${pullAge}`
+            : "Fitbit timing unavailable for this card";
         const latest = latestDay
           ? `using Fitbit data through ${latestDay}`
           : model.date
@@ -1735,10 +1738,10 @@ TODAY_WIDGET_HTML = """
         ].filter(Boolean).join(" ").toLowerCase();
         const labels = [];
         if (text.includes("readiness")) labels.push("Readiness");
-        if (/\brpe\b|perceived exertion/.test(text)) labels.push("RPE");
-        if (/\bhrv\b|heart-rate variability/.test(text)) labels.push("HRV");
-        if (/resting hr|\brhr\b|resting heart/.test(text)) labels.push("Resting HR");
-        if (/\bazm\b|active zone|zone-minute|zone minutes|training load|\bload\b/.test(text)) labels.push("AZM");
+        if (/\\brpe\\b|perceived exertion/.test(text)) labels.push("RPE");
+        if (/\\bhrv\\b|heart-rate variability/.test(text)) labels.push("HRV");
+        if (/resting hr|\\brhr\\b|resting heart/.test(text)) labels.push("Resting HR");
+        if (/\\bazm\\b|active zone|zone-minute|zone minutes|training load|\\bload\\b/.test(text)) labels.push("AZM");
         if (/spo2|oxygen saturation|oxygen/.test(text)) labels.push("SpO2");
         if (/respiratory rate|breaths per minute/.test(text)) labels.push("Respiratory rate");
         if (/vo2 max|cardio capacity/.test(text)) labels.push("VO2 max");

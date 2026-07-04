@@ -145,6 +145,60 @@ def test_short_between_meetings_plan_caps_intensity_without_hard_request() -> No
     assert "all-out workout" in joined_guidance
 
 
+def test_generic_preserve_energy_metric_text_does_not_invent_future_session() -> None:
+    context = {
+        "status": "ok",
+        "latest_date": "2026-07-04",
+        "activity_date": "2026-07-04",
+        "recovery_date": "2026-07-04",
+        "readiness": {
+            "score": 84,
+            "label": "green",
+            "recommendation": "A normal training day is reasonable if you feel good.",
+            "evidence": [
+                "Latest sleep is strong at 8.6h.",
+                "HRV is above recent baseline: 78 ms vs 62 ms.",
+                "Resting heart rate is steady: 58 bpm.",
+            ],
+        },
+        "today": {
+            "steps": 5300,
+            "active_minutes": 32,
+            "active_zone_minutes": 12,
+            "hrv_ms": 78.0,
+            "resting_heart_rate": 58,
+            "sleep": {"asleep_hours": 8.6, "sessions_count": 1},
+            "latest_training_load": {"date": "2026-07-04", "active_zone_minutes": 12},
+        },
+        "available_signal_snapshot": {
+            "status": "ok",
+            "signals": [
+                {
+                    "id": "active_zone_minutes",
+                    "label": "AZM",
+                    "display": "12 min today",
+                    "latest": 12,
+                    "latest_date": "2026-07-04",
+                    "category": "training_load",
+                    "coaching_use": "Use zone minutes as the hard-work load signal for whether to push or preserve energy.",
+                }
+            ],
+        },
+    }
+
+    plan = workout_plan_for_activity(
+        context=context,
+        planned_activity="quick strength circuit",
+        target_areas=[],
+        constraints="I feel normal and only have 20 minutes before work.",
+        duration_minutes=20,
+    )
+
+    assert plan["data_used"]["preserving_next_session"] is False
+    assert "next session is the priority" not in plan["coach_response"]["data_story"]
+    assert "your next session" not in plan["coach_response"]["data_story"]
+
+
 def test_short_session_keeps_high_intensity_when_user_explicitly_requests_it() -> None:
     context = {
         "status": "ok",
@@ -369,6 +423,7 @@ def test_specific_lift_plan_uses_stated_energy_pain_and_tomorrow_sport() -> None
     assert any("pain or tightness is 2/10" in item for item in plan["limiting_factors"])
     assert any("preserve readiness" in item for item in plan["limiting_factors"])
     assert plan["data_used"]["future_session_label"] == "tomorrow's squash session"
+    assert "your next session is the priority" in plan["coach_response"]["data_story"]
     assert any("tomorrow's squash session" in item for item in plan["session_guidance"])
     assert any("tomorrow's squash session" in item for item in plan["avoid"])
 
@@ -868,7 +923,7 @@ def test_active_workout_stops_for_dizziness_even_when_readiness_is_green() -> No
         },
         "available_signal_snapshot": {
             "status": "ok",
-            "available_signal_ids": ["heart_rate_samples", "heart_rate_zones", "spo2"],
+            "available_signal_ids": ["heart_rate_samples", "heart_rate_zones", "spo2", "respiratory_rate"],
             "signals": [
                 {
                     "id": "heart_rate_samples",
@@ -889,6 +944,13 @@ def test_active_workout_stops_for_dizziness_even_when_readiness_is_green() -> No
                     "label": "SpO2 / oxygen saturation",
                     "display": "96.5%",
                     "coaching_use": "Use low or unusual SpO2 with respiratory rate, resting HR, sleep, and symptoms to lower intensity or recommend caution.",
+                    "use_when": ["breathing"],
+                },
+                {
+                    "id": "respiratory_rate",
+                    "label": "Respiratory rate",
+                    "display": "16.4/min",
+                    "coaching_use": "Use elevated or unusual respiratory rate as a reason to cap intensity, especially with symptoms or low sleep.",
                     "use_when": ["breathing"],
                 },
             ],
@@ -921,6 +983,8 @@ def test_active_workout_stops_for_dizziness_even_when_readiness_is_green() -> No
         item["id"] == "heart_rate_samples"
         for item in guidance["model_signal_context"]["signal_groups"]["in_session_context"]
     )
+    labels = {item["label"] for item in guidance["coach_response"]["labels_explained"]}
+    assert {"HR", "RPE", "AZM", "SpO2", "Respiratory rate"} <= labels
 
 
 def test_active_workout_downshifts_for_high_effort_without_urgent_symptoms() -> None:
@@ -1504,7 +1568,8 @@ def test_generic_workout_payload_stays_human_readable_for_cached_cards() -> None
     assert plan["planned_activity"] == "Useful Controlled Workout"
     assert plan["planned_activity_raw"] == "general workout"
     assert "Useful Controlled Workout" in plan["summary"]
-    assert "not-100% day" in plan["coach_response"]["short_answer"]
+    assert "you said you feel below normal" in plan["coach_response"]["short_answer"]
+    assert "not-100" not in plan["coach_response"]["short_answer"]
     assert any(item["label"] == "HRV" for item in plan["coach_response"]["labels_explained"])
     assert any(item["label"] == "RPE" for item in plan["coach_response"]["labels_explained"])
     assert plan["coach_response"]["session_blueprint"]
@@ -1518,6 +1583,108 @@ def test_generic_workout_payload_stays_human_readable_for_cached_cards() -> None
         for item in plan["limiting_factors"]
     )
     assert not any("6 bpm vs 62 bpm" in item for item in plan["limiting_factors"])
+
+
+def test_below_normal_body_feel_caps_green_day_without_jargon() -> None:
+    context = {
+        "status": "ok",
+        "latest_date": "2026-07-03",
+        "activity_date": "2026-07-03",
+        "recovery_date": "2026-07-03",
+        "readiness": {
+            "score": 84,
+            "label": "green",
+            "recommendation": "A normal training day is reasonable if you feel good.",
+            "evidence": [
+                "Latest sleep is strong at 9.4h.",
+                "HRV is above recent baseline: 92.1 ms vs 31.3 ms.",
+                "Resting heart rate is steady: 60 bpm.",
+            ],
+        },
+        "today": {
+            "steps": 7200,
+            "active_minutes": 44,
+            "active_zone_minutes": 18,
+            "hrv_ms": 92.1,
+            "resting_heart_rate": 60,
+            "sleep": {"asleep_hours": 9.4, "sessions_count": 1},
+            "latest_training_load": {"date": "2026-07-02", "active_zone_minutes": 9},
+        },
+    }
+
+    plan = workout_plan_for_activity(
+        context=context,
+        planned_activity="useful controlled workout",
+        target_areas=[],
+        constraints="I feel a little below normal but still want to work out today.",
+        duration_minutes=35,
+    )
+
+    joined = " ".join(
+        [
+            plan["coach_response"]["short_answer"],
+            plan["coach_response"]["data_story"],
+            *plan["focus"],
+            *plan["session_guidance"],
+            *plan["avoid"],
+        ]
+    ).lower()
+
+    assert plan["data_used"]["subjective_limiter"] is True
+    assert plan["recommended_intensity"] == "moderate"
+    assert "you said you feel below normal" in joined
+    assert "not-100" not in joined
+    assert "do not feel fully right" not in joined
+
+
+def test_lift_heavy_request_is_not_misread_as_heavy_body_feel() -> None:
+    context = {
+        "status": "ok",
+        "latest_date": "2026-07-03",
+        "activity_date": "2026-07-03",
+        "recovery_date": "2026-07-03",
+        "readiness": {
+            "score": 42,
+            "label": "red",
+            "recommendation": "Prioritize recovery, mobility, walking, and sleep.",
+            "evidence": [
+                "Latest sleep is short at 5.7h.",
+                "HRV is below recent baseline: 38 ms vs 62 ms.",
+                "Resting heart rate is elevated: 66 bpm.",
+                "Recent training load is high: 58 zone minutes yesterday.",
+            ],
+        },
+        "today": {
+            "steps": 7200,
+            "active_minutes": 44,
+            "active_zone_minutes": 18,
+            "hrv_ms": 38,
+            "resting_heart_rate": 66,
+            "sleep": {"asleep_hours": 5.7, "sessions_count": 1},
+            "latest_training_load": {"date": "2026-07-02", "active_zone_minutes": 58},
+        },
+    }
+
+    plan = workout_plan_for_activity(
+        context=context,
+        planned_activity="heavy lift",
+        target_areas=[],
+        constraints="I wanted to lift heavy today. What should I do instead?",
+        duration_minutes=50,
+    )
+
+    joined = " ".join(
+        [
+            plan["coach_response"]["short_answer"],
+            plan["coach_response"]["data_story"],
+            *plan["limiting_factors"],
+        ]
+    ).lower()
+
+    assert plan["data_used"]["subjective_limiter"] is False
+    assert "you said you feel below normal" not in joined
+    assert "current body feel caps" not in joined
+    assert "hrv is lower than usual" in joined
 
 
 def test_generic_workout_before_class_renders_as_minimum_useful_movement() -> None:
@@ -2149,6 +2316,47 @@ def test_today_recommendation_before_class_uses_minimum_effective_dose() -> None
     assert "lower-body work" not in joined
     assert any("next obligation" in item for item in recommendation["avoid"])
     assert not any("moderate-to-hard" in item.lower() for item in coach["what_to_do"])
+
+
+def test_today_recommendation_reserves_energy_for_dinner_flat_later_language() -> None:
+    context = {
+        "status": "ok",
+        "latest_date": "2026-07-03",
+        "activity_date": "2026-07-03",
+        "recovery_date": "2026-07-03",
+        "readiness": {
+            "score": 86,
+            "label": "green",
+            "recommendation": "A normal training day is reasonable if you feel good.",
+            "evidence": [
+                "Latest sleep is strong at 8.1h.",
+                "HRV is above recent baseline.",
+                "Resting heart rate is steady.",
+            ],
+        },
+        "today": {
+            "steps": 5200,
+            "active_minutes": 32,
+            "active_zone_minutes": 12,
+            "hrv_ms": 62.0,
+            "resting_heart_rate": 56,
+            "sleep": {"asleep_hours": 8.1, "sessions_count": 1},
+            "latest_training_load": {"date": "2026-07-03", "active_zone_minutes": 12},
+        },
+    }
+
+    recommendation = workout_recommendation(
+        context=context,
+        current_feeling="I feel normal but I'm preserving energy for dinner tonight and don't want to be flat later.",
+    )
+    coach = recommendation["coach_response"]
+    joined = " ".join([coach["short_answer"], *coach["session_blueprint"], *coach["what_to_do"]]).lower()
+
+    assert recommendation["data_used"]["reserve_energy_obligation"] is True
+    assert recommendation["rpe_cap"] <= 6
+    assert "smallest useful dose" in joined
+    assert "leave energy for what comes next" in joined
+    assert any("next obligation" in item for item in recommendation["avoid"])
 
 
 def test_today_recommendation_downshifts_stale_green_data_before_hard_work() -> None:
