@@ -1906,8 +1906,10 @@ def _workout_plan_coach_response(
     else:
         short_answer = f"For {display_activity}, a normal session is reasonable if the warm-up feels good."
 
-    if subjective_limiter and not illness_flags:
+    if subjective_limiter and not illness_flags and not preserving_next_session:
         short_answer += " This is a not-100% day, so treat the warm-up as the test."
+    elif subjective_limiter and preserving_next_session and not illness_flags:
+        short_answer += " If the warm-up feels bad, downshift immediately so tomorrow stays protected."
 
     what_to_do = [
         summary,

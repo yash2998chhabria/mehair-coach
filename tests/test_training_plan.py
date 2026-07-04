@@ -261,6 +261,62 @@ def test_planned_run_with_tomorrow_sport_does_not_match_row_inside_tomorrow() ->
     assert any("keep effort" in item.lower() for item in plan["coach_response"]["session_blueprint"])
 
 
+def test_preserving_tomorrow_does_not_imply_user_feels_off() -> None:
+    context = {
+        "status": "ok",
+        "latest_date": "2026-07-03",
+        "activity_date": "2026-07-03",
+        "recovery_date": "2026-07-03",
+        "readiness": {
+            "score": 84,
+            "label": "green",
+            "recommendation": "A normal training day is reasonable if you feel good.",
+            "evidence": [
+                "Latest sleep is strong at 9.4h.",
+                "HRV is above recent baseline: 92.1 ms vs 31.3 ms.",
+                "Resting heart rate is steady: 60 bpm.",
+            ],
+        },
+        "today": {
+            "steps": 6400,
+            "active_minutes": 42,
+            "active_zone_minutes": 10,
+            "hrv_ms": 92.1,
+            "resting_heart_rate": 60,
+            "sleep": {"asleep_hours": 9.4, "sessions_count": 1},
+            "latest_training_load": {"date": "2026-07-03", "active_zone_minutes": 10},
+        },
+    }
+
+    plan = workout_plan_for_activity(
+        context=context,
+        planned_activity="leg day strength session",
+        target_areas=["legs"],
+        constraints=(
+            "thinking about doing legs today. What should I do so I don't cook myself for tomorrow? "
+            "Important: I have pickup basketball tomorrow."
+        ),
+        duration_minutes=35,
+    )
+
+    coach = plan["coach_response"]
+    joined = " ".join(
+        [
+            coach["short_answer"],
+            coach["data_story"],
+            *coach["what_to_do"],
+            *coach["session_blueprint"],
+        ]
+    ).lower()
+
+    assert plan["data_used"]["preserving_next_session"] is True
+    assert plan["rpe_cap"] <= 6
+    assert "tomorrow still stays available" in coach["short_answer"]
+    assert "not-100" not in joined
+    assert "feel off" not in joined
+    assert "do not feel fully right" not in joined
+
+
 def test_active_workout_stops_for_dizziness_even_when_readiness_is_green() -> None:
     context = {
         "status": "ok",
