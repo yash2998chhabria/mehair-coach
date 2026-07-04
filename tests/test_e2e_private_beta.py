@@ -1175,6 +1175,67 @@ async def test_partial_sync_preserves_records_and_reports_metric_diagnostics(tmp
 
 
 @pytest.mark.asyncio
+async def test_sync_workout_card_uses_existing_records_while_sync_is_running(tmp_path) -> None:
+    bundle = make_bundle(tmp_path)
+    bundle.health_store.google = FakeGoogleHealth()
+    user_id = bundle.auth_service._create_user_from_google(
+        {
+            "access_token": "fake-google-access",
+            "refresh_token": "fake-google-refresh",
+            "expires_in": 3600,
+            "scope": " ".join(bundle.settings.google_scopes),
+        },
+        {"email": "tester@example.com", "sub": "google-subject"},
+    )
+    initial_sync = await bundle.health_store.sync_latest(user_id, force=True, include_context=False)
+    assert initial_sync["status"] == "ok"
+
+    bundle.health_store._start_sync(user_id, iso_now())
+    client_id = "active-sync-card-client"
+    with bundle.db.connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO oauth_clients (client_id, client_secret, metadata_json, created_at)
+            VALUES (?, NULL, ?, ?)
+            """,
+            (client_id, json.dumps({"token_endpoint_auth_method": "none"}), datetime.now(UTC).isoformat()),
+        )
+    access_token = json.loads(bundle.auth_service._issue_app_tokens(user_id, client_id, ["health.read"]).body)[
+        "access_token"
+    ]
+    transport = httpx.ASGITransport(app=bundle.app)
+
+    async with bundle.app.router.lifespan_context(bundle.app):
+        async with httpx.AsyncClient(transport=transport, base_url="http://localhost:8787") as client:
+            card = tool_content(
+                await mcp_request(
+                    client,
+                    access_token,
+                    "tools/call",
+                    {
+                        "name": "sync_and_get_workout_card",
+                        "arguments": {
+                            "current_feeling": "I feel normal but only have 20 minutes before work and do not want to feel drained.",
+                            "duration_minutes": 20,
+                        },
+                    },
+                    501,
+                )
+            )
+
+    assert card["status"] == "ok"
+    assert card["sync_card_contract"]["role"] == "final_workout_card_after_sync"
+    assert card["sync_card_contract"]["sync_status"] == "active_sync_fallback"
+    assert "newest records already stored" in card["sync_card_contract"]["freshness_note"]
+    assert card["fresh_sync"]["sync_in_progress"] is True
+    assert card["fresh_sync"]["skip_reason"] == "active_sync_in_progress"
+    assert card["coach_response"]["short_answer"]
+    assert "your next obligation caps the dose" in card["coach_response"]["data_story"]
+    assert "your next session is the priority" not in card["coach_response"]["data_story"]
+    assert "overview_type" not in card
+
+
+@pytest.mark.asyncio
 async def test_sync_failure_is_reported_without_fabricated_context(tmp_path) -> None:
     bundle = make_bundle(tmp_path)
     bundle.health_store.google = FailingGoogleHealth()

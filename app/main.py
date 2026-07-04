@@ -573,11 +573,20 @@ def create_server(settings_override: Settings | None = None) -> ServerBundle:
             return setup_required()
 
         sync = await health_store.sync_latest(user_id, force=force, include_context=False)
-        if sync.get("status") != "ok":
+        active_sync_fallback = sync.get("status") == "sync_in_progress"
+        if sync.get("status") != "ok" and not active_sync_fallback:
             return sync
 
         context = health_store.health_overview(user_id, 14)
         if context.get("status") != "ok":
+            if active_sync_fallback:
+                return {
+                    **sync,
+                    "message": (
+                        "Google Health sync is already running and no stored health records are available "
+                        "yet; retry shortly after the first sync finishes."
+                    ),
+                }
             return context
 
         sync_context = _fresh_sync_payload(sync, context)
@@ -618,7 +627,13 @@ def create_server(settings_override: Settings | None = None) -> ServerBundle:
         card["sync_card_contract"] = {
             "role": "final_workout_card_after_sync",
             "visible_card_type": card_type,
-            "sync_status": "partial" if sync_context.get("partial_sync") else "full",
+            "sync_status": (
+                "active_sync_fallback"
+                if sync_context.get("sync_in_progress")
+                else "partial"
+                if sync_context.get("partial_sync")
+                else "full"
+            ),
             "visible_card_policy": (
                 "This is the final workout-card result for the combined sync+training prompt. "
                 "Do not replace it with a broad health overview card for the same user request."
@@ -631,6 +646,11 @@ def create_server(settings_override: Settings | None = None) -> ServerBundle:
                 "sync freshness/full-or-partial note",
             ],
         }
+        if sync_context.get("sync_in_progress"):
+            card["sync_card_contract"]["freshness_note"] = (
+                "A Google Health sync is still running, so this card uses the newest records already stored. "
+                "Refresh again shortly if the user needs the just-finished cloud pull."
+            )
         return card
 
     @mcp.tool(
@@ -1203,6 +1223,7 @@ def _fresh_sync_payload(sync: dict[str, Any], context: dict[str, Any]) -> dict[s
     return {
         "status": sync.get("status"),
         "message": sync.get("message"),
+        "sync_in_progress": sync.get("sync_in_progress", False),
         "sync_skipped": sync.get("sync_skipped", False),
         "skip_reason": sync.get("skip_reason"),
         "records_upserted": sync.get("records_upserted"),
@@ -2607,9 +2628,23 @@ def _evidence_item_has_future_session_priority(item: str) -> bool:
         return True
     if "another sport" in item or "future session" in item:
         return True
-    if any(term in item for term in ("tomorrow", "tonight", "game", "match", "race", "hike", "squash", "basketball")):
-        return any(term in item for term in ("preserve", "protect", "save", "fresh", "available", "priority"))
+    has_future_event = re.search(
+        r"\b(?:tomorrow|tonight|game|match|race|hike|squash|basketball|soccer|tennis|pickleball)\b",
+        item,
+    )
+    has_preserve_cue = re.search(r"\b(?:preserve|protect|save|fresh|available|priority)\b", item)
+    if has_future_event and has_preserve_cue:
+        return True
     return False
+
+
+def _evidence_item_has_reserve_obligation(item: str) -> bool:
+    if ("near-term" in item and "obligation" in item) or "next obligation" in item:
+        return True
+    if not item.startswith("current user-stated feeling"):
+        return False
+    _, _, feeling = item.partition(":")
+    return _reserve_energy_obligation_from_text(feeling.strip())
 
 
 def _coach_data_story(readiness: dict[str, Any], evidence: list[str]) -> str:
@@ -2671,6 +2706,7 @@ def _coach_data_story(readiness: dict[str, Any], evidence: list[str]) -> str:
     ]
     subjective_items = [item for item in evidence_items if _evidence_item_has_subjective_limiter(item)]
     preserve_items = [item for item in evidence_items if _evidence_item_has_future_session_priority(item)]
+    reserve_obligation_items = [item for item in evidence_items if _evidence_item_has_reserve_obligation(item)]
 
     if safety_items:
         constraints.append("live symptoms override the workout plan")
@@ -2680,6 +2716,8 @@ def _coach_data_story(readiness: dict[str, Any], evidence: list[str]) -> str:
         constraints.append("data needs a fresh sync before a hard call")
     if preserve_items:
         constraints.append("your next session is the priority")
+    elif reserve_obligation_items:
+        constraints.append("your next obligation caps the dose")
 
     if any("short" in item or "below" in item for item in sleep_items):
         constraints.append("sleep is limiting recovery")
@@ -4227,6 +4265,7 @@ def _reserve_energy_obligation_from_text(text: str) -> bool:
         "meeting",
         "call",
         "appointment",
+        "work",
         "work shift",
         "shift",
         "office",
@@ -4250,6 +4289,7 @@ def _reserve_energy_obligation_from_text(text: str) -> bool:
 
     direct_preserve = (
         "do not want to be drained",
+        "do not want to feel drained",
         "don't want to be drained",
         "dont want to be drained",
         "don't want to feel drained",

@@ -2356,6 +2356,8 @@ def test_today_recommendation_reserves_energy_for_dinner_flat_later_language() -
     assert recommendation["rpe_cap"] <= 6
     assert "smallest useful dose" in joined
     assert "leave energy for what comes next" in joined
+    assert "your next obligation caps the dose" in coach["data_story"]
+    assert "your next session is the priority" not in coach["data_story"]
     assert any("next obligation" in item for item in recommendation["avoid"])
 
 
