@@ -1256,6 +1256,7 @@ TODAY_WIDGET_HTML = """
         const label = readiness.label || data.data_used?.readiness_label || "pending";
         const dataUsed = data.data_used || {};
         const freshness = data.data_freshness || {};
+        const signalSnapshot = data.available_signal_snapshot || {};
         const score = finiteNumber(readiness.score ?? dataUsed.readiness_score, 0);
         const band = readinessBand(score, label);
         const coach = data.coach_response || {};
@@ -1286,6 +1287,7 @@ TODAY_WIDGET_HTML = """
             ["Resting HR", dataUsed.resting_heart_rate ? `${dataUsed.resting_heart_rate} bpm` : null],
             ["Latest load", dataUsed.latest_training_load?.active_zone_minutes != null ? `${dataUsed.latest_training_load.active_zone_minutes} AZM` : null, dataUsed.latest_training_load?.date || "", "AZM = Fitbit hard-work minutes."],
           ],
+          signalStrip: prioritySignalStrip(signalSnapshot.signals || []),
           evidenceTitle: "What This Means",
           evidence: [coach.data_story, ...(coach.why || data.limiting_factors || data.why || [])].filter(Boolean).slice(0, 5),
           secondaryTitle: substitutions.length ? "Substitutions" : "Avoid",
@@ -1303,6 +1305,7 @@ TODAY_WIDGET_HTML = """
         const readinessScore = finiteNumber(readiness.score ?? dataUsed.readiness_score, 0);
         const readinessLabel = readiness.label || dataUsed.readiness_label;
         const readinessBandLabel = readinessBand(readinessScore, readinessLabel);
+        const signalSnapshot = data.available_signal_snapshot || {};
         return {
           accent: safety.length ? "#a94f43" : readinessAccent(readinessBandLabel),
           stateLabel: readinessBandLabel,
@@ -1332,6 +1335,7 @@ TODAY_WIDGET_HTML = """
             ["Readiness", readinessScore ? `${readinessScore}/100` : readinessLabel || null, readinessBandText(readinessScore, readinessLabel)],
             ["Latest load", dataUsed.latest_training_load?.active_zone_minutes != null ? `${dataUsed.latest_training_load.active_zone_minutes} AZM` : null, azmMeaning(dataUsed.latest_training_load?.active_zone_minutes), "AZM = Fitbit hard-work minutes from elevated heart-rate zones."],
           ],
+          signalStrip: prioritySignalStrip(signalSnapshot.signals || []),
           evidenceTitle: safety.length ? "Safety Flags" : "Evidence",
           evidence: [coach.data_story, ...evidence].filter(Boolean),
           secondaryTitle: safety.length || coach.next_check ? "Next Check" : "Modify / Avoid",
@@ -2750,6 +2754,32 @@ WIDGET_PREVIEW_STATES: dict[str, dict] = {
             ],
             "avoid": ["Heavy deadlifts", "Heavy bent-over rows", "Aggressive bench arch if low back feels sensitive"],
         },
+        "available_signal_snapshot": {
+            "status": "ok",
+            "signals": [
+                {
+                    "id": "spo2",
+                    "label": "SpO2 / oxygen saturation",
+                    "display": "98.6%",
+                    "latest_date": "2026-07-03",
+                    "coaching_use": "Use low or unusual SpO2 with respiratory rate, resting HR, sleep, and symptoms to lower intensity or recommend caution.",
+                },
+                {
+                    "id": "respiratory_rate",
+                    "label": "Respiratory rate",
+                    "display": "18.6 breaths/min",
+                    "latest_date": "2026-07-03",
+                    "coaching_use": "Use elevated or unusual respiratory rate as a reason to cap intensity, especially with symptoms or low sleep.",
+                },
+                {
+                    "id": "heart_rate_zones",
+                    "label": "Heart-rate zones",
+                    "display": "63 AZM",
+                    "latest_date": "2026-07-02",
+                    "coaching_use": "Use zone minutes as the hard-work load signal for whether to push or preserve energy.",
+                },
+            ],
+        },
         "data_freshness": {
             "freshness_level": "fresh",
             "freshness_label": "fresh <15 min",
@@ -2824,6 +2854,25 @@ WIDGET_PREVIEW_STATES: dict[str, dict] = {
                 "Stop if symptoms are new, severe, or worsening.",
                 "Stop if heart rate or breathing does not settle after 3-5 easy minutes.",
                 "Stop if pain rises above 3/10 or changes your form.",
+            ],
+        },
+        "available_signal_snapshot": {
+            "status": "ok",
+            "signals": [
+                {
+                    "id": "spo2",
+                    "label": "SpO2 / oxygen saturation",
+                    "display": "97.8%",
+                    "latest_date": "2026-07-03",
+                    "coaching_use": "Background breathing/oxygen context; not live workout telemetry.",
+                },
+                {
+                    "id": "respiratory_rate",
+                    "label": "Respiratory rate",
+                    "display": "18.1 breaths/min",
+                    "latest_date": "2026-07-03",
+                    "coaching_use": "Background breathing stress context from synced sleep data.",
+                },
             ],
         },
         "data_freshness": {

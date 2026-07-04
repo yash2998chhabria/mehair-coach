@@ -1504,13 +1504,17 @@ class HealthStore:
         _summary: dict[str, Any] | None = None,
         _context: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        records = _records if _records is not None else self.records_for_user(user_id)
+        if _records is None and _summary is None and _context is None:
+            records, summary, context = self._records_summary_context(user_id)
+        else:
+            records = _records if _records is not None else self.records_for_user(user_id)
+            summary = _summary if _summary is not None else summarize_records(records)
+            context = _context if _context is not None else _context_from_summary(summary, self.freshness(user_id))
+
         if not records:
             return empty_data()
 
         safe_days = max(1, min(int(days or 14), 30))
-        summary = _summary if _summary is not None else summarize_records(records)
-        context = _context if _context is not None else _context_from_summary(summary, self.freshness(user_id))
         if context.get("status") != "ok":
             return context
 

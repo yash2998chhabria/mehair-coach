@@ -453,6 +453,13 @@ async def test_widget_preview_route_renders_real_card_state() -> None:
     assert "Bent-over row -> chest-supported row." in workout_plan.text
     assert "sleep_asleep_hours" in workout_plan.text
     assert "31.3" in workout_plan.text
+    assert "signal-strip" in workout_plan.text
+    assert "SpO2 / oxygen saturation" in workout_plan.text
+    assert "Respiratory rate" in workout_plan.text
+    assert "Heart-rate zones" in workout_plan.text
+    assert "Use zone minutes as the hard-work load signal" in workout_plan.text
+    assert "signal-strip" in active_workout.text
+    assert "Background breathing/oxygen context" in active_workout.text
     assert "Latest energy check-in is 3/10." in today_workout.text
 
 
