@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 
 
-WIDGET_URI = "ui://mehair/today-v19.html"
+WIDGET_URI = "ui://mehair/today-v20.html"
 LEGACY_WIDGET_URIS = (
     "ui://mehair/today-v1.html",
     "ui://mehair/today-v2.html",
@@ -23,6 +23,7 @@ LEGACY_WIDGET_URIS = (
     "ui://mehair/today-v16.html",
     "ui://mehair/today-v17.html",
     "ui://mehair/today-v18.html",
+    "ui://mehair/today-v19.html",
 )
 WIDGET_RESOURCE_URIS = (WIDGET_URI, *LEGACY_WIDGET_URIS)
 WIDGET_MIME_TYPE = "text/html;profile=mcp-app"
@@ -658,7 +659,7 @@ TODAY_WIDGET_HTML = """
       async function initialize() {
         try {
           await rpcRequest("ui/initialize", {
-            appInfo: { name: "mehair-coach-widget", version: "0.7.0" },
+            appInfo: { name: "mehair-coach-widget", version: "0.7.1" },
             appCapabilities: {},
             protocolVersion: "2026-01-26",
           });
@@ -1439,9 +1440,21 @@ TODAY_WIDGET_HTML = """
       function activeWorkoutFocusTitle(data, coach, safety) {
         const decision = String(data.decision || "").toLowerCase();
         const hasActions = (coach.what_to_do || data.immediate_actions || []).filter(Boolean).length > 0;
+        const actionText = [
+          decision,
+          data.headline || "",
+          coach.short_answer || "",
+          ...(coach.what_to_do || []),
+          ...(data.immediate_actions || []),
+        ].join(" ").toLowerCase();
         if (safety.length || decision.includes("stop")) return "Stop Hard Work Now";
-        if (decision.includes("downshift") || decision.includes("modify")) return "Adjust This Block";
-        if (decision.includes("continue")) return "Hold This Effort";
+        if (decision.includes("downshift") || /\\b(back off|ease up|reduce|cut|lower)\\b/.test(actionText)) return "Back Off Now";
+        if (decision.includes("modify") || /\\b(adjust|modify|substitute|change the movement)\\b/.test(actionText)) return "Adjust This Block";
+        if (
+          decision.includes("continue") ||
+          decision.includes("controlled") ||
+          /\\b(hold steady|hold this effort|same pace|stay at or below|keep the exact same|do not surge)\\b/.test(actionText)
+        ) return "Hold This Effort";
         return hasActions ? "Next Action" : "Coach Take";
       }
 
@@ -2405,6 +2418,75 @@ WIDGET_PREVIEW_STATES: dict[str, dict] = {
                 "Stop if pain rises above 3/10 or changes your form.",
             ],
         },
+        "safety_note": "This is in-session fitness guidance, not medical diagnosis or emergency care.",
+    },
+    "active-workout-hold": {
+        "status": "ok",
+        "guidance_type": "active_workout_guidance",
+        "planned_activity": "Run",
+        "decision": "continue_controlled",
+        "headline": "Hold steady until 27-32 minutes elapsed; do not make the workout harder yet.",
+        "immediate_actions": [
+            "Stay at or below RPE 7/10 until 27-32 minutes elapsed.",
+            "Keep the exact same pace, load, or resistance; no sprint, PR, or surprise finisher.",
+            "Stay below the point where form, breathing, or coordination changes.",
+        ],
+        "modifications": [
+            "If heart rate climbs while the pace feels the same, back off for 3-5 easy minutes.",
+            "If RPE rises by 1 point or breathing stops feeling controlled, reduce speed, load, or impact one notch.",
+        ],
+        "avoid": ["Adding surprise max-effort work", "Ignoring new pain or unusual symptoms"],
+        "safety_flags": [],
+        "evidence": [
+            "Live heart rate reported: 150 bpm (HR = current beats per minute).",
+            "Live effort reported: RPE 7/10 (RPE = how hard it feels).",
+            "Live pain reported: 0/10.",
+            "Latest synced load before/during this decision: 23 Active Zone Minutes on 2026-07-03 (AZM, Fitbit hard-work minutes).",
+        ],
+        "readiness": {"score": 78, "label": "green"},
+        "data_freshness": {"freshness_label": "aging", "age_minutes": 18},
+        "live_inputs": {
+            "current_heart_rate_bpm": 150,
+            "current_rpe": 7,
+            "pain_level": 0,
+            "symptoms": "no dizziness, breathing controlled",
+            "elapsed_minutes": 22,
+            "planned_duration_minutes": 40,
+        },
+        "data_used": {
+            "readiness_score": 78,
+            "readiness_label": "green",
+            "sleep_asleep_hours": 9.4,
+            "hrv_ms": 92.1,
+            "resting_heart_rate": 60,
+            "latest_training_load": {"date": "2026-07-03", "active_zone_minutes": 23},
+        },
+        "coach_response": {
+            "short_answer": "Keep going, but hold the effort steady and reassess before you add intensity.",
+            "data_story": "The useful read: sleep supports training; recent load is manageable; breathing and oxygen signals are background context, not a standalone green light.",
+            "what_to_do": [
+                "Next 5-10 minutes: hold steady at RPE (how hard it feels) 7/10 or easier and around 150 bpm or lower; do not surge yet.",
+                "Hold steady until 27-32 minutes elapsed; do not make the workout harder yet.",
+                "Stay at or below RPE (how hard it feels) 7/10 until 27-32 minutes elapsed.",
+            ],
+            "next_check": [
+                "Next 5-10 minutes: hold steady instead of chasing a harder effort.",
+                "Keep RPE (how hard it feels) at or below 7/10 unless the plan intentionally calls for more.",
+                "Heart rate should rise and settle predictably for the work you are doing.",
+            ],
+            "why": [
+                "Latest sleep is strong at 9.4h. Good sleep gives more room to train, as long as the warm-up agrees.",
+                "Resting HR is not elevated, which supports normal training.",
+                "Recent load is moderate, so do not add a surprise hard finish.",
+            ],
+            "labels_explained": [
+                {"label": "HR", "meaning": "heart rate right now: current beats per minute during movement or rest"},
+                {"label": "RPE", "meaning": "rate of perceived exertion: how hard it feels from 1 easy to 10 max; use it to decide whether to hold, back off, or stop"},
+                {"label": "AZM", "meaning": "Active Zone Minutes: Fitbit's hard-work minutes from elevated heart-rate zones; recent AZM is load you need to recover from"},
+                {"label": "Readiness", "meaning": "a quick recovery score built from sleep, heart, and recent load signals; green is 75+, yellow is 55-74, red is below 55"},
+            ],
+        },
+        "live_data_note": "In-session guidance uses user-reported live HR/RPE/pain plus the latest cloud-synced Fitbit context; it is not direct band telemetry.",
         "safety_note": "This is in-session fitness guidance, not medical diagnosis or emergency care.",
     },
     "recovery-comparison": {

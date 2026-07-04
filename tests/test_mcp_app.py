@@ -128,10 +128,10 @@ async def test_widget_resource_is_registered() -> None:
 
     assert str(resources[0].uri) == WIDGET_URI
     assert resources[0].mimeType == "text/html;profile=mcp-app"
-    assert WIDGET_URI == "ui://mehair/today-v19.html"
-    assert "ui://mehair/today-v18.html" in LEGACY_WIDGET_URIS
+    assert WIDGET_URI == "ui://mehair/today-v20.html"
+    assert "ui://mehair/today-v19.html" in LEGACY_WIDGET_URIS
     assert "Preparing card" in html
-    assert 'appInfo: { name: "mehair-coach-widget", version: "0.7.0" }' in html
+    assert 'appInfo: { name: "mehair-coach-widget", version: "0.7.1" }' in html
     assert 'renderEmpty("Preparing the health card from the latest tool result.", "waiting")' in html
     assert "function hasCardData(data)" in html
     assert "function renderLabelKey(labels)" in html
@@ -184,6 +184,7 @@ async def test_widget_preview_route_renders_real_card_state() -> None:
         today_workout = await client.get("/docs/widget-preview?state=today-workout")
         workout_plan = await client.get("/docs/widget-preview?state=workout-plan")
         active_workout = await client.get("/docs/widget-preview?state=active-workout")
+        active_workout_hold = await client.get("/docs/widget-preview?state=active-workout-hold")
         recovery_comparison = await client.get("/docs/widget-preview?state=recovery-comparison")
 
     assert response.status_code == 200
@@ -236,6 +237,14 @@ async def test_widget_preview_route_renders_real_card_state() -> None:
     assert "dizzy during the interval" in active_workout.text
     assert "yellow today (55-74); green is 75+, red is <55" in active_workout.text
     assert "AZM = Fitbit hard-work minutes" in active_workout.text
+    assert active_workout_hold.status_code == 200
+    assert "Active Workout" in active_workout_hold.text
+    assert "continue_controlled" in active_workout_hold.text
+    assert "Hold This Effort" in active_workout_hold.text
+    assert "Do Now" not in active_workout_hold.text
+    assert "Next 5-10 minutes: hold steady" in active_workout_hold.text
+    assert "RPE = how hard it feels" in active_workout_hold.text
+    assert "aging 15-60m" in active_workout_hold.text
     assert "SpO2 / oxygen saturation" in overview.text
     assert "Readiness thresholds: green 75+, yellow 55-74, red <55" in overview.text
     assert today_workout.status_code == 200
