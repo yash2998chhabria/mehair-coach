@@ -762,7 +762,13 @@ def workout_recommendation(
     soreness_rating = _first_present(stated_soreness, stated_pain, _latest_rating(checkins or [], "soreness"))
     energy_rating = _first_present(stated_energy, _latest_rating(checkins or [], "energy"))
     stress_rating = _latest_rating(checkins or [], "stress")
-    illness_flags = _dedupe(_illness_flags_from_text(current_feeling_lower) + _illness_flags_from_checkins(checkins or []))
+    current_illness_flags = _illness_flags_from_text(current_feeling_lower)
+    checkin_illness_flags = _illness_flags_from_checkins(checkins or [])
+    illness_flags = _current_or_checkin_illness_flags(
+        current_illness_flags=current_illness_flags,
+        checkin_illness_flags=checkin_illness_flags,
+        current_text=current_feeling_lower,
+    )
     workout_summary = (workout_history or {}).get("summary", {}) if (workout_history or {}).get("status") == "ok" else {}
     workout_count = int(workout_summary.get("workout_count") or 0)
     goal_payload = (goal or {}).get("goal") or {}
@@ -961,6 +967,8 @@ def workout_recommendation(
             "stated_pain": stated_pain,
             "stated_high_movement": stated_high_movement,
             "illness_flags": illness_flags,
+            "current_illness_flags": current_illness_flags,
+            "checkin_illness_flags_used": bool(illness_flags and not current_illness_flags),
             "goal": goal,
             "recent_workouts": workout_count,
             "freshness_level": freshness.get("freshness_level"),
@@ -1005,8 +1013,17 @@ def workout_plan_for_activity(
     stated_high_movement = _high_movement_from_text(constraint_text)
     soreness_rating = _first_present(stated_soreness, stated_pain, _latest_rating(checkins or [], "soreness"))
     energy_rating = _first_present(stated_energy, _latest_rating(checkins or [], "energy"))
-    illness_flags = _dedupe(_illness_flags_from_text(all_context_text) + _illness_flags_from_checkins(checkins or []))
+    current_illness_flags = _illness_flags_from_text(all_context_text)
+    checkin_illness_flags = _illness_flags_from_checkins(checkins or [])
+    illness_flags = _current_or_checkin_illness_flags(
+        current_illness_flags=current_illness_flags,
+        checkin_illness_flags=checkin_illness_flags,
+        current_text=constraint_text,
+    )
     has_soreness_constraint = _has_training_pain_constraint(constraint_text)
+    localized_soreness_away_from_target = _localized_soreness_away_from_activity(constraint_text, planned)
+    if localized_soreness_away_from_target:
+        subjective_limiter = False
     spinal_constraint = _mentions(
         constraint_text,
         (
@@ -1039,7 +1056,12 @@ def workout_plan_for_activity(
         limiting_factors.append(f"Latest soreness check-in is moderate at {soreness_rating}/10.")
     if has_soreness_constraint:
         rpe_cap = min(rpe_cap, 7)
-        limiting_factors.append("User-stated soreness or pain should cap loading and volume.")
+        if localized_soreness_away_from_target:
+            limiting_factors.append(
+                "User-stated soreness is localized away from the planned workout, so it should shape exercise choice without forcing a rest day."
+            )
+        else:
+            limiting_factors.append("User-stated soreness or pain should cap loading and volume.")
     if stated_pain is not None:
         limiting_factors.append(f"User-stated pain or tightness is {stated_pain}/10.")
     if spinal_constraint:
@@ -1099,6 +1121,22 @@ def workout_plan_for_activity(
         session.insert(0, "If legs feel heavy in the warm-up, bias toward upper-body, technique, mobility, or easy zone 2.")
         avoid.append("Stacking hard lower-body work, HIIT, or long conditioning on top of a high-step day")
         substitutions.append("Leg-heavy lift or intervals -> upper-body lift, technique work, mobility, or easy zone 2.")
+    if localized_soreness_away_from_target:
+        focus.insert(0, "Train the planned upper-body work, but keep sore legs out of the job.")
+        session.insert(0, "Use seated, machine, or chest-supported options so leg soreness can recover while you still train.")
+        avoid.extend(
+            [
+                "Leg drive, jump rope, sled work, sprints, or finishers that turn this into lower-body work",
+                "Standing lifts that make sore legs or your lower back compensate",
+            ]
+        )
+        substitutions.extend(
+            [
+                "Standing press -> seated machine or dumbbell press.",
+                "Bent-over row -> chest-supported row.",
+                "Conditioning finisher -> easy walk or mobility cooldown.",
+            ]
+        )
     if preserving_next_session:
         session.append("Leave the session feeling fresher than you started so tomorrow's sport session stays available.")
         avoid.append("Extra finishers that steal from tomorrow's sport or workout session")
@@ -1201,6 +1239,9 @@ def workout_plan_for_activity(
             "subjective_limiter": subjective_limiter,
             "stated_high_movement": stated_high_movement,
             "illness_flags": illness_flags,
+            "current_illness_flags": current_illness_flags,
+            "checkin_illness_flags_used": bool(illness_flags and not current_illness_flags),
+            "localized_soreness_away_from_target": localized_soreness_away_from_target,
             "preserving_next_session": preserving_next_session,
             "goal": goal,
         },
@@ -1500,6 +1541,12 @@ def _coach_data_story(readiness: dict[str, Any], evidence: list[str]) -> str:
         for item in evidence_items
         if "high movement" in item or "high-step" in item or "high walking" in item or "step volume" in item
     ]
+    localized_soreness_items = [
+        item
+        for item in evidence_items
+        if "localized away from the planned workout" in item
+        or "sore legs out of the job" in item
+    ]
     freshness_items = [item for item in evidence_items if "data freshness" in item or "sync latest" in item]
     checkin_items = [item for item in evidence_items if "check-in" in item]
     safety_items = [
@@ -1561,6 +1608,8 @@ def _coach_data_story(readiness: dict[str, Any], evidence: list[str]) -> str:
 
     if movement_items:
         constraints.append("movement volume may affect legs")
+    if localized_soreness_items:
+        constraints.append("sore areas should shape exercise choice, not automatically cancel training")
 
     limiting_checkins = any(
         "soreness check-in is high" in item
@@ -2654,6 +2703,45 @@ def _illness_flags_from_text(text: str) -> list[str]:
     return []
 
 
+def _current_or_checkin_illness_flags(
+    *,
+    current_illness_flags: list[str],
+    checkin_illness_flags: list[str],
+    current_text: str,
+) -> list[str]:
+    if current_illness_flags:
+        return _dedupe(current_illness_flags)
+    if checkin_illness_flags and _current_text_overrides_checkin_illness(current_text):
+        return []
+    return _dedupe(checkin_illness_flags)
+
+
+def _current_text_overrides_checkin_illness(text: str) -> bool:
+    if not text:
+        return False
+    lower = text.lower()
+    if _positive_or_neutral_feeling_from_text(lower):
+        return True
+    if _has_training_pain_constraint(lower):
+        return True
+    return _mentions(
+        lower,
+        (
+            "feel",
+            "feeling",
+            "energy",
+            "pain",
+            "sore",
+            "soreness",
+            "tight",
+            "normal",
+            "okay",
+            "fine",
+            "good",
+        ),
+    )
+
+
 def _has_training_pain_constraint(text: str) -> bool:
     if not text:
         return False
@@ -2662,6 +2750,63 @@ def _has_training_pain_constraint(text: str) -> bool:
         _has_unnegated_phrase(musculoskeletal_text, term)
         for term in ("sore", "soreness", "pain", "ache", "tight", "tweak", "injury", "complains")
     )
+
+
+def _localized_soreness_away_from_activity(text: str, planned: str) -> bool:
+    if not text or not planned:
+        return False
+    lower_text = text.lower()
+    lower_planned = planned.lower()
+    if any(_has_unnegated_phrase(lower_text, term) for term in ("fatigue", "fatigued", "tired", "drained", "low energy")):
+        return False
+    lower_body_soreness = _mentions(
+        lower_text,
+        ("leg", "legs", "quad", "quads", "hamstring", "calf", "calves", "glute", "knee", "ankle", "foot", "feet"),
+    ) and any(
+        _has_unnegated_phrase(lower_text, term)
+        for term in ("sore", "soreness", "pain", "ache", "tight", "heavy")
+    )
+    if not lower_body_soreness:
+        return False
+    upper_body_plan = _mentions(
+        lower_planned,
+        (
+            "upper",
+            "chest",
+            "back",
+            "shoulder",
+            "arm",
+            "bicep",
+            "tricep",
+            "press",
+            "bench",
+            "row",
+            "pull",
+            "push",
+        ),
+    )
+    lower_body_or_sport_plan = _mentions(
+        lower_planned,
+        (
+            "leg",
+            "lower",
+            "squat",
+            "lunge",
+            "deadlift",
+            "hinge",
+            "run",
+            "sprint",
+            "soccer",
+            "basketball",
+            "squash",
+            "tennis",
+            "pickleball",
+            "cardio",
+            "hiit",
+            "interval",
+        ),
+    )
+    return upper_body_plan and not lower_body_or_sport_plan
 
 
 def _rating_from_text(text: str, labels: tuple[str, ...]) -> int | None:

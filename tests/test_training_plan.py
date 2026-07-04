@@ -91,6 +91,75 @@ def test_green_readiness_allows_normal_planned_session() -> None:
     assert any(block["exercise"] == "Machine chest press" for block in plan["exercise_blocks"])
 
 
+def test_upper_body_plan_with_sore_legs_stays_useful_and_leg_sparing() -> None:
+    context = {
+        "status": "ok",
+        "latest_date": "2026-07-03",
+        "activity_date": "2026-07-03",
+        "recovery_date": "2026-07-03",
+        "readiness": {
+            "score": 84,
+            "label": "green",
+            "recommendation": "A normal training day is reasonable if you feel good.",
+            "evidence": [
+                "Latest sleep is strong at 9.4h.",
+                "HRV is above recent baseline: 92.1 ms vs 61.7 ms.",
+                "Resting heart rate is steady: 60 bpm.",
+            ],
+        },
+        "today": {
+            "steps": 7200,
+            "active_minutes": 44,
+            "active_zone_minutes": 18,
+            "hrv_ms": 92.1,
+            "resting_heart_rate": 60,
+            "sleep": {"asleep_hours": 9.4, "sessions_count": 1},
+            "latest_training_load": {"date": "2026-07-03", "active_zone_minutes": 17},
+        },
+    }
+
+    plan = workout_plan_for_activity(
+        context=context,
+        planned_activity="upper body lift",
+        target_areas=["chest", "back", "shoulders"],
+        constraints="My legs are sore from yesterday, but I want to train upper body today.",
+        duration_minutes=45,
+        checkins=[
+            {
+                "checkin": {
+                    "energy": 7,
+                    "soreness": 2,
+                    "stress": 3,
+                    "notes": "Earlier test note mentioned fever and chills.",
+                }
+            }
+        ],
+    )
+
+    joined = " ".join(
+        [
+            plan["summary"],
+            plan["coach_response"]["short_answer"],
+            plan["coach_response"]["data_story"],
+            *plan["coach_response"]["session_blueprint"],
+            *plan["avoid"],
+        ]
+    ).lower()
+
+    assert plan["recommended_intensity"] == "moderate-to-hard"
+    assert plan["rpe_cap"] == 7
+    assert plan["data_used"]["localized_soreness_away_from_target"] is True
+    assert plan["data_used"]["illness_flags"] == []
+    assert plan["data_used"]["checkin_illness_flags_used"] is False
+    assert "rest or very easy movement" not in joined
+    assert "not-100" not in joined
+    assert "sore areas should shape exercise choice" in plan["coach_response"]["data_story"]
+    assert any("sore legs out of the job" in item for item in plan["focus"])
+    assert any("Leg drive" in item for item in plan["avoid"])
+    assert any(block["exercise"] == "Chest-supported row" for block in plan["exercise_blocks"])
+    assert any(item["label"] == "RPE" for item in plan["coach_response"]["labels_explained"])
+
+
 def test_back_workout_without_soreness_is_not_treated_as_lower_back_constraint() -> None:
     context = {
         "status": "ok",
@@ -761,6 +830,55 @@ def test_today_recommendation_downshifts_when_checkin_mentions_illness() -> None
     assert recommendation["subjective_context"]["illness_flags"]
     assert recommendation["data_used"]["illness_flags"]
     assert any("Illness symptoms" in item for item in recommendation["evidence"])
+
+
+def test_current_feeling_overrides_old_illness_checkin_for_day_plan() -> None:
+    context = {
+        "status": "ok",
+        "latest_date": "2026-07-03",
+        "activity_date": "2026-07-03",
+        "recovery_date": "2026-07-03",
+        "data_freshness": {
+            "freshness_level": "fresh",
+            "needs_sync_before_time_sensitive_advice": False,
+        },
+        "readiness": {
+            "score": 84,
+            "label": "green",
+            "recommendation": "A normal training day is reasonable if you feel good.",
+            "evidence": ["Latest sleep is strong at 8.1h.", "Resting heart rate is steady."],
+        },
+        "today": {
+            "steps": 7200,
+            "active_minutes": 44,
+            "active_zone_minutes": 18,
+            "hrv_ms": 62.0,
+            "resting_heart_rate": 56,
+            "sleep": {"asleep_hours": 8.1, "sessions_count": 1},
+            "latest_training_load": {"date": "2026-07-03", "active_zone_minutes": 18},
+        },
+    }
+
+    recommendation = workout_recommendation(
+        context=context,
+        current_feeling="I feel normal today and have 35 minutes.",
+        checkins=[
+            {
+                "checkin": {
+                    "energy": 7,
+                    "soreness": 2,
+                    "stress": 3,
+                    "notes": "Earlier test note mentioned fever and chills.",
+                }
+            }
+        ],
+    )
+
+    assert recommendation["intensity"] == "moderate-to-hard"
+    assert recommendation["rpe_cap"] == 8
+    assert recommendation["data_used"]["illness_flags"] == []
+    assert recommendation["data_used"]["checkin_illness_flags_used"] is False
+    assert "training is available today" in recommendation["coach_response"]["short_answer"].lower()
 
 
 def test_workout_plan_downshifts_for_illness_even_with_green_readiness() -> None:
