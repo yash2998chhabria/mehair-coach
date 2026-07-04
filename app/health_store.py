@@ -3672,22 +3672,26 @@ def _recommended_tool_sequence(
     if freshness.get("needs_sync_before_time_sensitive_advice"):
         tools.extend(["get_data_freshness", "sync_latest_fitbit_data"])
     supporting: list[str] = []
+    overview_supporting: list[str] = []
     for flow in (primary_flows or [])[:2]:
         tools.extend(flow.get("primary_tools") or [])
         supporting.extend(flow.get("supporting_tools") or [])
-    if "metric_discovery" in intents:
-        tools.extend(["list_available_health_metrics", "query_health_metrics"])
-    if "general_overview" in intents or "daily_plan" in intents or "goal" in intents:
-        tools.append("get_health_overview")
     if "active_workout" in intents:
         tools.append("guide_active_workout")
     if "workout_decision" in intents or "daily_plan" in intents:
         tools.extend(["recommend_workout_today", "plan_workout_with_health_context"])
+    if "metric_discovery" in intents:
+        tools.extend(["list_available_health_metrics", "query_health_metrics"])
+    if "general_overview" in intents or "daily_plan" in intents or "goal" in intents:
+        if "workout_decision" in intents or "daily_plan" in intents:
+            overview_supporting.append("get_health_overview")
+        else:
+            tools.append("get_health_overview")
     if any(intent in intents for intent in ("recovery", "sleep", "heart")):
         supporting.extend(["get_recovery_signal_comparison", "get_sleep_analysis", "get_heart_trends"])
     if "activity_load" in intents:
         supporting.extend(["get_activity_load", "get_workout_history"])
-    return _dedupe(tools + supporting[:3])
+    return _dedupe(tools + supporting[:3] + overview_supporting[:1])
 
 
 def _conversation_flow_options(
@@ -4903,7 +4907,9 @@ def _overview_coaching(
         positives.append("Enough synced data is present to produce a personalized overview.")
     if not watchouts:
         watchouts.append("No major recovery red flags were detected in the synced window.")
-    next_actions.append("Ask for a specific workout plan before training so the assistant can factor in soreness and constraints.")
+    next_actions.append(
+        "For training today, use a workout card so current feeling, time limits, soreness, and goals shape the exact session."
+    )
     return _dedupe(positives), _dedupe(watchouts), _dedupe(next_actions)
 
 

@@ -325,6 +325,9 @@ def test_eval_under_recovered_user_gets_easy_day_with_specific_evidence(tmp_path
     assert "daily_plan" in day_plan_clues["intent_hints"]
     assert "get_health_overview" in day_plan_clues["recommended_tool_sequence"]
     assert "recommend_workout_today" in day_plan_clues["recommended_tool_sequence"]
+    assert day_plan_clues["recommended_tool_sequence"].index("recommend_workout_today") < day_plan_clues[
+        "recommended_tool_sequence"
+    ].index("get_health_overview")
     assert day_plan_clues["overview_context"]["daily_brief"]["training_bias"] == "recovery-first"
     assert any(
         item["label"] == "Goal progress"

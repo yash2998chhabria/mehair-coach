@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 
 
-WIDGET_URI = "ui://mehair/today-v25.html"
+WIDGET_URI = "ui://mehair/today-v26.html"
 LEGACY_WIDGET_URIS = (
     "ui://mehair/today-v1.html",
     "ui://mehair/today-v2.html",
@@ -29,6 +29,7 @@ LEGACY_WIDGET_URIS = (
     "ui://mehair/today-v22.html",
     "ui://mehair/today-v23.html",
     "ui://mehair/today-v24.html",
+    "ui://mehair/today-v25.html",
 )
 WIDGET_RESOURCE_URIS = (WIDGET_URI, *LEGACY_WIDGET_URIS)
 WIDGET_MIME_TYPE = "text/html;profile=mcp-app"
@@ -734,7 +735,7 @@ TODAY_WIDGET_HTML = """
       async function initialize() {
         try {
           await rpcRequest("ui/initialize", {
-            appInfo: { name: "mehair coach", version: "0.7.6" },
+            appInfo: { name: "mehair coach", version: "0.7.7" },
             appCapabilities: {},
             protocolVersion: "2026-01-26",
           });

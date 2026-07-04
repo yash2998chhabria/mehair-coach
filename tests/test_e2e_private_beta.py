@@ -742,6 +742,9 @@ async def test_private_beta_oauth_mcp_sync_and_coaching_flow(tmp_path, monkeypat
             assert "daily_plan" in day_plan_clues["intent_hints"]
             assert "get_health_overview" in day_plan_clues["recommended_tool_sequence"]
             assert "recommend_workout_today" in day_plan_clues["recommended_tool_sequence"]
+            assert day_plan_clues["recommended_tool_sequence"].index("recommend_workout_today") < day_plan_clues[
+                "recommended_tool_sequence"
+            ].index("get_health_overview")
             assert day_plan_clues["overview_context"]["daily_brief"]["today_plan"]
 
             plan = tool_content(

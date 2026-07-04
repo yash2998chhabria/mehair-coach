@@ -39,7 +39,7 @@ async def test_mcp_tool_list_matches_private_beta_plan() -> None:
 
     by_name = {tool.name: tool for tool in tools}
     assert by_name["get_health_overview"].meta["openai/outputTemplate"] == WIDGET_URI
-    assert by_name["sync_and_get_health_overview"].meta["openai/outputTemplate"] == WIDGET_URI
+    assert by_name["sync_and_get_health_overview"].meta is None
     assert by_name["get_health_question_clues"].meta["openai/outputTemplate"] == WIDGET_URI
     assert by_name["get_recovery_signal_comparison"].meta["openai/outputTemplate"] == WIDGET_URI
     assert by_name["guide_active_workout"].meta["openai/outputTemplate"] == WIDGET_URI
@@ -58,7 +58,7 @@ async def test_mcp_tool_list_matches_private_beta_plan() -> None:
     assert "7-14 for coaching" in query_schema["days"]["description"]
     assert "Fast all-context path" in by_name["get_health_overview"].description
     assert "give me my health overview today" in by_name["get_health_overview"].description
-    assert "get fitter without feeling wrecked" in by_name["get_health_overview"].description
+    assert "what health signals do you see" in by_name["get_health_overview"].description
     assert "broad context card, not the final workout-card tool" in by_name[
         "get_health_overview"
     ].description
@@ -66,9 +66,10 @@ async def test_mcp_tool_list_matches_private_beta_plan() -> None:
         "get_health_overview"
     ].description
     assert "preparatory sync tool" in by_name["sync_latest_fitbit_data"].description
-    assert "not the final workout-card tool" in by_name["sync_and_get_health_overview"].description
-    assert "call recommend_workout_today" in by_name["sync_and_get_health_overview"].description
-    assert "prepare for a later intensity recommendation" in by_name[
+    assert "Do not use this as the visible final card" in by_name[
+        "sync_and_get_health_overview"
+    ].description
+    assert "call sync_latest_fitbit_data first" in by_name[
         "sync_and_get_health_overview"
     ].description
     assert "Prefer get_health_overview for broad everyday coaching prompts" in by_name[
@@ -94,6 +95,7 @@ async def test_mcp_tool_list_matches_private_beta_plan() -> None:
     assert "call this tool again rather than answering from an older card" in by_name[
         "recommend_workout_today"
     ].description
+    assert "SpO2" in by_name["recommend_workout_today"].description
     assert "Pass only current user-stated context" in by_name["recommend_workout_today"].inputSchema[
         "properties"
     ]["current_feeling"]["description"]
@@ -103,6 +105,7 @@ async def test_mcp_tool_list_matches_private_beta_plan() -> None:
     assert "actual Apps SDK workout-plan card renderer" in by_name[
         "plan_workout_with_health_context"
     ].description
+    assert "sleep temperature" in by_name["plan_workout_with_health_context"].description
     assert "Live inputs are user-reported" in by_name["guide_active_workout"].description
     assert "not direct band telemetry" in by_name["guide_active_workout"].description
     assert "actual Apps SDK active workout card renderer" in by_name[
@@ -169,10 +172,10 @@ async def test_widget_resource_is_registered() -> None:
 
     assert str(resources[0].uri) == WIDGET_URI
     assert resources[0].mimeType == "text/html;profile=mcp-app"
-    assert WIDGET_URI == "ui://mehair/today-v25.html"
-    assert "ui://mehair/today-v24.html" in LEGACY_WIDGET_URIS
+    assert WIDGET_URI == "ui://mehair/today-v26.html"
+    assert "ui://mehair/today-v25.html" in LEGACY_WIDGET_URIS
     assert "Preparing card" in html
-    assert 'appInfo: { name: "mehair coach", version: "0.7.6" }' in html
+    assert 'appInfo: { name: "mehair coach", version: "0.7.7" }' in html
     assert "mehair-coach-widget" not in html
     assert 'renderEmpty("Preparing the health card from the latest tool result.", "waiting")' in html
     assert "function hasCardData(data)" in html

@@ -76,13 +76,17 @@ SERVER_INSTRUCTIONS = (
     "the user explicitly asks for a fresh sync/refresh/pull/update, or when a freshness result says "
     "needs_sync_before_time_sensitive_advice, including aging or stale data for a hard, risky, or "
     "time-sensitive call. For explicit requests to sync or refresh and then "
-    "summarize freshness, show a card, analyze all available metrics, explain changes, or give an overview, call "
+    "summarize freshness, analyze all available metrics, explain changes, or give an overview, call "
     "sync_and_get_health_overview directly; this is a non-destructive, idempotent pull of the user's "
     "cloud-synced Fitbit data into their private store, so do not describe it as blocked, dangerous, "
-    "or unsafe when the user requested it. Sync tools are preparatory for workout/run/lift/card "
-    "requests: after syncing, the final card-rendering call for day-of workout advice must be "
-    "recommend_workout_today, plan_workout_with_health_context, or guide_active_workout. Do not answer "
-    "a workout-card request from a sync or overview result alone. For broad "
+    "or unsafe when the user requested it. Do not use sync_and_get_health_overview as the visible "
+    "final card for prompts that also ask what workout to do, how hard to train, whether to run/lift, "
+    "or to update/show a workout card. In that combined case, call sync_latest_fitbit_data first if "
+    "a fresh sync is needed, then call recommend_workout_today, plan_workout_with_health_context, or "
+    "guide_active_workout. Sync tools are preparatory for workout/run/lift/card requests: after syncing, "
+    "the final card-rendering call for day-of workout advice must be recommend_workout_today, "
+    "plan_workout_with_health_context, or guide_active_workout. Do not answer a workout-card request "
+    "from a sync or overview result alone. For broad "
     "health, fitness, recovery, current/latest/today, or 'use all my data' overview questions that "
     "do not explicitly request sync/refresh, call get_health_overview before answering. Use the "
     "available_signal_snapshot returned by overview/clue/comparison tools for broad, oxygen, breathing, "
@@ -139,6 +143,10 @@ APP_ICON_SVG = """
 
 POST_SYNC_ROUTING_GUIDANCE = {
     "role": "preparatory_sync_result",
+    "visible_card_policy": (
+        "Do not treat sync or sync+overview output as the final visible card for workout-card, "
+        "run/lift, or day-of training decisions. Continue to a workout card tool."
+    ),
     "use_this_result_for": [
         "freshness status",
         "latest synced dates",
@@ -437,17 +445,15 @@ def create_server(settings_override: Settings | None = None) -> ServerBundle:
         description=(
             "Use only when the user explicitly asks to sync, refresh, pull, or update Fitbit/Google "
             "Health data now and then summarize, analyze all available health metrics, or explain what "
-            "changed. Runs one sync, then returns a card-ready all-data overview with sync freshness "
-            "to prepare for a later intensity recommendation. For normal current/latest/today questions, use "
-            "get_health_overview instead because it is faster and includes freshness metadata. Leave force "
-            "false unless the user explicitly asks to force a refresh. Use this to create a new current "
-            "overview card in long threads when the user explicitly asks to sync/refresh/pull/update and "
-            "show a broad card. This is not the final workout-card tool. If the user asked for a workout "
-            "card, run/lift advice, or enough movement today, call recommend_workout_today or "
-            "plan_workout_with_health_context after this sync/overview completes."
+            "changed. Runs one sync, then returns a broad all-data overview with sync freshness. For "
+            "normal current/latest/today questions, use get_health_overview instead because it is faster "
+            "and includes freshness metadata. Leave force false unless the user explicitly asks to force "
+            "a refresh. Do not use this as the visible final card when the same prompt asks for a workout "
+            "card, what to do today, how hard to train, whether to run/lift/work out, or a time-limited "
+            "session. In that case call sync_latest_fitbit_data first if a fresh sync is needed, then call "
+            "recommend_workout_today or plan_workout_with_health_context for the actual card."
         ),
         annotations=SYNC,
-        meta=WIDGET_META,
     )
     async def sync_and_get_health_overview(days: int = 14, force: bool = False) -> dict[str, Any]:
         user_id = current_user_id()
@@ -484,6 +490,12 @@ def create_server(settings_override: Settings | None = None) -> ServerBundle:
             "freshness": sync.get("freshness") or overview.get("data_freshness"),
         }
         overview["post_sync_routing_guidance"] = POST_SYNC_ROUTING_GUIDANCE
+        overview["final_answer_guardrail"] = (
+            "If the user's prompt asked for a workout card, what to do today, how hard to train, "
+            "whether to run/lift/work out, or a time-limited session, do not answer from this broad "
+            "overview alone. Call recommend_workout_today or plan_workout_with_health_context next "
+            "so the visible card is an actual workout card."
+        )
         return overview
 
     @mcp.tool(
@@ -521,14 +533,16 @@ def create_server(settings_override: Settings | None = None) -> ServerBundle:
         description=(
             "Fast all-context path for everyday current/latest/today health and fitness questions using "
             "already-synced local Google Health/Fitbit data. Use for prompts like 'give me my health "
-            "overview today', 'show the whole picture', 'how do I get fitter without feeling wrecked?', "
+            "overview today', 'show the whole picture', 'what health signals do you see?', "
             "'use all my data', or 'what other signals matter?'. Returns a card-ready overview across readiness, "
             "activity, sleep, heart, oxygen/breathing/temperature/capacity context when available, "
             "workouts, goals, check-ins, data coverage, freshness, and concrete next actions without "
             "starting a sync. This is the broad context card, not the final workout-card tool: if the "
             "user asks what to do, how hard to train, whether to run/lift/work out, or wants a workout "
-            "card, call recommend_workout_today or plan_workout_with_health_context as the final card "
-            "tool. Use this to create a new current overview card in long threads when the user asks "
+            "card, skip this broad overview and call recommend_workout_today or "
+            "plan_workout_with_health_context as the final card tool because those tools already include "
+            "the available sleep, heart, oxygen/breathing, temperature, load, workout, goal, and freshness "
+            "signals. Use this to create a new current overview card in long threads when the user asks "
             "to use tools, check latest data again, rerun analysis, or show a broad context card, but "
             "does not explicitly ask to sync."
         ),
@@ -624,7 +638,11 @@ def create_server(settings_override: Settings | None = None) -> ServerBundle:
             "a direct decision, session blueprint, RPE cap, evidence, labels explained, and stop "
             "conditions. This is the actual Apps SDK workout card renderer for general day-of "
             "workout advice; call it when the user asks to show, render, update, or rerun the card. "
-            "Do not say the card UI is unavailable if this tool is available. Does not start a sync."
+            "Do not say the card UI is unavailable if this tool is available. This tool already includes "
+            "the relevant synced signals for the decision, including sleep, HRV, resting HR, SpO2, "
+            "respiratory rate, sleep temperature, AZM/load, steps, workouts, goals, check-ins, and "
+            "freshness, so do not call a broad overview first for normal day-of workout-card requests. "
+            "Does not start a sync."
             " If the user asks to use tools, show the card, or asks the same day-of question again with "
             "new context, call this tool again rather than answering from an older card in the thread."
         ),
@@ -666,7 +684,9 @@ def create_server(settings_override: Settings | None = None) -> ServerBundle:
             "after this' context in constraints so the plan preserves energy. It returns a card-ready plan with exercises, substitutions, avoid-list, "
             "RPE cap, label explanations, and a plain-English coaching contract."
             " This is the actual Apps SDK workout-plan card renderer for specific activities and constraints; "
-            "do not say the card UI is unavailable if this tool is available."
+            "do not say the card UI is unavailable if this tool is available. This tool already includes "
+            "the relevant synced signals for the plan, including sleep, HRV, resting HR, SpO2, respiratory "
+            "rate, sleep temperature, AZM/load, steps, workouts, goals, check-ins, and freshness."
             " If the user says to use tools or show a workout card, call this tool for the current turn "
             "instead of reusing an older visible card."
         ),

@@ -963,6 +963,9 @@ def test_question_clues_choose_recovery_heart_and_load_metrics(tmp_path, monkeyp
     assert "get_health_overview" in day_plan["recommended_tool_sequence"]
     assert "recommend_workout_today" in day_plan["recommended_tool_sequence"]
     assert "plan_workout_with_health_context" in day_plan["recommended_tool_sequence"]
+    assert day_plan["recommended_tool_sequence"].index("recommend_workout_today") < day_plan[
+        "recommended_tool_sequence"
+    ].index("get_health_overview")
     assert day_plan["headline"].startswith("Use the daily brief")
     assert day_plan["overview_context"]["daily_brief"]["training_bias"] == "recovery-first"
     assert day_plan["overview_context"]["daily_brief"]["today_plan"]
