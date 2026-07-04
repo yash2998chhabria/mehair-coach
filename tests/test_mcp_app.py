@@ -215,10 +215,10 @@ async def test_widget_resource_is_registered() -> None:
 
     assert str(resources[0].uri) == WIDGET_URI
     assert resources[0].mimeType == "text/html;profile=mcp-app"
-    assert WIDGET_URI == "ui://mehair/today-v27.html"
-    assert "ui://mehair/today-v26.html" in LEGACY_WIDGET_URIS
+    assert WIDGET_URI == "ui://mehair/today-v28.html"
+    assert "ui://mehair/today-v27.html" in LEGACY_WIDGET_URIS
     assert "Preparing card" in html
-    assert 'appInfo: { name: "mehair coach", version: "0.7.8" }' in html
+    assert 'appInfo: { name: "mehair coach", version: "0.7.9" }' in html
     assert "mehair-coach-widget" not in html
     assert 'renderEmpty("Preparing the health card from the latest tool result.", "waiting")' in html
     assert "window.openai?.toolOutput" in html
@@ -235,6 +235,11 @@ async def test_widget_resource_is_registered() -> None:
     assert "function todayWorkoutTitle(data, reserveEnergy, deadlineMinutes)" in html
     assert "Minimum Useful Movement" in html
     assert "Before Class Movement" in html
+    assert "Before Dinner Movement" in html
+    assert "Before Plans Movement" in html
+    assert "Before Travel Movement" in html
+    assert "Tomorrow-Friendly Workout" in html
+    assert 'text.includes("work")' not in html
     assert "function renderLabelKey(labels)" in html
     assert "function inferredLabelKey(model)" in html
     assert "label-key" in html

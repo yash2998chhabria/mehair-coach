@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 
 
-WIDGET_URI = "ui://mehair/today-v27.html"
+WIDGET_URI = "ui://mehair/today-v28.html"
 LEGACY_WIDGET_URIS = (
     "ui://mehair/today-v1.html",
     "ui://mehair/today-v2.html",
@@ -31,6 +31,7 @@ LEGACY_WIDGET_URIS = (
     "ui://mehair/today-v24.html",
     "ui://mehair/today-v25.html",
     "ui://mehair/today-v26.html",
+    "ui://mehair/today-v27.html",
 )
 WIDGET_RESOURCE_URIS = (WIDGET_URI, *LEGACY_WIDGET_URIS)
 WIDGET_MIME_TYPE = "text/html;profile=mcp-app"
@@ -792,7 +793,7 @@ TODAY_WIDGET_HTML = """
         updateFromResponse(window.openai?.toolOutput);
         try {
           await rpcRequest("ui/initialize", {
-            appInfo: { name: "mehair coach", version: "0.7.8" },
+            appInfo: { name: "mehair coach", version: "0.7.9" },
             appCapabilities: {},
             protocolVersion: "2026-01-26",
           });
@@ -1157,8 +1158,20 @@ TODAY_WIDGET_HTML = """
       function todayWorkoutTitle(data, reserveEnergy, deadlineMinutes) {
         if (reserveEnergy || deadlineMinutes != null) {
           const text = String(data.subjective_context?.current_feeling || data.data_used?.current_feeling || "").toLowerCase();
-          if (text.includes("class") || text.includes("school") || text.includes("lecture")) return "Before Class Movement";
-          if (text.includes("meeting") || text.includes("call") || text.includes("work")) return "Before Work Movement";
+          const has = (pattern) => pattern.test(text);
+          if (has(/\\b(class|school|lecture)\\b/)) return "Before Class Movement";
+          if (has(/\\bdinner\\b/)) return "Before Dinner Movement";
+          if (has(/\\b(date|reservation|plans?|event|party)\\b/)) return "Before Plans Movement";
+          if (has(/\\b(travel|flight|commute|drive)\\b/)) return "Before Travel Movement";
+          if (
+            has(/\\b(meeting|call|appointment|presentation|interview|office|shift)\\b/) ||
+            has(/\\bbefore\\s+(work|my\\s+shift|shift)\\b/) ||
+            has(/\\b(work|shift)\\s+(in|within|starts|begins)\\b/)
+          ) return "Before Work Movement";
+          if (
+            has(/\\b(tomorrow|later today|tonight|this evening|upcoming)\\b/) &&
+            has(/\\b(pickleball|tennis|squash|basketball|soccer|hike|walk|run|race|match|game)\\b/)
+          ) return "Tomorrow-Friendly Workout";
           return "Minimum Useful Movement";
         }
         if (String(data.intensity || "").includes("easy")) return "Recovery Workout";
