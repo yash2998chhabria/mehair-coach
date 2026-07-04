@@ -208,7 +208,57 @@ def test_specific_lift_plan_uses_stated_energy_pain_and_tomorrow_sport() -> None
     assert any("pain or tightness is 2/10" in item for item in plan["limiting_factors"])
     assert any("preserve readiness" in item for item in plan["limiting_factors"])
     assert any("tomorrow's sport session" in item for item in plan["session_guidance"])
-    assert any("tomorrow's squash" in item for item in plan["avoid"])
+    assert any("tomorrow's sport or workout session" in item for item in plan["avoid"])
+
+
+def test_planned_run_with_tomorrow_sport_does_not_match_row_inside_tomorrow() -> None:
+    context = {
+        "status": "ok",
+        "latest_date": "2026-07-03",
+        "activity_date": "2026-07-03",
+        "recovery_date": "2026-07-03",
+        "readiness": {
+            "score": 84,
+            "label": "green",
+            "recommendation": "A normal training day is reasonable if you feel good.",
+            "evidence": [
+                "Latest sleep is strong at 8.3h.",
+                "HRV is above recent baseline.",
+                "Resting heart rate is steady.",
+            ],
+        },
+        "today": {
+            "steps": 6400,
+            "active_minutes": 42,
+            "active_zone_minutes": 10,
+            "hrv_ms": 62,
+            "resting_heart_rate": 56,
+            "sleep": {"asleep_hours": 8.3, "sessions_count": 1},
+            "latest_training_load": {"date": "2026-07-03", "active_zone_minutes": 10},
+        },
+    }
+
+    plan = workout_plan_for_activity(
+        context=context,
+        planned_activity="run",
+        target_areas=["legs"],
+        constraints="I have soccer tomorrow and want to preserve freshness.",
+        duration_minutes=35,
+    )
+
+    exercises = [block["exercise"] for block in plan["exercise_blocks"]]
+
+    assert plan["rpe_cap"] <= 6
+    assert any("Easy aerobic warm-up" == exercise for exercise in exercises)
+    assert any("Technique block" == exercise for exercise in exercises)
+    assert not any("Chest-supported row" == exercise for exercise in exercises)
+    assert not any("Neutral-grip lat pulldown" == exercise for exercise in exercises)
+    assert not any("Leg press" in exercise for exercise in exercises)
+    assert not any("Hamstring curl" == exercise for exercise in exercises)
+    assert any("tomorrow's sport session" in item for item in plan["session_guidance"])
+    assert "row" not in " ".join(plan["substitutions"]).lower()
+    assert not any("keep every set" in item.lower() for item in plan["coach_response"]["session_blueprint"])
+    assert any("keep effort" in item.lower() for item in plan["coach_response"]["session_blueprint"])
 
 
 def test_active_workout_stops_for_dizziness_even_when_readiness_is_green() -> None:

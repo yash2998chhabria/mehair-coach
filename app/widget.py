@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 
 
-WIDGET_URI = "ui://mehair/today-v13.html"
+WIDGET_URI = "ui://mehair/today-v14.html"
 LEGACY_WIDGET_URIS = (
     "ui://mehair/today-v1.html",
     "ui://mehair/today-v2.html",
@@ -17,6 +17,7 @@ LEGACY_WIDGET_URIS = (
     "ui://mehair/today-v10.html",
     "ui://mehair/today-v11.html",
     "ui://mehair/today-v12.html",
+    "ui://mehair/today-v13.html",
 )
 WIDGET_RESOURCE_URIS = (WIDGET_URI, *LEGACY_WIDGET_URIS)
 WIDGET_MIME_TYPE = "text/html;profile=mcp-app"
@@ -610,16 +611,16 @@ TODAY_WIDGET_HTML = """
         const stepAverage = activity.averages?.steps_per_day;
         const moveMetric = todaySteps != null
           ? [
-              "Move Today",
-              intText(todaySteps),
+              "Steps",
+              `${intText(todaySteps)} steps`,
               stepAverage != null && rangeLabel ? `today so far; ${intText(stepAverage)}/day avg over ${rangeLabel}` : "today so far",
-              "Movement load context; useful for fatigue, not a workout score.",
+              "Movement load context; mostly useful for leg fatigue and total day load.",
             ]
           : [
-              "Movement Window",
-              windowSteps != null ? intText(windowSteps) : null,
+              "Steps window",
+              windowSteps != null ? `${intText(windowSteps)} steps` : null,
               [rangeLabel, stepAverage != null ? `${intText(stepAverage)}/day avg` : ""].filter(Boolean).join("; "),
-              "Movement load context; useful for fatigue, not a workout score.",
+              "Movement load context; mostly useful for leg fatigue and total day load.",
             ];
         const sleepDelta = sleep.latest_vs_average_hours;
         const hrvDelta = hrv != null && heart.average_hrv_ms ? ((Number(hrv) - Number(heart.average_hrv_ms)) / Number(heart.average_hrv_ms)) * 100 : null;
@@ -789,8 +790,8 @@ TODAY_WIDGET_HTML = """
           focus: coach.session_blueprint || coach.what_to_do || data.next_actions || [],
           labels: coach.labels_explained || defaultLabelKey(["Readiness", "RPE", "HRV", "Resting HR", "AZM"]),
           metrics: [
-            ["Move Today", intText(today.steps ?? data.data_used?.steps_today ?? 0), activityWindowLabel, "Light movement context, not the whole decision."],
-            ["AZM Today", intText(today.active_zone_minutes ?? data.data_used?.active_zone_minutes_today ?? 0), activityWindowLabel, "AZM = Fitbit hard-work minutes."],
+            ["Steps", `${intText(today.steps ?? data.data_used?.steps_today ?? 0)} steps`, activityWindowLabel, "Movement load in this window; mostly useful for leg fatigue."],
+            ["AZM", `${intText(today.active_zone_minutes ?? data.data_used?.active_zone_minutes_today ?? 0)} min`, activityWindowLabel, "AZM = Fitbit hard-work minutes in this window."],
             ["Sleep", sleepHours != null ? `${num(sleepHours, 1)}h` : null],
             ["HRV", data.data_used?.hrv_ms != null ? `${num(data.data_used.hrv_ms, 1)} ms` : null],
             ["Soreness", subjective.soreness != null ? `${subjective.soreness}/10` : null, subjective.energy != null ? `energy ${subjective.energy}/10` : ""],
@@ -854,8 +855,8 @@ TODAY_WIDGET_HTML = """
           focusTitle: "Coach Take",
           focus: [readiness.recommendation || data.recommendation || "Health context synced."],
           metrics: [
-            ["Steps", intText(today.steps ?? 0)],
-            ["Zone min", intText(today.active_zone_minutes ?? 0), latestLoad.date && latestLoad.date !== activityDate ? `${latestLoad.active_zone_minutes ?? 0} on ${latestLoad.date}` : ""],
+            ["Steps", `${intText(today.steps ?? 0)} steps`, activityDate ? `${activityDate} so far` : "latest window", "Movement load context, not a recovery score."],
+            ["AZM", `${intText(today.active_zone_minutes ?? 0)} min`, latestLoad.date && latestLoad.date !== activityDate ? `${latestLoad.active_zone_minutes ?? 0} on ${latestLoad.date}` : activityDate ? `${activityDate} so far` : "", "Fitbit hard-work minutes."],
             ["Active", optionalInt(today.active_minutes), "minutes"],
             ["Sleep", sleepHours != null ? `${num(sleepHours, 1)}h` : null, sleep.sessions_count ? `${sleep.sessions_count} sessions` : ""],
             ["Resting HR", today.resting_heart_rate ? `${today.resting_heart_rate} bpm` : heart.avg_bpm ? `${heart.avg_bpm} avg` : null],
@@ -993,10 +994,10 @@ TODAY_WIDGET_HTML = """
           focusTitle: "Load Context",
           focus: highest.date ? [`${highest.date} had the highest zone-minute load in this window.`] : ["Latest synced activity load."],
           metrics: [
-            ["Steps", intText(totals.steps ?? 0)],
+            ["Steps", `${intText(totals.steps ?? 0)} steps`, rangeText(days), "Total movement in this queried window."],
             ["Active", intText(totals.active_minutes ?? 0), "minutes"],
-            ["Zone min", intText(totals.active_zone_minutes ?? 0)],
-            ["Highest AZM", highest.active_zone_minutes != null ? intText(highest.active_zone_minutes) : null, highest.date || ""],
+            ["AZM", `${intText(totals.active_zone_minutes ?? 0)} min`, rangeText(days), "Fitbit hard-work minutes across this window."],
+            ["Highest AZM", highest.active_zone_minutes != null ? `${intText(highest.active_zone_minutes)} min` : null, highest.date || ""],
             ["Latest day", days.length ? days[days.length - 1].date : null],
             ["Distance", sumDistance(days)],
           ],

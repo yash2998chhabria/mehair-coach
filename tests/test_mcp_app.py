@@ -126,10 +126,10 @@ async def test_widget_preview_route_renders_real_card_state() -> None:
     assert "Goal progress in this window: 1/4 workout sessions logged." in response.text
     assert overview.status_code == 200
     assert "Health Overview" in overview.text
-    assert "Move Today" in overview.text
+    assert "Movement load context; mostly useful for leg fatigue and total day load." in overview.text
     assert "steps_per_day" in overview.text
     assert "today so far; ${intText(stepAverage)}/day avg over ${rangeLabel}" in overview.text
-    assert "Movement load context; useful for fatigue, not a workout score." in overview.text
+    assert "Movement load context; mostly useful for leg fatigue and total day load." in overview.text
     assert "Training Load" in overview.text
     assert "AZM over ${rangeLabel}" in overview.text
     assert "HRV vs Avg" in overview.text

@@ -112,6 +112,24 @@ METRIC_LABEL_EXPLANATIONS = {
     "AZM": "Active Zone Minutes: Fitbit's hard-work minutes from elevated heart-rate zones",
 }
 
+CARDIO_SPORT_TERMS = (
+    "squash",
+    "tennis",
+    "pickleball",
+    "basketball",
+    "soccer",
+    "court",
+    "run",
+    "race",
+    "interval",
+    "hiit",
+    "cardio",
+    "bike",
+    "cycling",
+    "swim",
+    "walk",
+)
+
 
 @dataclass(frozen=True)
 class ServerBundle:
@@ -1061,7 +1079,7 @@ def workout_plan_for_activity(
         substitutions.append("Leg-heavy lift or intervals -> upper-body lift, technique work, mobility, or easy zone 2.")
     if preserving_next_session:
         session.append("Leave the session feeling fresher than you started so tomorrow's sport session stays available.")
-        avoid.append("Extra finishers that steal from tomorrow's squash or sport session")
+        avoid.append("Extra finishers that steal from tomorrow's sport or workout session")
     if readiness_label == "red":
         session.insert(0, "Do not chase PRs; keep every compound lift 3-4 reps in reserve.")
     elif readiness_label == "yellow":
@@ -1637,7 +1655,10 @@ def _workout_session_blueprint(
 
     block_names = _representative_exercise_names(exercise_blocks)
     if block_names:
-        blueprint.append(f"Main work: {', '.join(block_names[:3])}; keep every set at RPE <= {rpe_cap}/10.")
+        if _exercise_blocks_are_aerobic(exercise_blocks):
+            blueprint.append(f"Main block: {', '.join(block_names[:3])}; keep effort at RPE <= {rpe_cap}/10.")
+        else:
+            blueprint.append(f"Main work: {', '.join(block_names[:3])}; keep every set at RPE <= {rpe_cap}/10.")
     elif session:
         blueprint.append(session[0])
     elif focus:
@@ -1680,6 +1701,18 @@ def _representative_exercise_names(exercise_blocks: list[dict[str, Any]]) -> lis
     if len(selected) >= 2:
         return _dedupe(selected + names)
     return names
+
+
+def _exercise_blocks_are_aerobic(exercise_blocks: list[dict[str, Any]]) -> bool:
+    names = " ".join(
+        str(block.get("exercise", ""))
+        for block in exercise_blocks
+        if isinstance(block, dict)
+    ).lower()
+    return bool(names) and any(
+        term in names
+        for term in ("aerobic", "pickup", "technique", "stride", "cardio", "run", "walk", "bike")
+    )
 
 
 def _active_workout_next_check(
@@ -2308,6 +2341,7 @@ def _has_unnegated_phrase(text: str, phrase: str) -> bool:
 
 
 def _activity_guidance(planned: str, rpe_cap: int, intensity: str) -> tuple[list[str], list[str], list[str], list[str]]:
+    is_cardio_sport = _mentions(planned, CARDIO_SPORT_TERMS)
     warmup = [
         "5-8 minutes easy cardio to check readiness.",
         "Dynamic hips, thoracic rotations, and shoulder/scapular activation.",
@@ -2316,6 +2350,22 @@ def _activity_guidance(planned: str, rpe_cap: int, intensity: str) -> tuple[list
     focus = ["Move well first, then add load only if the warm-up feels better than expected."]
     avoid = ["Max-effort attempts", "Adding extra hard conditioning after the session"]
     session = [f"Keep working sets at or below RPE {rpe_cap}/10 ({_rpe_plain(rpe_cap)})."]
+
+    if is_cardio_sport:
+        warmup = [
+            "5-8 minutes very easy movement to check breathing, legs, and coordination.",
+            "Add 2-3 short relaxed strides or technique reps only if the warm-up feels smooth.",
+        ]
+        focus = [
+            "Use this as aerobic quality, not a proving-ground workout.",
+            "Keep pace conversational unless the plan specifically calls for short controlled pickups.",
+            "Stop before stride, footwork, or breathing gets sloppy.",
+        ]
+        avoid = ["All-out sprints", "Extra intervals", "Hard cutting if knee, hip, or back feels unstable"]
+        session = [
+            f"Keep the hard parts at or below RPE {rpe_cap}/10 ({_rpe_plain(rpe_cap)}).",
+            "Use easy aerobic work as the default; add short pickups only if everything feels normal.",
+        ]
 
     if _mentions(planned, ("chest", "bench", "press", "push")):
         focus.extend(
@@ -2331,11 +2381,11 @@ def _activity_guidance(planned: str, rpe_cap: int, intensity: str) -> tuple[list
         focus.extend(["Prefer chest-supported rows, pulldowns, and cable work.", "Keep bracing neutral and pain-free."])
         session.extend(["Pulling volume should be smooth and submaximal.", "Pair rows with face pulls or rear delts."])
         avoid.extend(["Heavy deadlifts", "Heavy bent-over rows", "Loaded spinal flexion"])
-    if _mentions(planned, ("squash", "tennis", "court", "run", "interval", "hiit")):
+    if is_cardio_sport:
         focus.extend(["Bias skill, footwork quality, and easy aerobic work over all-out intervals."])
         session.extend(["Keep change-of-direction volume low if recovery is red.", "Stop before movement gets sloppy."])
         avoid.extend(["Repeated max sprints", "Hard cutting if knee, hip, or back feels unstable"])
-    if _mentions(planned, ("leg", "squat", "lower", "quad", "hamstring")):
+    if _mentions(planned, ("leg", "squat", "lower", "quad", "hamstring")) and not is_cardio_sport:
         focus.extend(["Use controlled range and stable unilateral work only if joints feel calm."])
         session.extend(["Keep lower-body compounds submaximal.", "Use machines or tempo work before heavy free-weight loading."])
         avoid.extend(["Max squats", "High-volume plyometrics", "Hard lateral work after high zone-minute days"])
@@ -2354,6 +2404,7 @@ def _exercise_prescription(
     blocks: list[dict[str, str]] = []
     substitutions: list[str] = []
     easy_volume = readiness_label == "red"
+    is_cardio_sport = _mentions(planned, CARDIO_SPORT_TERMS)
 
     def add(name: str, sets: str, reps: str, note: str, alternative: str | None = None) -> None:
         blocks.append(
@@ -2420,7 +2471,7 @@ def _exercise_prescription(
             ]
         )
 
-    if _mentions(planned, ("squash", "tennis", "court", "run", "interval", "hiit")):
+    if is_cardio_sport:
         add(
             "Easy aerobic warm-up",
             "1",
@@ -2443,7 +2494,7 @@ def _exercise_prescription(
             "Skip pickups and cool down.",
         )
 
-    if _mentions(planned, ("leg", "squat", "lower", "quad", "hamstring")):
+    if _mentions(planned, ("leg", "squat", "lower", "quad", "hamstring")) and not is_cardio_sport:
         add(
             "Leg press or goblet squat",
             "2-3" if easy_volume else "3-4",
@@ -2559,7 +2610,24 @@ def _rating_from_text(text: str, labels: tuple[str, ...]) -> int | None:
 
 
 def _mentions(text: str, words: tuple[str, ...]) -> bool:
-    return any(word in text for word in words)
+    if not text:
+        return False
+    return any(_contains_term(text, word) for word in words)
+
+
+def _contains_term(text: str, term: str) -> bool:
+    term = term.strip().lower()
+    if not term:
+        return False
+    if " " in term:
+        pattern = r"(?<![a-z0-9])" + r"\s+".join(re.escape(part) for part in term.split()) + r"(?![a-z0-9])"
+        return re.search(pattern, text) is not None
+
+    suffix = r"(?:s|es|ed|ing)?"
+    if term == "run":
+        suffix = r"(?:s|ning|ner|ners)?"
+    pattern = rf"(?<![a-z0-9]){re.escape(term)}{suffix}(?![a-z0-9])"
+    return re.search(pattern, text) is not None
 
 
 def _mentions_upcoming_session(text: str) -> bool:
