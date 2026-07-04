@@ -1820,7 +1820,8 @@ def workout_plan_for_activity(
     if protect_lower_body:
         rpe_cap = min(rpe_cap, 6)
         limiting_factors.append(
-            "User wants fresh legs for an upcoming walk, hike, sport, or long day; today's card should avoid leg-fatiguing work."
+            f"User wants fresh legs for {_lower_body_protection_subject(planned, constraint_text)}; "
+            "today's card should avoid leg-fatiguing work."
         )
     if latest_load.get("active_zone_minutes", 0) > 45:
         rpe_cap = min(rpe_cap, 7)
@@ -1885,7 +1886,7 @@ def workout_plan_for_activity(
         session.insert(0, "Use easy movement, mobility, or submax work that leaves breathing calm and focus intact.")
         avoid.append("Turning a before-class or before-work window into a workout you need to recover from")
     if protect_lower_body:
-        focus.insert(0, "Protect your legs for the upcoming hike, walk, sport, or long day.")
+        focus.insert(0, _lower_body_protection_focus(planned, constraint_text))
         warmup.insert(0, "5-8 minutes of very easy mobility plus light upper-body activation; your legs should feel lighter, not worked.")
         session.insert(0, "Use upper-body, core, and mobility work; skip lower-body strength and hard conditioning.")
         avoid.extend(
@@ -3144,8 +3145,16 @@ def _readiness_attribution(readiness: dict[str, Any]) -> dict[str, Any]:
 
     score = breakdown.get("score", readiness.get("score"))
     band = breakdown.get("band", readiness.get("label"))
-    support_summary = "; ".join(supports[:3]) if supports else "no strong positive score movers returned"
-    caution_summary = "; ".join(cautions[:3]) if cautions else "no material caution score movers returned"
+    support_summary = (
+        "; ".join(supports[:3])
+        if supports
+        else "the score breakdown did not include positive point movers; use raw sleep/heart/load signals separately as context"
+    )
+    caution_summary = (
+        "; ".join(cautions[:3])
+        if cautions
+        else "the score breakdown did not include material caution point movers"
+    )
     timing_summary = "; ".join(timing[:2])
     plain_summary = (
         f"Readiness {score}/100 ({band}) starts from a 50-point baseline. "
@@ -4123,6 +4132,36 @@ def _protect_lower_body_from_text(text: str) -> bool:
     )
 
 
+def _lower_body_protection_subject(planned: str, constraint_text: str) -> str:
+    combined = " ".join([planned or "", constraint_text or ""]).lower()
+    if _mentions(combined, ("squash",)):
+        return "squash"
+    if _mentions(combined, ("tennis", "pickleball", "basketball", "soccer")):
+        return "the sport session you named"
+    if _mentions(combined, ("hike", "hiking")):
+        return "the hike"
+    if _mentions(combined, ("run", "race")):
+        return "the run or race"
+    if _mentions(combined, ("long walk", "walk")):
+        return "the walk"
+    if _mentions(combined, ("long day", "on my feet")):
+        return "the long day on your feet"
+    return "the activity you named"
+
+
+def _lower_body_protection_focus(planned: str, constraint_text: str) -> str:
+    subject = _lower_body_protection_subject(planned, constraint_text)
+    if subject == "squash":
+        return "Keep your legs springy for squash; skip leg-fatiguing strength, hard intervals, and finishers."
+    if subject == "the hike":
+        return "Keep your legs fresh for the hike; choose upper-body, core, mobility, or very easy movement."
+    if subject == "the walk":
+        return "Keep your legs fresh for the walk; avoid extra lower-body fatigue today."
+    if subject == "the long day on your feet":
+        return "Keep your legs useful for the long day on your feet; avoid work that makes stairs or walking feel heavy."
+    return f"Keep your legs fresh for {subject}; skip lower-body fatigue and hard conditioning."
+
+
 def _workout_activity_selection_text(
     *,
     planned: str,
@@ -4182,7 +4221,10 @@ def _workout_intent_context(
     do_not_treat_as_targets: list[str] = []
 
     if protect_lower_body:
-        primary_job = "train today while preserving fresh legs for an upcoming walk, hike, sport, or long day"
+        primary_job = (
+            f"train today while preserving fresh legs for "
+            f"{_lower_body_protection_subject(planned_activity, constraints or '')}"
+        )
         exercise_bias.extend(["upper_body", "core", "mobility", "easy_recovery_movement"])
         constraint_roles.append("lower_body_protection")
         guardrails.extend(

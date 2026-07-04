@@ -524,9 +524,7 @@ def test_hike_tomorrow_card_preserves_legs_instead_of_prescribing_leg_blocks() -
     ).lower()
 
     assert plan["data_used"]["protect_lower_body"] is True
-    assert plan["intent_context"]["primary_job"] == (
-        "train today while preserving fresh legs for an upcoming walk, hike, sport, or long day"
-    )
+    assert plan["intent_context"]["primary_job"] == "train today while preserving fresh legs for the hike"
     assert "lower_body_protection" in plan["intent_context"]["constraint_roles"]
     assert "upper_body" in plan["intent_context"]["exercise_bias"]
     assert "legs" in plan["intent_context"]["do_not_treat_as_targets"]
@@ -538,8 +536,75 @@ def test_hike_tomorrow_card_preserves_legs_instead_of_prescribing_leg_blocks() -
     assert "goblet squat" not in exercises
     assert "hamstring curl" not in exercises
     assert "calf raise" not in exercises
-    assert "protect your legs" in card_text
+    assert "keep your legs fresh for the hike" in card_text
     assert "leg-heavy plan -> upper-body lift" in card_text
+
+
+def test_squash_plan_uses_named_sport_when_protecting_legs() -> None:
+    context = {
+        "status": "ok",
+        "latest_date": "2026-07-04",
+        "activity_date": "2026-07-04",
+        "recovery_date": "2026-07-03",
+        "readiness": {
+            "score": 44,
+            "label": "red",
+            "recommendation": "Choose recovery movement or controlled technique today.",
+            "evidence": [
+                "Latest sleep is strong at 9.4h.",
+                "HRV is 92.1 ms; only 2 prior HRV day(s) are available, so the baseline trend is low confidence.",
+                "Resting heart rate is 60 bpm; only 2 prior resting-heart-rate day(s) are available, so the baseline trend is low confidence.",
+                "SpO2 is 79.2%, so treat oxygen context as a training caution signal.",
+            ],
+            "score_breakdown": {
+                "base": 50,
+                "score": 44,
+                "band": "red",
+                "contributions": [
+                    {
+                        "signal": "spo2",
+                        "points": -6,
+                        "date": "2026-07-04",
+                        "role": "safety_caution",
+                        "explanation": "SpO2 is 79.2%, so oxygen context should cap intensity if it matches symptoms or poor signal quality.",
+                    }
+                ],
+            },
+        },
+        "today": {
+            "active_zone_minutes": 23,
+            "spo2_avg": 79.2,
+            "hrv_ms": 92.1,
+            "resting_heart_rate": 60,
+            "sleep": {"asleep_hours": 9.4, "sessions_count": 1},
+            "latest_training_load": {"date": "2026-07-03", "active_zone_minutes": 23},
+        },
+    }
+
+    plan = workout_plan_for_activity(
+        context=context,
+        planned_activity="squash with optional light lifting afterward",
+        target_areas=[],
+        constraints="I have squash tonight and want to lift a little too, but keep my legs fresh.",
+        duration_minutes=45,
+    )
+
+    card_text = " ".join(
+        [
+            *plan["coach_response"]["session_blueprint"],
+            *plan["coach_response"]["what_to_do"],
+            *plan["limiting_factors"],
+        ]
+    ).lower()
+    attribution_summary = plan["readiness_attribution"]["plain_summary"]
+
+    assert plan["data_used"]["protect_lower_body"] is True
+    assert plan["intent_context"]["primary_job"] == "train today while preserving fresh legs for squash"
+    assert "keep your legs springy for squash" in card_text
+    assert "upcoming hike, walk, sport, or long day" not in card_text
+    assert "score breakdown did not include positive point movers" in attribution_summary
+    assert "raw sleep/heart/load signals separately as context" in attribution_summary
+    assert "no strong positive score movers returned" not in attribution_summary
 
 
 def test_keep_legs_useful_for_hike_preserves_lower_body() -> None:
