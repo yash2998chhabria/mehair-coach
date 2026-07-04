@@ -3346,8 +3346,8 @@ def readiness_from_day(day: dict[str, Any], daily: dict[str, dict[str, Any]] | N
             score -= 15
             evidence.append(f"Latest sleep is short at {sleep_hours:.1f}h.")
     if day.get("hrv_ms"):
-        hrv_baseline = _baseline_average(daily, "hrv_ms", recovery_date)
-        if hrv_baseline:
+        hrv_baseline, hrv_baseline_days = _baseline_summary(daily, "hrv_ms", recovery_date)
+        if hrv_baseline and hrv_baseline_days >= 3:
             ratio = day["hrv_ms"] / hrv_baseline
             if ratio >= 1.05:
                 score += 10
@@ -3358,12 +3358,18 @@ def readiness_from_day(day: dict[str, Any], daily: dict[str, dict[str, Any]] | N
             else:
                 score -= 10
                 evidence.append(f"HRV is below recent baseline: {day['hrv_ms']:.1f} ms vs {hrv_baseline:.1f} ms.")
+        elif hrv_baseline_days:
+            score += 6
+            evidence.append(
+                f"HRV is {day['hrv_ms']:.1f} ms; only {hrv_baseline_days} prior HRV "
+                "day(s) are available, so the baseline trend is low confidence."
+            )
         else:
             score += 6
             evidence.append(f"HRV is {day['hrv_ms']:.1f} ms.")
     if day.get("resting_heart_rate"):
-        rhr_baseline = _baseline_average(daily, "resting_heart_rate", recovery_date)
-        if rhr_baseline:
+        rhr_baseline, rhr_baseline_days = _baseline_summary(daily, "resting_heart_rate", recovery_date)
+        if rhr_baseline and rhr_baseline_days >= 3:
             delta = day["resting_heart_rate"] - rhr_baseline
             if delta <= 2:
                 score += 6
@@ -3373,6 +3379,13 @@ def readiness_from_day(day: dict[str, Any], daily: dict[str, dict[str, Any]] | N
             else:
                 score -= 8
                 evidence.append(f"Resting heart rate is elevated: {day['resting_heart_rate']} bpm vs {rhr_baseline:.0f} bpm baseline.")
+        elif rhr_baseline_days:
+            score += 4
+            evidence.append(
+                f"Resting heart rate is {day['resting_heart_rate']} bpm; only "
+                f"{rhr_baseline_days} prior resting-heart-rate day(s) are available, so "
+                "the baseline trend is low confidence."
+            )
         else:
             score += 4
             evidence.append(f"Resting heart rate is {day['resting_heart_rate']} bpm.")
@@ -3810,15 +3823,36 @@ def _baseline_average(
     before_date: str | None,
     max_days: int = 14,
 ) -> float | None:
+    values = _baseline_values(daily, key, before_date, max_days)
+    if not values:
+        return None
+    return sum(values) / len(values)
+
+
+def _baseline_summary(
+    daily: dict[str, dict[str, Any]],
+    key: str,
+    before_date: str | None,
+    max_days: int = 14,
+) -> tuple[float | None, int]:
+    values = _baseline_values(daily, key, before_date, max_days)
+    if not values:
+        return None, 0
+    return sum(values) / len(values), len(values)
+
+
+def _baseline_values(
+    daily: dict[str, dict[str, Any]],
+    key: str,
+    before_date: str | None,
+    max_days: int = 14,
+) -> list[float]:
     values = [
         _float({"value": day_values.get(key)}, ["value"])
         for day, day_values in sorted(daily.items(), reverse=True)
         if (not before_date or day < before_date) and day_values.get(key) is not None
     ][:max_days]
-    values = [value for value in values if value > 0]
-    if not values:
-        return None
-    return sum(values) / len(values)
+    return [value for value in values if value > 0]
 
 
 def _ordered_unique(values: list[str], order: dict[str, int]) -> list[str]:

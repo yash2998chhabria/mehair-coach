@@ -35,6 +35,70 @@ def create_user(db: Database, user_id: str = "user_test") -> str:
     return user_id
 
 
+def test_readiness_marks_sparse_baselines_as_low_confidence(tmp_path) -> None:
+    _, store = make_store(tmp_path)
+    db = store.db
+    user_id = create_user(db, "sparse_baseline")
+
+    store.upsert_records(
+        user_id,
+        "sleep",
+        [
+            {
+                "name": "sleep-today",
+                "sleep": {
+                    "interval": {
+                        "startTime": "2026-07-03T00:00:00Z",
+                        "endTime": "2026-07-03T08:15:00Z",
+                    },
+                    "summary": {
+                        "minutesAsleep": "480",
+                        "minutesAwake": "15",
+                        "minutesInSleepPeriod": "495",
+                    },
+                },
+            }
+        ],
+    )
+    for day, hrv, resting_hr in [
+        ("2026-07-02", 31.3, 62),
+        ("2026-07-03", 92.1, 60),
+    ]:
+        year, month, day_num = [int(part) for part in day.split("-")]
+        store.upsert_records(
+            user_id,
+            "daily-heart-rate-variability",
+            [
+                {
+                    "name": f"hrv-{day}",
+                    "dailyHeartRateVariability": {
+                        "averageHeartRateVariabilityMilliseconds": hrv
+                    },
+                    "date": {"year": year, "month": month, "day": day_num},
+                }
+            ],
+        )
+        store.upsert_records(
+            user_id,
+            "daily-resting-heart-rate",
+            [
+                {
+                    "name": f"rhr-{day}",
+                    "dailyRestingHeartRate": {"beatsPerMinute": resting_hr},
+                    "date": {"year": year, "month": month, "day": day_num},
+                }
+            ],
+        )
+
+    context = store.latest_context(user_id)
+    evidence = context["readiness"]["evidence"]
+
+    assert context["readiness"]["label"] == "green"
+    assert any("only 1 prior HRV day(s)" in item for item in evidence)
+    assert any("only 1 prior resting-heart-rate day(s)" in item for item in evidence)
+    assert not any("92.1 ms vs 31.3 ms" in item for item in evidence)
+
+
 def test_freshness_uses_15_and_60_minute_sync_windows(monkeypatch) -> None:
     fixed_now = datetime(2026, 7, 3, 12, 0, tzinfo=UTC)
     monkeypatch.setattr(health_store_module, "utc_now", lambda: fixed_now)
