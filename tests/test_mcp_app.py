@@ -142,6 +142,10 @@ def test_server_instructions_keep_normal_latest_questions_fast() -> None:
     assert "Everyday prompts like 'should I run today'" in SERVER_INSTRUCTIONS
     assert "'I want to get fitter but not feel wrecked'" in SERVER_INSTRUCTIONS
     assert "Keep metric labels such as HRV, RPE, AZM" in SERVER_INSTRUCTIONS
+    assert "Keep source boundaries clear" in SERVER_INSTRUCTIONS
+    assert "synced Fitbit/Google Health signals are wearable evidence" in SERVER_INSTRUCTIONS
+    assert "conversation memory or prior chat context" in SERVER_INSTRUCTIONS
+    assert "do not imply the band measured it" in SERVER_INSTRUCTIONS
     assert "include the date/window" in SERVER_INSTRUCTIONS
     assert "recorded step days" in SERVER_INSTRUCTIONS
     assert "When a tool returns coach_response" in SERVER_INSTRUCTIONS

@@ -40,6 +40,11 @@ SERVER_INSTRUCTIONS = (
     "for a metric dump. "
     "Use plain English before statistics. Keep metric labels such as HRV, RPE, AZM, and resting "
     "heart rate, but briefly explain what they mean when they appear in user-facing advice. "
+    "Keep source boundaries clear in every personalized answer: synced Fitbit/Google Health signals "
+    "are wearable evidence, while injuries, symptoms, goals, preferences, and prior-life context are "
+    "user-stated or conversation context unless a tool result explicitly says otherwise. If you use "
+    "conversation memory or prior chat context, label it as 'from what you told me' or 'from our chat', "
+    "and do not imply the band measured it. "
     "When mentioning steps or other movement totals, include the date/window and explain why that "
     "total does or does not matter for the decision. If a step average is based on recorded days, "
     "say recorded step days instead of implying it is averaged across every day in the lookback. "
@@ -2948,7 +2953,10 @@ def _today_workout_coach_response(
         "answer_style": (
             "Use this as a flexible coaching contract, not wording to copy. Answer like a personal "
             "coach: direct recommendation first, concrete next move second, then explain the kept "
-            "metric labels in one short why section. Match the current user-stated situation exactly."
+            "metric labels in one short why section. Match the current user-stated situation exactly. "
+            "Separate source types: Fitbit/Google Health signals are wearable evidence; goals, "
+            "injuries, preferences, and prior details are user-stated or conversation context unless "
+            "a tool result explicitly marks them as synced data."
             " If readiness_attribution is present, use it to separate score movers from safety caps; "
             "do not collapse the whole decision into SpO2, VO2, or any one secondary signal."
         ),
@@ -3021,6 +3029,24 @@ def _training_decision_frame(
         "reasons_for": reasons_for[:5],
         "reasons_against": reasons_against[:5],
         "background_context": background_context[:5],
+        "source_boundaries": {
+            "wearable_evidence": (
+                "wearable evidence means only synced Fitbit/Google Health signals returned by this "
+                "tool, such as sleep, HRV, resting heart rate, SpO2, respiratory rate, sleep "
+                "temperature, activity, AZM, steps, VO2 max, workouts, freshness, and "
+                "goals/check-ins stored by mehair coach."
+            ),
+            "user_or_conversation_context": (
+                "Current prompt details, prior chat memory, injuries, preferences, sport history, "
+                "symptoms, soreness, schedule constraints, and goals are user-stated or conversation "
+                "context unless this tool result explicitly marks them as synced or locally logged "
+                "mehair coach data."
+            ),
+            "answer_rule": (
+                "When using both, name the source in plain language. Do not imply Fitbit measured an "
+                "injury, symptom, soreness, preference, or life constraint."
+            ),
+        },
         "do_now": next_actions[:5],
         "avoid": avoid[:5],
         "stop_or_downshift_triggers": stop_conditions[:6],
@@ -3032,7 +3058,8 @@ def _training_decision_frame(
             "fields the user does not need. Treat readiness_score/readiness_band as the composite "
             "summary; when explaining why intensity was capped, unpack readiness_attribution instead "
             "of listing the readiness score itself as a separate reason. Treat background_context as "
-            "checked data that did not materially change the call."
+            "checked data that did not materially change the call. Use source_boundaries to keep "
+            "wearable evidence separate from user-stated or conversation context."
         ),
     }
 
@@ -3337,8 +3364,11 @@ def _workout_plan_coach_response(
         "answer_style": (
             "Use this as a flexible workout-plan contract. Keep the workout name and metric labels, "
             "translate each label in simple words, and match the user's stated situation instead of "
-            "assuming they feel off. Prefer a usable session blueprint over a stats recap. Use "
-            "readiness_attribution to explain what moved the score versus what only caps intensity."
+            "assuming they feel off. Separate source types: Fitbit/Google Health signals are wearable "
+            "evidence; goals, injuries, symptoms, preferences, and prior details are user-stated or "
+            "conversation context unless a tool result explicitly marks them as synced data. Prefer a "
+            "usable session blueprint over a stats recap. Use readiness_attribution to explain what "
+            "moved the score versus what only caps intensity."
             + (
                 " This result supersedes any older visible card in the thread: because the user has a "
                 "near-term obligation, do not present this as a normal RPE 8 workout, and do not suggest "
@@ -3425,8 +3455,11 @@ def _active_workout_coach_response(
         "answer_style": (
             "Use urgent, plain language first; explain HR, RPE, AZM, and readiness only after the "
             "action is clear. Say that live HR/RPE/pain are user-reported inputs, and never imply "
-            "this tool is streaming live band telemetry. Use readiness_attribution as background "
-            "context only; live pain, symptoms, breathing, and form decide immediate safety."
+            "this tool is streaming live band telemetry. Separate source types: synced Fitbit/Google "
+            "Health context is wearable evidence, while live HR/RPE/pain, symptoms, form, and "
+            "preferences are user-stated or conversation context unless a tool result explicitly says "
+            "otherwise. Use readiness_attribution as background context only; live pain, symptoms, "
+            "breathing, and form decide immediate safety."
         ),
     }
 

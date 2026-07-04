@@ -1656,10 +1656,20 @@ def test_workout_plan_separates_low_spo2_from_whole_readiness_score() -> None:
     assert "composite readiness score" in attribution["model_guidance"]
     assert "component supports" in attribution["model_guidance"]
     assert "readiness score itself as a separate reason" in plan["training_decision"]["model_guidance"]
+    assert "source_boundaries" in plan["training_decision"]
+    assert "wearable evidence" in plan["training_decision"]["source_boundaries"]["wearable_evidence"]
+    assert "user-stated or conversation context" in plan["training_decision"]["source_boundaries"][
+        "user_or_conversation_context"
+    ]
+    assert "Do not imply Fitbit measured an injury" in plan["training_decision"]["source_boundaries"][
+        "answer_rule"
+    ]
+    assert "source_boundaries" in plan["training_decision"]["model_guidance"]
     assert any("Readiness attribution" in item for item in plan["limiting_factors"])
     assert any("caution signals can cap intensity" in item for item in plan["limiting_factors"])
     assert plan["training_decision"]["readiness_attribution"]["cautions"] == attribution["cautions"]
     assert "readiness_attribution" in plan["coach_response"]["answer_style"]
+    assert "Separate source types" in plan["coach_response"]["answer_style"]
 
 
 def test_today_recommendation_for_normal_green_day_does_not_assume_off_day() -> None:
