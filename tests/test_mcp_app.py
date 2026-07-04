@@ -63,6 +63,8 @@ def test_server_instructions_keep_normal_latest_questions_fast() -> None:
     assert "do not describe it as blocked" in SERVER_INSTRUCTIONS
     assert "Treat phrases like check my Fitbit context" in SERVER_INSTRUCTIONS
     assert "call recommend_workout_today directly" in SERVER_INSTRUCTIONS
+    assert "use planned_activity and target_areas only for the workout the user actually wants to do" in SERVER_INSTRUCTIONS
+    assert "not as leg target_areas" in SERVER_INSTRUCTIONS
     assert "use list_available_health_metrics to inspect the per-user metric catalog" in SERVER_INSTRUCTIONS
     assert "query_health_metrics to fetch the specific signals you choose" in SERVER_INSTRUCTIONS
     assert "call get_health_overview" in SERVER_INSTRUCTIONS

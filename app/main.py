@@ -71,7 +71,9 @@ SERVER_INSTRUCTIONS = (
     "plan_workout_with_health_context or recommend_workout_today before answering; do not infer "
     "readiness, HRV, sleep, or load from conversation memory. Pass user-stated current feelings, "
     "symptoms, soreness, time limits, or pain into the tool arguments instead of leaving them in "
-    "free text. Label prior conversation facts as user-stated context, not synced Fitbit evidence, "
+    "free text. For plan_workout_with_health_context, use planned_activity and target_areas only "
+    "for the workout the user actually wants to do; keep constraints like 'don't want tired legs' "
+    "or 'hike tomorrow' in constraints, not as leg target_areas. Label prior conversation facts as user-stated context, not synced Fitbit evidence, "
     "and do not treat earlier symptoms as current unless the user says they are still present. "
     "During an active workout, call guide_active_workout when the user reports live RPE, heart rate, "
     "pain, symptoms, elapsed time, or asks whether to keep going, push, hold steady, back off, slow "
@@ -139,6 +141,46 @@ CARDIO_SPORT_TERMS = (
     "cycling",
     "swim",
     "walk",
+)
+
+LOWER_BODY_TRAINING_TERMS = (
+    "leg",
+    "legs",
+    "lower",
+    "squat",
+    "squats",
+    "lunge",
+    "lunges",
+    "quad",
+    "quads",
+    "hamstring",
+    "hamstrings",
+    "calf",
+    "calves",
+    "glute",
+    "glutes",
+    "deadlift",
+    "hinge",
+)
+
+UPPER_BODY_TRAINING_TERMS = (
+    "upper",
+    "upper body",
+    "chest",
+    "back",
+    "shoulder",
+    "shoulders",
+    "arm",
+    "arms",
+    "bicep",
+    "biceps",
+    "tricep",
+    "triceps",
+    "press",
+    "bench",
+    "row",
+    "pull",
+    "push",
 )
 
 
@@ -460,11 +502,43 @@ def create_server(settings_override: Settings | None = None) -> ServerBundle:
         meta=WIDGET_META,
     )
     def plan_workout_with_health_context(
-        planned_activity: str,
-        target_areas: list[str] | None = None,
-        planned_date: str | None = None,
-        constraints: str | None = None,
-        duration_minutes: int | None = None,
+        planned_activity: Annotated[
+            str,
+            Field(
+                description=(
+                    "The workout the user actually wants to do today or soon, such as 'upper-body lift', "
+                    "'20-minute mobility', 'run', or 'general workout'. Do not put protective constraints "
+                    "here; for example, 'don't want tired legs' is a constraint, not a leg workout."
+                )
+            ),
+        ],
+        target_areas: Annotated[
+            list[str] | None,
+            Field(
+                description=(
+                    "Only the body areas the user explicitly wants to train in the planned workout. "
+                    "Do not infer 'legs' from phrases like 'protect my legs', 'hike tomorrow', or "
+                    "'don't want tired legs'."
+                )
+            ),
+        ] = None,
+        planned_date: Annotated[
+            str | None,
+            Field(description="When the planned workout is meant to happen, if the user says it."),
+        ] = None,
+        constraints: Annotated[
+            str | None,
+            Field(
+                description=(
+                    "User-stated guardrails, context, and preferences: time limits, soreness, pain, "
+                    "symptoms, upcoming hikes/sports/walks, energy, and what they want to avoid."
+                )
+            ),
+        ] = None,
+        duration_minutes: Annotated[
+            int | None,
+            Field(description="Requested total session length in minutes, if the user gives one."),
+        ] = None,
     ) -> dict[str, Any]:
         user_id = current_user_id()
         if not user_id:
@@ -1041,6 +1115,12 @@ def workout_plan_for_activity(
         ),
     )
     preserving_next_session = _mentions_upcoming_session(constraint_text)
+    protect_lower_body = _protect_lower_body_from_text(constraint_text)
+    exercise_context_text = _workout_activity_selection_text(
+        planned=planned,
+        constraint_text=constraint_text,
+        protect_lower_body=protect_lower_body,
+    )
 
     intensity = _base_intensity(readiness_label)
     rpe_cap = {"easy": 6, "moderate": 7, "moderate-to-hard": 8}.get(intensity, 6)
@@ -1112,6 +1192,11 @@ def workout_plan_for_activity(
     if preserving_next_session:
         rpe_cap = min(rpe_cap, 6)
         limiting_factors.append("User wants to preserve readiness for another sport or workout soon.")
+    if protect_lower_body:
+        rpe_cap = min(rpe_cap, 6)
+        limiting_factors.append(
+            "User wants fresh legs for an upcoming walk, hike, sport, or long day; today's card should avoid leg-fatiguing work."
+        )
     if latest_load.get("active_zone_minutes", 0) > 45:
         rpe_cap = min(rpe_cap, 7)
     if illness_flags:
@@ -1119,9 +1204,9 @@ def workout_plan_for_activity(
         rpe_cap = min(rpe_cap, 4)
         limiting_factors.extend(illness_flags)
 
-    focus, avoid, warmup, session = _activity_guidance(all_context_text, rpe_cap, intensity)
+    focus, avoid, warmup, session = _activity_guidance(exercise_context_text, rpe_cap, intensity)
     exercise_blocks, substitutions = _exercise_prescription(
-        all_context_text,
+        exercise_context_text,
         rpe_cap,
         readiness_label,
         spinal_constraint,
@@ -1163,6 +1248,17 @@ def workout_plan_for_activity(
     if preserving_next_session:
         session.append("Leave the session feeling fresher than you started so tomorrow's sport session stays available.")
         avoid.append("Extra finishers that steal from tomorrow's sport or workout session")
+    if protect_lower_body:
+        focus.insert(0, "Protect your legs for the upcoming hike, walk, sport, or long day.")
+        warmup.insert(0, "5-8 minutes of very easy mobility plus light upper-body activation; your legs should feel lighter, not worked.")
+        session.insert(0, "Use upper-body, core, and mobility work; skip lower-body strength and hard conditioning.")
+        avoid.extend(
+            [
+                "Squats, lunges, leg press, hamstring curls, calf raises, hill sprints, intervals, plyometrics, or hard bike work",
+                "Any finisher that makes tomorrow's legs feel heavy",
+            ]
+        )
+        substitutions.append("Leg-heavy plan -> upper-body lift, core, mobility, or very easy recovery movement.")
     if readiness_label == "red":
         session.insert(0, "Do not chase PRs; keep every compound lift 3-4 reps in reserve.")
     elif readiness_label == "yellow":
@@ -1178,6 +1274,19 @@ def workout_plan_for_activity(
         avoid.insert(0, "Sweat-it-out workouts, intervals, heavy sets, or long sessions while sick.")
 
     display_activity = _display_workout_activity(planned_activity, intensity)
+    intent_context = _workout_intent_context(
+        planned_activity=planned_activity,
+        target_areas=target_areas,
+        constraints=constraints,
+        exercise_context_text=exercise_context_text,
+        protect_lower_body=protect_lower_body,
+        preserving_next_session=preserving_next_session,
+        stated_high_movement=stated_high_movement,
+        high_step_load=high_step_load,
+        localized_soreness_away_from_target=localized_soreness_away_from_target,
+        subjective_limiter=subjective_limiter,
+        requested_duration_minutes=requested_duration_minutes,
+    )
     planned_date_text = planned_date or "next planned session"
     summary = (
         f"For {planned_date_text}, keep {display_activity} at {intensity} intensity "
@@ -1234,6 +1343,7 @@ def workout_plan_for_activity(
         "session_guidance": session,
         "avoid": deduped_avoid,
         "substitutions": deduped_substitutions,
+        "intent_context": intent_context,
         "progression_rules": [
             "If warm-up raises pain, heaviness, dizziness, or unusual breathlessness, downshift or stop.",
             "If HRV and resting heart rate rebound and sleep improves, progress load or volume next session.",
@@ -1266,6 +1376,7 @@ def workout_plan_for_activity(
             "checkin_illness_flags_used": bool(illness_flags and not current_illness_flags),
             "localized_soreness_away_from_target": localized_soreness_away_from_target,
             "preserving_next_session": preserving_next_session,
+            "protect_lower_body": protect_lower_body,
             "short_constrained_session": short_constrained_session,
             "explicit_high_intensity_request": explicit_high_intensity_request,
             "requested_duration_minutes": requested_duration_minutes,
@@ -2442,6 +2553,184 @@ def _high_movement_from_text(text: str) -> bool:
     return any(_has_unnegated_phrase(lower, phrase) for phrase in phrases)
 
 
+def _protect_lower_body_from_text(text: str) -> bool:
+    if not text:
+        return False
+    lower = text.lower()
+    explicit_phrases = (
+        "don't want tired legs",
+        "dont want tired legs",
+        "do not want tired legs",
+        "don't want my legs tired",
+        "dont want my legs tired",
+        "do not want my legs tired",
+        "keep legs fresh",
+        "keep my legs fresh",
+        "fresh legs",
+        "save my legs",
+        "save legs",
+        "preserve legs",
+        "preserve my legs",
+        "protect legs",
+        "protect my legs",
+        "leg fatigue",
+        "legs fatigued",
+        "tired legs",
+        "heavy legs tomorrow",
+        "legs heavy tomorrow",
+        "cook my legs",
+        "cook myself for tomorrow",
+        "drained legs",
+    )
+    if any(phrase in lower for phrase in explicit_phrases):
+        return True
+
+    future_terms = ("tomorrow", "later today", "tonight", "this evening", "next day", "upcoming")
+    lower_body_events = (
+        "long hike",
+        "hike",
+        "hiking",
+        "long walk",
+        "walk",
+        "run",
+        "race",
+        "soccer",
+        "basketball",
+        "tennis",
+        "squash",
+        "pickleball",
+    )
+    preserve_intents = (
+        "don't want",
+        "dont want",
+        "do not want",
+        "avoid",
+        "protect",
+        "preserve",
+        "save",
+        "fresh",
+        "ready for",
+        "not tired",
+        "not drained",
+    )
+    return (
+        any(term in lower for term in future_terms)
+        and any(term in lower for term in lower_body_events)
+        and any(term in lower for term in preserve_intents)
+    )
+
+
+def _workout_activity_selection_text(
+    *,
+    planned: str,
+    constraint_text: str,
+    protect_lower_body: bool,
+) -> str:
+    if not protect_lower_body:
+        return " ".join([planned, constraint_text])
+
+    combined = " ".join([planned, constraint_text])
+    parts: list[str] = []
+    planned_is_generic = _generic_workout_text(planned)
+    planned_mentions_cardio = _mentions(planned, CARDIO_SPORT_TERMS)
+    planned_mentions_lower_strength = _mentions(planned, LOWER_BODY_TRAINING_TERMS)
+    if planned and not planned_is_generic and (planned_mentions_cardio or not planned_mentions_lower_strength):
+        parts.append(planned)
+    if _mentions(combined, UPPER_BODY_TRAINING_TERMS):
+        parts.append("upper body chest back shoulders arms press row pull push")
+    if _mentions(combined, ("core", "abs", "mobility", "stretch", "stretching")):
+        parts.append("core mobility")
+    if not parts:
+        parts.append("upper body chest back press row pull push core mobility")
+    return " ".join(_dedupe(parts))
+
+
+def _generic_workout_text(text: str) -> bool:
+    normalized = " ".join((text or "").split()).strip().lower()
+    if normalized in {"", "workout", "general workout", "workout plan", "train", "training", "train today"}:
+        return True
+    return normalized in {
+        "fitness",
+        "exercise",
+        "movement",
+        "useful controlled workout",
+        "recovery workout",
+    }
+
+
+def _workout_intent_context(
+    *,
+    planned_activity: str,
+    target_areas: list[str],
+    constraints: str | None,
+    exercise_context_text: str,
+    protect_lower_body: bool,
+    preserving_next_session: bool,
+    stated_high_movement: bool,
+    high_step_load: bool,
+    localized_soreness_away_from_target: bool,
+    subjective_limiter: bool,
+    requested_duration_minutes: int | None,
+) -> dict[str, Any]:
+    constraint_roles: list[str] = []
+    exercise_bias: list[str] = []
+    guardrails: list[str] = []
+    do_not_treat_as_targets: list[str] = []
+
+    if protect_lower_body:
+        primary_job = "train today while preserving fresh legs for an upcoming walk, hike, sport, or long day"
+        exercise_bias.extend(["upper_body", "core", "mobility", "easy_recovery_movement"])
+        constraint_roles.append("lower_body_protection")
+        guardrails.extend(
+            [
+                "avoid leg-fatiguing strength, intervals, plyometrics, hill work, or finishers",
+                "keep the session useful enough to train, but easy enough that tomorrow still feels available",
+            ]
+        )
+        do_not_treat_as_targets.extend(["legs", "hike", "walk", "future sport"])
+    elif preserving_next_session:
+        primary_job = "train today without stealing readiness from the next session"
+        exercise_bias.extend(["controlled_volume", "submaximal_strength", "technique"])
+        constraint_roles.append("future_session_priority")
+        guardrails.append("leave clear energy in reserve")
+    elif localized_soreness_away_from_target:
+        primary_job = "train the requested area while keeping the sore area out of the job"
+        exercise_bias.extend(["supported_exercises", "machine_options", "reduced_compensation"])
+        constraint_roles.append("localized_soreness_guardrail")
+        guardrails.append("choose exercise variations that do not make the sore area compensate")
+    elif subjective_limiter:
+        primary_job = "make the session useful but conservative because current body feel is the limiter"
+        exercise_bias.extend(["readiness_screen", "lower_rpe_cap", "minimum_effective_dose"])
+        constraint_roles.append("current_body_feel_limiter")
+        guardrails.append("let the first 10-15 minutes decide whether to continue")
+    else:
+        primary_job = "match the requested workout to today's recovery and load context"
+        exercise_bias.extend(["requested_session", "warmup_check", "data_guided_intensity"])
+
+    if stated_high_movement or high_step_load:
+        constraint_roles.append("movement_volume_counts_as_leg_load")
+        guardrails.append("count walking and steps as leg/load context before adding conditioning")
+    if requested_duration_minutes:
+        constraint_roles.append("time_box")
+        guardrails.append(f"fit the plan inside about {requested_duration_minutes} minutes including warm-up")
+
+    return {
+        "primary_job": primary_job,
+        "planned_activity_user_wants": planned_activity,
+        "target_areas_user_requested": target_areas,
+        "user_constraints": constraints,
+        "exercise_selection_basis": exercise_context_text,
+        "constraint_roles": _dedupe(constraint_roles),
+        "exercise_bias": _dedupe(exercise_bias),
+        "guardrails": _dedupe(guardrails),
+        "do_not_treat_as_targets": _dedupe(do_not_treat_as_targets),
+        "model_instruction": (
+            "Use this intent context to explain the plan. Do not turn a protective constraint into the "
+            "exercise target; use it to choose safer variations, intensity, and avoid-list items."
+        ),
+    }
+
+
 def _workout_stop_conditions(
     rpe_cap: int,
     *,
@@ -2622,6 +2911,15 @@ def _exercise_prescription(
                 "note": note,
                 "alternative": alternative or "",
             }
+        )
+
+    if _mentions(planned, ("core", "abs", "mobility")):
+        add(
+            "Dead bug + side plank",
+            "2",
+            "8 each side + 20-30 sec",
+            "Core work that supports tomorrow without tiring your legs.",
+            "Pallof press or easy breathing drill.",
         )
 
     if _mentions(planned, ("chest", "bench", "press", "push")):
@@ -2950,6 +3248,10 @@ def _mentions_upcoming_session(text: str) -> bool:
         "pickleball",
         "basketball",
         "soccer",
+        "hike",
+        "hiking",
+        "walk",
+        "long walk",
         "run",
         "race",
         "match",
@@ -2958,6 +3260,8 @@ def _mentions_upcoming_session(text: str) -> bool:
         "practice",
         "sport",
         "workout",
+        "training",
+        "train",
     )
     intent_terms = (
         "want to play",

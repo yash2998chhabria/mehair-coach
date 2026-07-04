@@ -473,6 +473,70 @@ def test_preserving_tomorrow_does_not_imply_user_feels_off() -> None:
     assert "do not feel fully right" not in joined
 
 
+def test_hike_tomorrow_card_preserves_legs_instead_of_prescribing_leg_blocks() -> None:
+    context = {
+        "status": "ok",
+        "latest_date": "2026-07-03",
+        "activity_date": "2026-07-03",
+        "recovery_date": "2026-07-03",
+        "readiness": {
+            "score": 78,
+            "label": "green",
+            "recommendation": "A normal training day is reasonable if you feel good.",
+            "evidence": [
+                "Latest sleep is strong at 9.4h.",
+                "HRV is above recent baseline: 92.1 ms vs 61.7 ms.",
+                "Resting heart rate is steady: 60 bpm.",
+            ],
+        },
+        "today": {
+            "steps": 5200,
+            "active_minutes": 44,
+            "active_zone_minutes": 17,
+            "hrv_ms": 92.1,
+            "resting_heart_rate": 60,
+            "sleep": {"asleep_hours": 9.4, "sessions_count": 1},
+            "latest_training_load": {"date": "2026-07-03", "active_zone_minutes": 17},
+        },
+    }
+
+    plan = workout_plan_for_activity(
+        context=context,
+        planned_activity="train today",
+        target_areas=[],
+        constraints="I have a long hike tomorrow morning and want to train today, but I don't want tired legs.",
+        duration_minutes=40,
+    )
+
+    exercises = " ".join(block["exercise"] for block in plan["exercise_blocks"]).lower()
+    card_text = " ".join(
+        [
+            *plan["coach_response"]["session_blueprint"],
+            *plan["coach_response"]["what_to_do"],
+            *plan["avoid"],
+            *plan["substitutions"],
+        ]
+    ).lower()
+
+    assert plan["data_used"]["protect_lower_body"] is True
+    assert plan["intent_context"]["primary_job"] == (
+        "train today while preserving fresh legs for an upcoming walk, hike, sport, or long day"
+    )
+    assert "lower_body_protection" in plan["intent_context"]["constraint_roles"]
+    assert "upper_body" in plan["intent_context"]["exercise_bias"]
+    assert "legs" in plan["intent_context"]["do_not_treat_as_targets"]
+    assert plan["rpe_cap"] <= 6
+    assert "dead bug + side plank" in exercises
+    assert "machine chest press" in exercises
+    assert "chest-supported row" in exercises
+    assert "leg press" not in exercises
+    assert "goblet squat" not in exercises
+    assert "hamstring curl" not in exercises
+    assert "calf raise" not in exercises
+    assert "protect your legs" in card_text
+    assert "leg-heavy plan -> upper-body lift" in card_text
+
+
 def test_active_workout_stops_for_dizziness_even_when_readiness_is_green() -> None:
     context = {
         "status": "ok",
