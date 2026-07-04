@@ -389,6 +389,21 @@ CORE_SYNC_METRICS = {
     "daily-oxygen-saturation",
     "daily-sleep-temperature-derivations",
     "respiratory-rate-sleep-summary",
+    "daily-vo2-max",
+    "distance",
+    "activity-level",
+    "floors",
+}
+LIVE_READY_METRICS = {
+    "sleep",
+    "daily-resting-heart-rate",
+    "daily-heart-rate-variability",
+    "active-zone-minutes",
+    "steps",
+    "exercise",
+    "daily-respiratory-rate",
+    "daily-oxygen-saturation",
+    "daily-sleep-temperature-derivations",
 }
 SYNC_METRIC_TIMEOUT_CAP_SECONDS = 4
 SYNC_REQUEST_BUDGET_CAP_SECONDS = 16
@@ -406,16 +421,26 @@ class HealthStore:
         self.settings = settings
         self.google = GoogleHealthClient(settings.google_health_api_base)
 
-    async def sync_latest(self, user_id: str, force: bool = False) -> dict[str, Any]:
+    async def sync_latest(
+        self,
+        user_id: str,
+        force: bool = False,
+        *,
+        include_context: bool = True,
+    ) -> dict[str, Any]:
         if not self.auth.refresh_token_available(user_id):
             return setup_required()
 
         abandoned = self._mark_abandoned_syncs(user_id)
         if not force:
-            active = self._active_sync_result(user_id)
+            active = self._active_sync_result(user_id, include_context=include_context)
             if active:
                 return active
-            recent = self._recent_sync_result(user_id, abandoned_syncs=abandoned)
+            recent = self._recent_sync_result(
+                user_id,
+                abandoned_syncs=abandoned,
+                include_context=include_context,
+            )
             if recent:
                 return recent
 
@@ -457,13 +482,17 @@ class HealthStore:
         configured_page_limit = max(1, int(self.settings.sync_metric_page_limit or 1))
         configured_concurrency = max(1, int(self.settings.sync_metric_concurrency or 1))
         configured_record_limit = max(1, int(self.settings.sync_metric_record_limit or 1))
+        configured_live_return_budget = max(1, int(self.settings.sync_live_return_budget_seconds or 1))
         budget_seconds = min(SYNC_REQUEST_BUDGET_CAP_SECONDS, configured_budget)
         metric_timeout = min(SYNC_METRIC_TIMEOUT_CAP_SECONDS, configured_metric_timeout)
         page_limit = min(SYNC_METRIC_PAGE_LIMIT_CAP, configured_page_limit)
         concurrency = min(SYNC_METRIC_CONCURRENCY_CAP, configured_concurrency)
+        live_return_budget = min(budget_seconds, configured_live_return_budget)
         record_limit = configured_record_limit
         started_monotonic = monotonic()
         deadline = monotonic() + budget_seconds
+        live_deadline = started_monotonic + live_return_budget
+        sync_window["live_return_budget_seconds"] = live_return_budget
 
         try:
             logger.info(
@@ -580,6 +609,24 @@ class HealthStore:
                         break
                     for task in done:
                         completed_results.append(task.result())
+                    if pending and monotonic() >= live_deadline:
+                        answer_ready_metrics = {
+                            item["metric"]
+                            for item in completed_results
+                            if item.get("status") == "ok"
+                            and item.get("metric") in LIVE_READY_METRICS
+                            and item.get("records")
+                        }
+                        pending_ready_metrics = {
+                            pending_by_task[task].id
+                            for task in pending
+                            if pending_by_task[task].id in LIVE_READY_METRICS
+                        }
+                        if len(answer_ready_metrics) >= 3 or not pending_ready_metrics:
+                            time_budget_exhausted = True
+                            sync_window["live_return_cutoff"] = True
+                            sync_window["answer_ready_metrics"] = sorted(answer_ready_metrics)
+                            break
 
                 if pending:
                     time_budget_exhausted = True
@@ -707,6 +754,8 @@ class HealthStore:
                         "configured_metric_timeout_seconds": configured_metric_timeout,
                         "request_budget_seconds": budget_seconds,
                         "configured_request_budget_seconds": configured_budget,
+                        "live_return_budget_seconds": live_return_budget,
+                        "configured_live_return_budget_seconds": configured_live_return_budget,
                         "time_budget_exhausted": time_budget_exhausted,
                         "metrics_synced": metrics_synced,
                         "metrics_fetched": metrics_fetched,
@@ -761,6 +810,8 @@ class HealthStore:
                     "configured_metric_timeout_seconds": configured_metric_timeout,
                     "request_budget_seconds": budget_seconds,
                     "configured_request_budget_seconds": configured_budget,
+                    "live_return_budget_seconds": live_return_budget,
+                    "configured_live_return_budget_seconds": configured_live_return_budget,
                     "time_budget_exhausted": time_budget_exhausted,
                     "metrics_synced": metrics_synced,
                     "metrics_fetched": metrics_fetched,
@@ -797,6 +848,8 @@ class HealthStore:
                 "configured_metric_timeout_seconds": configured_metric_timeout,
                 "request_budget_seconds": budget_seconds,
                 "configured_request_budget_seconds": configured_budget,
+                "live_return_budget_seconds": live_return_budget,
+                "configured_live_return_budget_seconds": configured_live_return_budget,
                 "time_budget_exhausted": time_budget_exhausted,
                 "metric_error_count": len(metric_errors),
                 "metrics_fetched": metrics_fetched,
@@ -815,19 +868,20 @@ class HealthStore:
             "lookback_days": sync_window["lookback_days"],
             "sync_window": sync_window,
         }
-        context = self.latest_context(user_id)
-        if context.get("status") == "ok":
-            result.update(
-                {
-                    "context": context,
-                    "latest_date": context.get("latest_date"),
-                    "readiness": context.get("readiness"),
-                    "today": context.get("today"),
-                    "evidence": context.get("evidence"),
-                    "freshness": context.get("data_freshness"),
-                    "total_records": context.get("data_freshness", {}).get("records"),
-                }
-            )
+        if include_context:
+            context = self.latest_context(user_id)
+            if context.get("status") == "ok":
+                result.update(
+                    {
+                        "context": context,
+                        "latest_date": context.get("latest_date"),
+                        "readiness": context.get("readiness"),
+                        "today": context.get("today"),
+                        "evidence": context.get("evidence"),
+                        "freshness": context.get("data_freshness"),
+                        "total_records": context.get("data_freshness", {}).get("records"),
+                    }
+                )
         return result
 
     async def _fetch_metric_records(
@@ -867,7 +921,12 @@ class HealthStore:
         priority = {metric: index for index, metric in enumerate(SYNC_PRIORITY)}
         return sorted(SYNC_DATA_TYPES, key=lambda spec: priority.get(spec.id, len(priority)))
 
-    def _active_sync_result(self, user_id: str) -> dict[str, Any] | None:
+    def _active_sync_result(
+        self,
+        user_id: str,
+        *,
+        include_context: bool = True,
+    ) -> dict[str, Any] | None:
         minutes = max(1, int(self.settings.sync_abandoned_after_minutes or 1))
         row = self.db.one(
             """
@@ -892,7 +951,6 @@ class HealthStore:
             return None
 
         freshness = self.freshness(user_id)
-        context = self.latest_context(user_id)
         result: dict[str, Any] = {
             "status": "sync_in_progress",
             "message": "Google Health sync is already running from the recent connection; retry shortly.",
@@ -908,7 +966,8 @@ class HealthStore:
             },
             "freshness": freshness,
         }
-        if context.get("status") == "ok":
+        context = self.latest_context(user_id) if include_context else empty_data()
+        if include_context and context.get("status") == "ok":
             result.update(
                 {
                     "status": "ok",
@@ -969,6 +1028,7 @@ class HealthStore:
         user_id: str,
         *,
         abandoned_syncs: int = 0,
+        include_context: bool = True,
     ) -> dict[str, Any] | None:
         min_interval = max(0, int(self.settings.sync_min_interval_minutes or 0))
         if min_interval <= 0:
@@ -1008,11 +1068,7 @@ class HealthStore:
         ):
             return None
 
-        context = self.latest_context(user_id)
-        if context.get("status") != "ok":
-            return None
-
-        return {
+        result = {
             "status": "ok",
             "message": "Google Health data was already synced recently; skipped a redundant sync.",
             "sync_skipped": True,
@@ -1030,12 +1086,24 @@ class HealthStore:
                 "abandoned_syncs_cleaned": abandoned_syncs,
             },
             "freshness": freshness,
-            "context": context,
-            "latest_date": context.get("latest_date"),
-            "readiness": context.get("readiness"),
-            "today": context.get("today"),
-            "evidence": context.get("evidence"),
         }
+        if not include_context:
+            return result
+
+        context = self.latest_context(user_id)
+        if context.get("status") != "ok":
+            return None
+
+        result.update(
+            {
+                "context": context,
+                "latest_date": context.get("latest_date"),
+                "readiness": context.get("readiness"),
+                "today": context.get("today"),
+                "evidence": context.get("evidence"),
+            }
+        )
+        return result
 
     def _sync_window(self, user_id: str, now: datetime) -> tuple[datetime, dict[str, Any]]:
         full_days = max(1, int(self.settings.sync_lookback_days or 7))
@@ -3117,19 +3185,68 @@ def _question_intents(question: str) -> list[str]:
     def has(*words: str) -> bool:
         return any(word in text for word in words)
 
-    future_window_context = has(
-        "next 2 days",
-        "next two days",
-        "next 3 days",
-        "next three days",
-        "next few days",
-        "tomorrow",
-        "this week",
-        "weekend",
-        "coming days",
-        "next session",
-        "one evening",
-    ) or bool(re.search(r"\b(next|coming)\s+\d+\s+(day|days|week|weeks)\b", text))
+    practical_decision_context = (
+        _contains_context_term(
+            text,
+            (
+                "can i",
+                "should i",
+                "do i have room",
+                "worth",
+                "smarter",
+                "enough movement",
+                "minimum useful",
+                "what is enough",
+            ),
+        )
+        and _contains_context_term(
+            text,
+            (
+                "session",
+                "work",
+                "movement",
+                "move",
+                "base",
+                "aerobic",
+                "threshold",
+                "tempo",
+                "ride",
+                "class",
+                "run",
+                "lift",
+                "gym",
+                "hoops",
+                "basketball",
+                "sport",
+            ),
+        )
+    )
+
+    def has_multi_day_window() -> bool:
+        if has(
+            "next 2 days",
+            "next two days",
+            "next 3 days",
+            "next three days",
+            "next few days",
+            "tomorrow",
+            "this week",
+            "weekend",
+            "coming days",
+            "next session",
+            "one evening",
+        ):
+            return True
+        if re.search(r"\b(next|coming)\s+\d+\s+(day|days|week|weeks)\b", text):
+            return True
+        return bool(
+            re.search(
+                r"\b(?:two|three|four|five|six|seven|\d{1,2})[-\s]+day(?:s)?\s+(?:plan|schedule|split|block|approach)\b",
+                text,
+            )
+        )
+
+    future_window_context = has_multi_day_window()
     improvement_goal_context = has(
         "get fitter",
         "getting fitter",
@@ -3248,6 +3365,15 @@ def _question_intents(question: str) -> list[str]:
         "quality session",
         "hard session",
         "big session",
+        "base session",
+        "aerobic base",
+        "threshold work",
+        "tempo",
+        "ride",
+        "hoops",
+        "basketball",
+        "enough movement",
+        "minimum useful",
         "talk me out",
         "send it",
         "green light",
@@ -3277,6 +3403,8 @@ def _question_intents(question: str) -> list[str]:
             "best use of my time",
             "best use of today",
             "quick useful",
+            "enough movement",
+            "minimum useful",
             "useful move",
             "useful session",
             "smartest useful session",
@@ -3308,7 +3436,10 @@ def _question_intents(question: str) -> list[str]:
     if weekly_goal_context:
         intents.extend(["weekly_goal", "goal", "activity_load", "general_overview", "workout_decision", "recovery"])
 
-    if exercise_context:
+    if practical_decision_context and "today" in text:
+        intents.extend(["daily_plan", "general_overview"])
+
+    if exercise_context or practical_decision_context:
         intents.extend(["workout_decision", "recovery", "activity_load", "heart", "sleep", "subjective", "goal"])
     if specific_activity_context and exercise_context:
         intents.extend(["specific_activity", "workout_decision", "activity_load", "recovery", "subjective"])
@@ -3487,12 +3618,13 @@ def _recommended_tool_sequence(
     *,
     primary_flows: list[dict[str, Any]] | None = None,
 ) -> list[str]:
-    tools: list[str] = ["get_health_question_clues"]
+    tools: list[str] = []
     if freshness.get("needs_sync_before_time_sensitive_advice"):
         tools.extend(["get_data_freshness", "sync_latest_fitbit_data"])
-    for flow in (primary_flows or [])[:3]:
+    supporting: list[str] = []
+    for flow in (primary_flows or [])[:2]:
         tools.extend(flow.get("primary_tools") or [])
-        tools.extend(flow.get("supporting_tools") or [])
+        supporting.extend(flow.get("supporting_tools") or [])
     if "metric_discovery" in intents:
         tools.extend(["list_available_health_metrics", "query_health_metrics"])
     if "general_overview" in intents or "daily_plan" in intents or "goal" in intents:
@@ -3502,10 +3634,10 @@ def _recommended_tool_sequence(
     if "workout_decision" in intents or "daily_plan" in intents:
         tools.extend(["recommend_workout_today", "plan_workout_with_health_context"])
     if any(intent in intents for intent in ("recovery", "sleep", "heart")):
-        tools.extend(["get_recovery_signal_comparison", "get_sleep_analysis", "get_heart_trends"])
+        supporting.extend(["get_recovery_signal_comparison", "get_sleep_analysis", "get_heart_trends"])
     if "activity_load" in intents:
-        tools.extend(["get_activity_load", "get_workout_history"])
-    return _dedupe(tools)
+        supporting.extend(["get_activity_load", "get_workout_history"])
+    return _dedupe(tools + supporting[:3])
 
 
 def _conversation_flow_options(
@@ -3679,7 +3811,7 @@ def _conversation_flow_options(
                 "unusual pattern",
             ],
             "primary_tools": ["list_available_health_metrics", "query_health_metrics"],
-            "supporting_tools": ["get_health_question_clues", "get_health_overview"],
+            "supporting_tools": ["get_health_overview"],
             "data_surfaces_to_use": [
                 "metric_catalog_model_guidance",
                 "query_suggestions",

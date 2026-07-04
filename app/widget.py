@@ -1522,7 +1522,7 @@ TODAY_WIDGET_HTML = """
             ${(model.metrics || []).slice(0, 6).map((item) => metric(item[0], item[1], item[2], item[3])).join("")}
           </div>
           ${renderSignalStrip(model.signalStrip)}
-          ${renderLabelKey(model.labels)}
+          ${renderLabelKey(model.labels || inferredLabelKey(model))}
           <div class="details">
             <div class="section">
               <h3>${escapeHtml(model.evidenceTitle || "Evidence")}</h3>
@@ -1556,6 +1556,31 @@ TODAY_WIDGET_HTML = """
             `).join("")}
           </div>
         `;
+      }
+
+      function inferredLabelKey(model) {
+        const metricLabels = (model?.metrics || []).map((item) => item?.[0]);
+        const signalLabels = (model?.signalStrip || []).map((item) => item?.label);
+        const text = [
+          model?.primaryLabel,
+          model?.headline,
+          ...(metricLabels || []),
+          ...(signalLabels || []),
+          ...(model?.focus || []),
+          ...(model?.evidence || []),
+          ...(model?.secondary || []),
+        ].filter(Boolean).join(" ").toLowerCase();
+        const labels = [];
+        if (text.includes("readiness")) labels.push("Readiness");
+        if (/\brpe\b|perceived exertion/.test(text)) labels.push("RPE");
+        if (/\bhrv\b|heart-rate variability/.test(text)) labels.push("HRV");
+        if (/resting hr|\brhr\b|resting heart/.test(text)) labels.push("Resting HR");
+        if (/\bazm\b|active zone|zone-minute|zone minutes|training load|\bload\b/.test(text)) labels.push("AZM");
+        if (/spo2|oxygen saturation|oxygen/.test(text)) labels.push("SpO2");
+        if (/respiratory rate|breaths per minute/.test(text)) labels.push("Respiratory rate");
+        if (/vo2 max|cardio capacity/.test(text)) labels.push("VO2 max");
+        if (/sleep temperature|temperature change/.test(text)) labels.push("Sleep temperature");
+        return defaultLabelKey(dedupe(labels));
       }
 
       function renderSignalStrip(signals) {

@@ -397,7 +397,7 @@ def create_server(settings_override: Settings | None = None) -> ServerBundle:
         if not user_id:
             return setup_required()
 
-        sync = await health_store.sync_latest(user_id, force=force)
+        sync = await health_store.sync_latest(user_id, force=force, include_context=False)
         if sync.get("status") != "ok":
             return sync
 
@@ -993,7 +993,7 @@ def workout_recommendation(
         intensity = "moderate-to-hard"
         rpe_cap = 8
     elif label == "yellow":
-        plan = "Keep it controlled: zone 2 cardio, technique work, or submax strength."
+        plan = "Keep it controlled: use one clear aerobic or submax strength block, then stop with energy in reserve."
         intensity = "moderate"
         rpe_cap = 7
     else:
@@ -1091,7 +1091,7 @@ def workout_recommendation(
     if intensity == "moderate-to-hard":
         primary_action = "Train normally, but stop before form or breathing feels unusual."
     elif intensity == "moderate":
-        primary_action = "Do a controlled session: zone 2, technique, or submax strength."
+        primary_action = "Do one controlled main block: easy zone 2 if no plan, or submax planned training with reps in reserve."
     else:
         primary_action = "Make today recovery-biased: walk, mobility, easy cardio, or rest."
     if illness_flags:
@@ -1175,9 +1175,9 @@ def workout_recommendation(
         "data_used": {
             "activity_date": activity_date,
             "recovery_date": recovery_date,
-            "steps_today": today.get("steps", 0),
-            "active_minutes_today": today.get("active_minutes", 0),
-            "active_zone_minutes_today": today.get("active_zone_minutes", 0),
+            "steps_today": today.get("steps"),
+            "active_minutes_today": today.get("active_minutes"),
+            "active_zone_minutes_today": today.get("active_zone_minutes"),
             "latest_sleep_hours": sleep_hours,
             "resting_heart_rate": resting_heart_rate,
             "hrv_ms": hrv_ms,
@@ -1530,9 +1530,9 @@ def workout_plan_for_activity(
             "sleep_sessions": sleep_sessions,
             "hrv_ms": hrv_ms,
             "resting_heart_rate": resting_heart_rate,
-            "steps": today.get("steps", 0),
-            "active_minutes": today.get("active_minutes", 0),
-            "active_zone_minutes": today.get("active_zone_minutes", 0),
+            "steps": today.get("steps"),
+            "active_minutes": today.get("active_minutes"),
+            "active_zone_minutes": today.get("active_zone_minutes"),
             "latest_training_load": latest_load,
             "energy_checkin": energy_rating,
             "soreness_checkin": soreness_rating,
@@ -2086,7 +2086,7 @@ def _coach_data_story(readiness: dict[str, Any], evidence: list[str]) -> str:
             supports.append("recent load is manageable")
 
     if movement_items:
-        constraints.append("movement volume may affect legs")
+        constraints.append("the movement-load window may affect legs")
     elif steps_window_items:
         supports.append("steps are useful background load context, with the recorded-day window stated")
     if localized_soreness_items:
@@ -2170,38 +2170,41 @@ def _today_session_blueprint(
         if time_limit_minutes is not None and time_limit_minutes <= 25:
             blueprint = [
                 "Start with a 3-5 minute gradual warm-up.",
-                f"Main work: 12-18 minutes of zone 2, technique, or submax strength at RPE <= {rpe_cap}/10.",
+                f"Default main block: 12-18 minutes easy zone 2 cardio at RPE <= {rpe_cap}/10.",
+                "Swap only if you already had a planned lift: keep it submax and stop 2-3 reps before failure.",
                 "Use the final 2-3 minutes to cool down; leave one more set or interval in reserve.",
             ]
         elif time_limit_minutes is not None and time_limit_minutes <= 35:
             blueprint = [
                 "Start with a 5-8 minute gradual warm-up.",
-                f"Main work: 18-25 minutes of zone 2, technique, or submax strength at RPE <= {rpe_cap}/10.",
+                f"Default main block: 18-25 minutes easy zone 2 cardio at RPE <= {rpe_cap}/10.",
+                "Swap only if you already had a planned lift: keep it submax and stop 2-3 reps before failure.",
                 "Cool down briefly and leave 2-3 reps or one more interval in reserve.",
             ]
         else:
             blueprint = [
                 "Start with a 10-15 minute gradual warm-up.",
-                f"Main work: 20-40 minutes of zone 2, technique, or submax strength at RPE <= {rpe_cap}/10.",
+                f"Default main block: 20-30 minutes easy zone 2 cardio at RPE <= {rpe_cap}/10, then 5-8 minutes mobility or core.",
+                "Swap only if you already had a planned lift: keep it submax and stop 2-3 reps before failure.",
                 "Cool down for 5 minutes and leave 2-3 reps or one more interval in reserve.",
             ]
     else:
         if time_limit_minutes is not None and time_limit_minutes <= 25:
             blueprint = [
                 "Start with a 3-5 minute warm-up and check breathing, form, and pain.",
-                f"Main work can be challenging for 12-18 minutes, but keep the ceiling at RPE <= {rpe_cap}/10.",
+                f"Default main block: 12-18 minutes of your planned training at RPE <= {rpe_cap}/10; if no plan, do easy zone 2 plus 2 short pickups.",
                 "Skip max attempts; finish before form or breathing changes.",
             ]
         elif time_limit_minutes is not None and time_limit_minutes <= 35:
             blueprint = [
                 "Start with a 5-8 minute warm-up and check breathing, form, and pain.",
-                f"Main work can be challenging for 18-25 minutes, but keep the ceiling at RPE <= {rpe_cap}/10.",
+                f"Default main block: 18-25 minutes of your planned training at RPE <= {rpe_cap}/10; if no plan, do controlled zone 2 plus 2 short pickups.",
                 "Skip max attempts if the warm-up feels off; cool down before form fades.",
             ]
         else:
             blueprint = [
                 "Start with a 10-15 minute warm-up and check breathing, form, and pain.",
-                f"Main work can be challenging, but keep the ceiling at RPE <= {rpe_cap}/10.",
+                f"Default main block: 25-35 minutes of your planned training at RPE <= {rpe_cap}/10; if no plan, do controlled zone 2 plus 2 short pickups.",
                 "Skip max attempts if the warm-up feels off; cool down before form fades.",
             ]
 
@@ -2383,7 +2386,10 @@ def _today_workout_coach_response(
     elif intensity == "easy":
         short_answer = "Make today recovery-biased: useful movement is fine, but keep it easy and finish with energy in reserve."
     elif has_high_movement:
-        short_answer = "Train, but keep lower-body work and hard conditioning controlled because today's movement volume already adds load."
+        short_answer = (
+            "Train, but keep lower-body work and hard conditioning controlled because the movement-load "
+            "window already adds leg stress."
+        )
     elif intensity == "moderate":
         short_answer = "Do a focused controlled session today: useful work, not all-out intensity."
     else:

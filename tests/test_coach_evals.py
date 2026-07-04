@@ -633,7 +633,15 @@ def test_eval_natural_prompt_mix_is_not_biased_to_off_day_language(tmp_path, mon
     )
     assert pure_multi_day_plan["primary_conversation_flows"][0]["flow"] == "weekly_training_planning"
     assert "multi_day_plan" in pure_multi_day_plan["intent_hints"]
-    assert pure_multi_day_plan["recommended_tool_sequence"][1] == "get_health_overview"
+    assert pure_multi_day_plan["recommended_tool_sequence"][0] == "get_health_overview"
+
+    natural_multi_day_plan = store.health_question_clues(
+        user_id,
+        "Build me a 3 day plan around getting fitter and not feeling wrecked.",
+        days=7,
+    )
+    assert natural_multi_day_plan["primary_conversation_flows"][0]["flow"] == "weekly_training_planning"
+    assert "multi_day_plan" in natural_multi_day_plan["intent_hints"]
 
     weekly_goal_question = store.health_question_clues(
         user_id,
@@ -703,7 +711,17 @@ def test_eval_natural_prompt_mix_is_not_biased_to_off_day_language(tmp_path, mon
         clues = store.health_question_clues(user_id, question, days=7)
         assert clues["primary_conversation_flows"][0]["flow"] == "specific_activity_plan"
         assert "specific_activity" in clues["intent_hints"]
-        assert clues["recommended_tool_sequence"][1] == "plan_workout_with_health_context"
+        assert clues["recommended_tool_sequence"][0] == "plan_workout_with_health_context"
+
+    practical_prompts = [
+        "Can I do a longer aerobic base session today?",
+        "Do I have room for threshold work, or should I keep it easy?",
+        "I have class in 40 minutes; what is enough movement?",
+    ]
+    for question in practical_prompts:
+        clues = store.health_question_clues(user_id, question, days=7)
+        assert "workout_decision" in clues["intent_hints"]
+        assert "recommend_workout_today" in clues["recommended_tool_sequence"]
 
 
 def test_eval_question_clues_include_human_decision_frame_for_life_constraints(tmp_path, monkeypatch) -> None:

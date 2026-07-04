@@ -144,6 +144,7 @@ async def test_widget_resource_is_registered() -> None:
     assert "data-window" in html
     assert "--sync-dot" in html
     assert "function renderLabelKey(labels)" in html
+    assert "function inferredLabelKey(model)" in html
     assert "label-key" in html
     assert "score-state::before" in html
     assert "band-green" in html
@@ -262,6 +263,9 @@ async def test_widget_preview_route_renders_real_card_state() -> None:
     assert "Recovery Signals" in recovery_comparison.text
     assert "What This Means For Training" in recovery_comparison.text
     assert "Latest recovery comparison" in recovery_comparison.text
+    assert "Metric label explanations" in recovery_comparison.text
+    assert "HRV = recovery stress signal" in recovery_comparison.text
+    assert "SpO2 = oxygen saturation" in recovery_comparison.text
     assert "dizzy during the interval" in active_workout.text
     assert "yellow today (55-74); green is 75+, red is <55" in active_workout.text
     assert "AZM = Fitbit hard-work minutes" in active_workout.text

@@ -997,7 +997,9 @@ def test_today_recommendation_keeps_sync_first_when_data_is_stale() -> None:
     assert recommendation["next_actions"][0] == (
         "Sync latest Fitbit data before making a time-sensitive hard training decision."
     )
-    assert recommendation["next_actions"][1] == "Do a controlled session: zone 2, technique, or submax strength."
+    assert recommendation["next_actions"][1] == (
+        "Do one controlled main block: easy zone 2 if no plan, or submax planned training with reps in reserve."
+    )
     assert recommendation["data_used"]["freshness_level"] == "stale"
     assert any("No recent subjective check-in" in item for item in recommendation["context_gaps"])
     assert any("No coaching goal" in item for item in recommendation["context_gaps"])
@@ -1634,8 +1636,8 @@ def test_today_recommendation_uses_high_steps_as_leg_load_context() -> None:
 
     assert recommendation["intensity"] == "moderate"
     assert recommendation["rpe_cap"] == 7
-    assert "movement volume already adds load" in coach["short_answer"]
-    assert "movement volume may affect legs" in coach["data_story"]
+    assert "movement-load window already adds leg stress" in coach["short_answer"]
+    assert "movement-load window may affect legs" in coach["data_story"]
     assert "18,500 steps on 2026-07-03 so far" in " ".join(coach["why"])
     assert "not a standalone recovery score" in joined
     assert "hard lower-body work" in joined
