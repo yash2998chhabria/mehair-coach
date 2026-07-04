@@ -222,8 +222,8 @@ async def test_widget_resource_is_registered() -> None:
 
     assert str(resources[0].uri) == WIDGET_URI
     assert resources[0].mimeType == "text/html;profile=mcp-app"
-    assert WIDGET_URI == "ui://mehair/today-v31.html"
-    assert "ui://mehair/today-v30.html" in LEGACY_WIDGET_URIS
+    assert WIDGET_URI == "ui://mehair/today-v32.html"
+    assert "ui://mehair/today-v31.html" in LEGACY_WIDGET_URIS
     assert "Preparing card" in html
     assert 'appInfo: { name: "mehair coach", version: "0.8.0" }' in html
     assert "mehair-coach-widget" not in html
