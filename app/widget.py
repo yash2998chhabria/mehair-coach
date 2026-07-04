@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 
 
-WIDGET_URI = "ui://mehair/today-v24.html"
+WIDGET_URI = "ui://mehair/today-v25.html"
 LEGACY_WIDGET_URIS = (
     "ui://mehair/today-v1.html",
     "ui://mehair/today-v2.html",
@@ -28,6 +28,7 @@ LEGACY_WIDGET_URIS = (
     "ui://mehair/today-v21.html",
     "ui://mehair/today-v22.html",
     "ui://mehair/today-v23.html",
+    "ui://mehair/today-v24.html",
 )
 WIDGET_RESOURCE_URIS = (WIDGET_URI, *LEGACY_WIDGET_URIS)
 WIDGET_MIME_TYPE = "text/html;profile=mcp-app"
@@ -733,7 +734,7 @@ TODAY_WIDGET_HTML = """
       async function initialize() {
         try {
           await rpcRequest("ui/initialize", {
-            appInfo: { name: "mehair coach", version: "0.7.5" },
+            appInfo: { name: "mehair coach", version: "0.7.6" },
             appCapabilities: {},
             protocolVersion: "2026-01-26",
           });
@@ -1415,8 +1416,9 @@ TODAY_WIDGET_HTML = """
 
       function pullAgeText(freshness) {
         const minutes = firstFinite(freshness?.sync_age_minutes, freshness?.age_minutes);
-        if (minutes != null) return ageMinutesText(minutes);
+        if (freshness?.last_sync && minutes != null) return `at ${formatDateTime(freshness.last_sync)} (${ageMinutesText(minutes)})`;
         if (freshness?.last_sync) return `at ${formatDateTime(freshness.last_sync)}`;
+        if (minutes != null) return ageMinutesText(minutes);
         if (freshness?.freshness_label) {
           const label = String(freshness.freshness_label).toLowerCase();
           if (label.includes("recommended")) return "not fresh; sync recommended";
@@ -1821,7 +1823,7 @@ TODAY_WIDGET_HTML = """
         const band = readinessBand(score, label);
         const scoreText = Number.isFinite(Number(score)) && Number(score) > 0 ? `${Math.round(Number(score))}/100: ` : "";
         const clean = titleCase(band || label || "pending");
-        if (band === "green") return `${scoreText}${clean} 75+ training available`;
+        if (band === "green") return `${scoreText}${clean} 75+ more training room`;
         if (band === "yellow") return `${scoreText}${clean} 55-74 keep controlled`;
         if (band === "red") return `${scoreText}${clean} <55 recovery first`;
         return clean;
@@ -1918,7 +1920,7 @@ TODAY_WIDGET_HTML = """
         if (String(data.recommended_intensity || data.intensity || "").includes("moderate")) {
           return `Do a useful ${intensity.toLowerCase()} session, not a prove-it workout.${cap}`;
         }
-        return data.summary || data.recommendation || `Training looks available today.${cap}`;
+        return data.summary || data.recommendation || `Recovery can support training today.${cap}`;
       }
 
       function metricHint(label) {
@@ -2006,7 +2008,7 @@ TODAY_WIDGET_HTML = """
 
       function readinessStateLabel(label) {
         const lower = String(label || "").toLowerCase();
-        if (lower === "green") return "Train available (75+)";
+        if (lower === "green") return "More training room (75+)";
         if (lower === "yellow") return "Controlled work (55-74)";
         if (lower === "red") return "Recovery first (<55)";
         return "";

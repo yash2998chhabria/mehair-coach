@@ -868,6 +868,13 @@ class HealthStore:
             "lookback_days": sync_window["lookback_days"],
             "sync_window": sync_window,
         }
+        if not include_context:
+            freshness = self.freshness(user_id)
+            if freshness.get("status") == "ok":
+                result["freshness"] = freshness
+                result["total_records"] = freshness.get("records")
+                result["latest_date"] = freshness.get("latest_observed_date")
+            return result
         if include_context:
             context = self.latest_context(user_id)
             if context.get("status") == "ok":
@@ -3341,6 +3348,26 @@ def _question_intents(question: str) -> list[str]:
         "red flags",
         "everything",
     )
+    fresh_card_request = has(
+        "use tools",
+        "use the tools",
+        "use my tools",
+        "use the connector",
+        "connector again",
+        "use the app",
+        "rerun",
+        "re-run",
+        "check again",
+        "check my data again",
+        "latest data again",
+        "old card",
+        "older card",
+        "old visible card",
+        "update the card",
+        "fresh card",
+        "new card",
+        "show the card again",
+    )
     exercise_context = has(
         "workout",
         "work out",
@@ -3385,6 +3412,7 @@ def _question_intents(question: str) -> list[str]:
         phrase in text
         for phrase in (
             "what should i do",
+            "what i should do",
             "what do i do",
             "what should my day",
             "what's the plan",
@@ -3440,6 +3468,26 @@ def _question_intents(question: str) -> list[str]:
 
     if practical_decision_context and "today" in text:
         intents.extend(["daily_plan", "general_overview"])
+    if fresh_card_request:
+        if has(
+            "what should i do",
+            "what i should do",
+            "what do i do",
+            "today",
+            "workout",
+            "work out",
+            "train",
+            "training",
+            "run",
+            "lift",
+            "gym",
+            "movement",
+            "session",
+            "how hard",
+        ):
+            intents.extend(["daily_plan", "general_overview", "workout_decision", "recovery", "activity_load", "heart", "sleep"])
+        else:
+            intents.extend(["general_overview"])
 
     if exercise_context or practical_decision_context:
         intents.extend(["workout_decision", "recovery", "activity_load", "heart", "sleep", "subjective", "goal"])

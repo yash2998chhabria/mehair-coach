@@ -446,8 +446,10 @@ async def test_private_beta_oauth_mcp_sync_and_coaching_flow(tmp_path, monkeypat
             assert sync["sync_skipped"] is True
             assert sync["records_upserted"] == 0
             assert sync["sync_window"]["mode"] == "recent_skip"
-            assert sync["context"]["today"]["steps"] == 9200
-            assert sync["readiness"]["label"] == "green"
+            assert sync["freshness"]["records"] >= bootstrap_records
+            assert sync["freshness"]["freshness_level"] == "fresh"
+            assert "context" not in sync
+            assert "readiness" not in sync
             assert sync["post_sync_routing_guidance"]["role"] == "preparatory_sync_result"
             assert "recommend_workout_today" in sync["post_sync_routing_guidance"][
                 "next_tool_for_workout_card"
@@ -466,7 +468,8 @@ async def test_private_beta_oauth_mcp_sync_and_coaching_flow(tmp_path, monkeypat
             assert skipped_sync["sync_skipped"] is True
             assert skipped_sync["sync_window"]["mode"] == "recent_skip"
             assert skipped_sync["records_upserted"] == 0
-            assert skipped_sync["context"]["today"]["steps"] == 9200
+            assert skipped_sync["freshness"]["freshness_level"] == "fresh"
+            assert "context" not in skipped_sync
 
             incremental_sync = tool_content(
                 await mcp_request(

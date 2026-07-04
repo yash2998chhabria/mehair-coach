@@ -57,12 +57,20 @@ async def test_mcp_tool_list_matches_private_beta_plan() -> None:
     assert "Metric ids to fetch" in query_schema["metrics"]["description"]
     assert "7-14 for coaching" in query_schema["days"]["description"]
     assert "Fast all-context path" in by_name["get_health_overview"].description
-    assert "should I run today" in by_name["get_health_overview"].description
+    assert "give me my health overview today" in by_name["get_health_overview"].description
     assert "get fitter without feeling wrecked" in by_name["get_health_overview"].description
-    assert "create a new current card in long threads" in by_name["get_health_overview"].description
+    assert "broad context card, not the final workout-card tool" in by_name[
+        "get_health_overview"
+    ].description
+    assert "create a new current overview card in long threads" in by_name[
+        "get_health_overview"
+    ].description
     assert "preparatory sync tool" in by_name["sync_latest_fitbit_data"].description
     assert "not the final workout-card tool" in by_name["sync_and_get_health_overview"].description
     assert "call recommend_workout_today" in by_name["sync_and_get_health_overview"].description
+    assert "prepare for a later intensity recommendation" in by_name[
+        "sync_and_get_health_overview"
+    ].description
     assert "Prefer get_health_overview for broad everyday coaching prompts" in by_name[
         "get_today_context"
     ].description
@@ -77,6 +85,12 @@ async def test_mcp_tool_list_matches_private_beta_plan() -> None:
     assert "I want to get fitter but not feel wrecked" in by_name[
         "recommend_workout_today"
     ].description
+    assert "actual Apps SDK workout card renderer" in by_name[
+        "recommend_workout_today"
+    ].description
+    assert "Do not say the card UI is unavailable" in by_name[
+        "recommend_workout_today"
+    ].description
     assert "call this tool again rather than answering from an older card" in by_name[
         "recommend_workout_today"
     ].description
@@ -86,8 +100,14 @@ async def test_mcp_tool_list_matches_private_beta_plan() -> None:
     assert "upper body but save my legs for a hike" in by_name[
         "plan_workout_with_health_context"
     ].description
+    assert "actual Apps SDK workout-plan card renderer" in by_name[
+        "plan_workout_with_health_context"
+    ].description
     assert "Live inputs are user-reported" in by_name["guide_active_workout"].description
     assert "not direct band telemetry" in by_name["guide_active_workout"].description
+    assert "actual Apps SDK active workout card renderer" in by_name[
+        "guide_active_workout"
+    ].description
     assert "do not reuse earlier active-workout guidance" in by_name["guide_active_workout"].description
     planned_activity = by_name["guide_active_workout"].inputSchema["properties"]["planned_activity"]
     assert planned_activity["default"] == "current workout"
@@ -111,9 +131,13 @@ def test_server_instructions_keep_normal_latest_questions_fast() -> None:
     assert "decision_frame.model_decision_policy" in SERVER_INSTRUCTIONS
     assert "safety, recovery, load, capacity" in SERVER_INSTRUCTIONS
     assert "Do not say a tool was blocked unless the tool result itself has an error" in SERVER_INSTRUCTIONS
+    assert "Actual mehair coach cards are rendered by card tools" in SERVER_INSTRUCTIONS
+    assert "do not say the workout card UI is unavailable" in SERVER_INSTRUCTIONS
     assert "decision, do now, why the data matters" in SERVER_INSTRUCTIONS
     assert "do not default to 'I feel off'" in SERVER_INSTRUCTIONS
     assert "Use already-synced local data for normal current/latest/today questions" in SERVER_INSTRUCTIONS
+    assert "data in the user's private mehair coach store" in SERVER_INSTRUCTIONS
+    assert "not data already visible in the conversation" in SERVER_INSTRUCTIONS
     assert "Fresh means synced in the last 15 minutes" in SERVER_INSTRUCTIONS
     assert "Sync only when the user explicitly asks for a fresh sync" in SERVER_INSTRUCTIONS
     assert "non-destructive, idempotent pull" in SERVER_INSTRUCTIONS
@@ -145,16 +169,17 @@ async def test_widget_resource_is_registered() -> None:
 
     assert str(resources[0].uri) == WIDGET_URI
     assert resources[0].mimeType == "text/html;profile=mcp-app"
-    assert WIDGET_URI == "ui://mehair/today-v24.html"
-    assert "ui://mehair/today-v23.html" in LEGACY_WIDGET_URIS
+    assert WIDGET_URI == "ui://mehair/today-v25.html"
+    assert "ui://mehair/today-v24.html" in LEGACY_WIDGET_URIS
     assert "Preparing card" in html
-    assert 'appInfo: { name: "mehair coach", version: "0.7.5" }' in html
+    assert 'appInfo: { name: "mehair coach", version: "0.7.6" }' in html
     assert "mehair-coach-widget" not in html
     assert 'renderEmpty("Preparing the health card from the latest tool result.", "waiting")' in html
     assert "function hasCardData(data)" in html
     assert "function withDataWindow(model, data)" in html
     assert "data?.suggested_card" in html
     assert "Latest Fitbit data pull was" in html
+    assert "formatDateTime(freshness.last_sync)} (${ageMinutesText(minutes)})" in html
     assert "not fresh; sync recommended" in html
     assert "using Fitbit data through" in html
     assert "data-window" in html
@@ -167,6 +192,10 @@ async def test_widget_resource_is_registered() -> None:
     assert "label-key" in html
     assert "score-state::before" in html
     assert "band-green" in html
+    assert "training available" not in html
+    assert "Train available" not in html
+    assert "more training room" in html
+    assert "More training room (75+)" in html
     assert 'root.style.setProperty("--state", "#d63384")' in html
     assert 'root.style.setProperty("--state", accent)' not in html
     assert "dataUsed.sleep_asleep_hours != null" in html

@@ -53,6 +53,10 @@ SERVER_INSTRUCTIONS = (
     "and user-context axes instead of relying on exact words in the prompt. Avoid leading "
     "with raw tables or unexplained evidence logs. Do not say a tool was "
     "blocked unless the tool result itself has an error or setup-required status. "
+    "Actual mehair coach cards are rendered by card tools with an Apps SDK outputTemplate. If the "
+    "user asks to show, render, update, or rerun the workout card, make a current card-rendering "
+    "tool call; do not say the workout card UI is unavailable when recommend_workout_today, "
+    "plan_workout_with_health_context, or guide_active_workout is available. "
     "If get_health_question_clues returns suggested_card, treat suggested_card as the current "
     "card-ready coaching result for that turn; answer from it or make the next recommended tool "
     "call, but do not stop at a generic signals card when the user asked for a workout card. "
@@ -61,7 +65,10 @@ SERVER_INSTRUCTIONS = (
     "questions, give normal training permission with clear guardrails and the data that would change the call. "
     "If connection or synced data is missing, call status/freshness tools and explain setup; "
     "never invent health data. Use already-synced local data for normal current/latest/today questions, "
-    "because every overview includes freshness metadata. Fresh means synced in the last 15 minutes, "
+    "because every overview includes freshness metadata. Already-synced local data means data in the "
+    "user's private mehair coach store, not data already visible in the conversation. For current, latest, "
+    "today, use-tools, or card requests, make a current connector read or card tool call before answering. "
+    "Fresh means synced in the last 15 minutes, "
     "aging means 15-60 minutes, and stale means more than 60 minutes or not observed today. "
     "Treat phrases like check my Fitbit context, "
     "look at my data, use my data, or what should I do today as already-synced reads unless the user "
@@ -420,7 +427,7 @@ def create_server(settings_override: Settings | None = None) -> ServerBundle:
         user_id = current_user_id()
         if not user_id:
             return setup_required()
-        result = await health_store.sync_latest(user_id, force=force)
+        result = await health_store.sync_latest(user_id, force=force, include_context=False)
         if result.get("status") == "ok":
             result["post_sync_routing_guidance"] = POST_SYNC_ROUTING_GUIDANCE
         return result
@@ -429,9 +436,9 @@ def create_server(settings_override: Settings | None = None) -> ServerBundle:
         title="Sync and get health overview",
         description=(
             "Use only when the user explicitly asks to sync, refresh, pull, or update Fitbit/Google "
-            "Health data now and then summarize, analyze all available health metrics, explain what "
-            "changed, or recommend today's intensity. Runs one sync, then returns a card-ready "
-            "all-data overview with sync freshness. For normal current/latest/today questions, use "
+            "Health data now and then summarize, analyze all available health metrics, or explain what "
+            "changed. Runs one sync, then returns a card-ready all-data overview with sync freshness "
+            "to prepare for a later intensity recommendation. For normal current/latest/today questions, use "
             "get_health_overview instead because it is faster and includes freshness metadata. Leave force "
             "false unless the user explicitly asks to force a refresh. Use this to create a new current "
             "overview card in long threads when the user explicitly asks to sync/refresh/pull/update and "
@@ -513,13 +520,17 @@ def create_server(settings_override: Settings | None = None) -> ServerBundle:
         title="Health overview",
         description=(
             "Fast all-context path for everyday current/latest/today health and fitness questions using "
-            "already-synced local Google Health/Fitbit data. Use for prompts like 'what should I do "
-            "today?', 'should I run today?', 'how do I get fitter without feeling wrecked?', 'use all "
-            "my data', or 'what other signals matter?'. Returns a card-ready overview across readiness, "
+            "already-synced local Google Health/Fitbit data. Use for prompts like 'give me my health "
+            "overview today', 'show the whole picture', 'how do I get fitter without feeling wrecked?', "
+            "'use all my data', or 'what other signals matter?'. Returns a card-ready overview across readiness, "
             "activity, sleep, heart, oxygen/breathing/temperature/capacity context when available, "
             "workouts, goals, check-ins, data coverage, freshness, and concrete next actions without "
-            "starting a sync. Use this to create a new current card in long threads when the user asks "
-            "to use tools, check latest data again, rerun analysis, or show a card, but does not explicitly ask to sync."
+            "starting a sync. This is the broad context card, not the final workout-card tool: if the "
+            "user asks what to do, how hard to train, whether to run/lift/work out, or wants a workout "
+            "card, call recommend_workout_today or plan_workout_with_health_context as the final card "
+            "tool. Use this to create a new current overview card in long threads when the user asks "
+            "to use tools, check latest data again, rerun analysis, or show a broad context card, but "
+            "does not explicitly ask to sync."
         ),
         annotations=READ_ONLY,
         meta=WIDGET_META,
@@ -611,7 +622,9 @@ def create_server(settings_override: Settings | None = None) -> ServerBundle:
             "today?', or 'I want to get fitter but not feel wrecked'. Uses already-synced Fitbit "
             "context, goals, check-ins, recent workouts, and optional current_feeling text to produce "
             "a direct decision, session blueprint, RPE cap, evidence, labels explained, and stop "
-            "conditions. Does not start a sync."
+            "conditions. This is the actual Apps SDK workout card renderer for general day-of "
+            "workout advice; call it when the user asks to show, render, update, or rerun the card. "
+            "Do not say the card UI is unavailable if this tool is available. Does not start a sync."
             " If the user asks to use tools, show the card, or asks the same day-of question again with "
             "new context, call this tool again rather than answering from an older card in the thread."
         ),
@@ -652,6 +665,8 @@ def create_server(settings_override: Settings | None = None) -> ServerBundle:
             "back soreness'. Put near-term class, meeting, work, travel, social plans, and 'I need energy "
             "after this' context in constraints so the plan preserves energy. It returns a card-ready plan with exercises, substitutions, avoid-list, "
             "RPE cap, label explanations, and a plain-English coaching contract."
+            " This is the actual Apps SDK workout-plan card renderer for specific activities and constraints; "
+            "do not say the card UI is unavailable if this tool is available."
             " If the user says to use tools or show a workout card, call this tool for the current turn "
             "instead of reusing an older visible card."
         ),
@@ -722,7 +737,8 @@ def create_server(settings_override: Settings | None = None) -> ServerBundle:
             "readiness/load context. Use this for during-workout prompts like 'HR 150, RPE 7, "
             "pain 0/10, should I push or back off?', 'my chest feels tight', or 'keep going?'. "
             "Live inputs are user-reported, not direct band telemetry. Do not substitute "
-            "get_health_overview for active in-session decisions; this returns the active workout card. "
+            "get_health_overview for active in-session decisions; this is the actual Apps SDK active "
+            "workout card renderer. "
             "Always call this again for each new in-session update; do not reuse earlier active-workout guidance."
         ),
         annotations=READ_ONLY,
@@ -1059,7 +1075,7 @@ def _augment_health_question_clues_for_card(
     guidance = list(clues.get("answering_guidance") or [])
     guidance.insert(
         0,
-        "This result includes suggested_card because the prompt asked for workout coaching; use suggested_card as the card-ready answer if you do not make another tool call.",
+        "This result includes suggested_card because the prompt asked for workout coaching. If a final workout card has not rendered, call suggested_card_tool next; do not write a markdown replacement from old context. If this tool result already rendered the widget, answer from suggested_card.",
     )
     guidance.insert(
         1,

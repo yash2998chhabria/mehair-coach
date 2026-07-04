@@ -542,6 +542,16 @@ def test_eval_natural_prompt_mix_is_not_biased_to_off_day_language(tmp_path, mon
             {"workout_decision", "recovery", "activity_load"},
             {"recommend_workout_today"},
         ),
+        (
+            "Use the connector and tell me what I should do today.",
+            {"daily_plan", "general_overview", "workout_decision"},
+            {"recommend_workout_today"},
+        ),
+        (
+            "Don't use the old card. Check my latest data again and update the workout card.",
+            {"daily_plan", "general_overview", "workout_decision"},
+            {"recommend_workout_today", "plan_workout_with_health_context"},
+        ),
     ]
 
     for question, expected_intents, expected_tools in scenarios:
