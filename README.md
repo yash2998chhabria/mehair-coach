@@ -215,6 +215,7 @@ Useful live checks:
 ```bash
 curl http://localhost:8787/health
 npx @modelcontextprotocol/inspector@latest --server-url http://localhost:8787/mcp --transport http
+./scripts/phone_smoke.sh https://mehair-coach.onrender.com
 ```
 
 The tests cover OAuth metadata, encrypted token storage, empty states, synthetic health calculations, coaching evals, widget registration, tool schemas, deployment config, and local private-beta flows.
@@ -222,6 +223,11 @@ The tests cover OAuth metadata, encrypted token storage, empty states, synthetic
 Live sync behavior is intentionally best-effort: the app pulls useful Fitbit metrics in parallel with per-metric timeouts, page caps, and an overall request budget. High-volume streams are written as daily summaries or aggregates during the chat request, so ChatGPT gets fresh usable context without waiting on thousands of remote database writes. Coverage diagnostics show which metrics were fresh, truncated, deferred, or errored.
 
 Freshness is explicit: synced in the last 15 minutes is `fresh`, 15-60 minutes is `aging`, and more than 1 hour is `stale` for time-sensitive workout advice.
+
+Phone testing has two layers: `scripts/phone_smoke.sh` checks the hosted backend,
+OAuth metadata, MCP auth challenge, and iPhone Simulator card rendering; the
+real ChatGPT mobile test must be done in the ChatGPT iOS/Android app by
+attaching the pink `mehair coach` connector in a new chat.
 
 ## Safety Notes
 

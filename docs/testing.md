@@ -86,3 +86,45 @@ Golden prompts:
 - `Should I worry about my high heart rate and dizziness?`
 
 If ChatGPT answers that it cannot access the connector while the connector is enabled, immediately retry with `Use the mehair coach connector tools now. Call sync_and_get_health_overview.` This catches developer-mode routing/cache misses during live testing.
+
+## Phone Testing
+
+The iPhone Simulator is useful for hosted URL, OAuth metadata, and mobile card
+rendering checks. It is not a full replacement for the real ChatGPT iOS app,
+because the Simulator does not normally run App Store apps.
+
+Run the live phone-smoke check against the hosted beta:
+
+```bash
+./scripts/phone_smoke.sh https://mehair-coach.onrender.com
+```
+
+This checks:
+
+- `/health` responds quickly.
+- OAuth metadata is present and named `mehair coach`.
+- `/mcp` returns the expected bearer-auth challenge when unauthenticated.
+- The hosted widget preview renders and can be opened in iPhone Simulator Safari.
+
+For the realistic ChatGPT mobile test:
+
+1. On ChatGPT web, confirm the developer-mode connector exists and points to:
+
+   ```text
+   https://mehair-coach.onrender.com/mcp
+   ```
+
+2. Refresh the connector metadata after each deploy.
+3. Open the ChatGPT iOS app on the real phone.
+4. Start a new chat.
+5. Attach the app from the composer tool picker, or type `@mehair` and select
+   the pink `mehair coach` connector.
+6. Run:
+
+   ```text
+   Use the mehair coach connector. Call connect_google_health_status.
+   ```
+
+7. If the app is missing on mobile, force-quit and reopen ChatGPT, then check
+   ChatGPT web again. Old `Hosted` or `Live` connector entries can make it easy
+   to pick the wrong app.
