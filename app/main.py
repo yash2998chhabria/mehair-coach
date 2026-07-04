@@ -1004,6 +1004,7 @@ def workout_plan_for_activity(
     planned = " ".join([planned_activity or "", " ".join(target_areas or [])]).lower()
     constraint_text = (constraints or "").lower()
     all_context_text = " ".join([planned, constraint_text])
+    requested_duration_minutes = duration_minutes or _time_limit_minutes_from_text(all_context_text)
     readiness_label = readiness.get("label", "pending")
     readiness_score = int(readiness.get("score", 0))
     stated_energy = _rating_from_text(constraint_text, ("energy", "energy level"))
@@ -1046,9 +1047,21 @@ def workout_plan_for_activity(
     limiting_factors = _normalized_readiness_evidence(context)
     steps_today = _safe_int(today.get("steps"))
     high_step_load = steps_today is not None and steps_today >= 15000
+    short_constrained_session = _short_constrained_session(
+        all_context_text,
+        requested_duration_minutes,
+    )
+    explicit_high_intensity_request = _explicit_high_intensity_request(all_context_text)
     if localized_soreness_away_from_target and intensity == "moderate-to-hard":
         intensity = "moderate"
         rpe_cap = min(rpe_cap, 7)
+    if short_constrained_session and not explicit_high_intensity_request:
+        if intensity == "moderate-to-hard":
+            intensity = "moderate"
+        rpe_cap = min(rpe_cap, 7)
+        limiting_factors.append(
+            "Short time box: cap intensity so the session helps the rest of the day instead of taking over it."
+        )
     if soreness_rating and soreness_rating >= 7:
         intensity = "easy"
         rpe_cap = min(rpe_cap, 6)
@@ -1113,8 +1126,15 @@ def workout_plan_for_activity(
         readiness_label,
         spinal_constraint,
     )
-    if duration_minutes:
-        session.append(f"Keep the session near {max(15, min(duration_minutes, 120))} minutes including warm-up.")
+    if requested_duration_minutes:
+        session.append(f"Keep the session near {max(15, min(requested_duration_minutes, 120))} minutes including warm-up.")
+    if short_constrained_session and not explicit_high_intensity_request:
+        focus.insert(0, "Make the workout compact enough that you can return to the day clearer, not wrecked.")
+        session.insert(
+            0,
+            "Treat this as a useful maintenance block: warm up, do the best work, and leave one gear unused.",
+        )
+        avoid.append("Turning a short between-meetings window into an all-out workout")
     if subjective_limiter:
         focus.insert(0, "Make this a minimum useful session, not a proving-ground session.")
         session.insert(0, "Use the first 10-15 minutes as a pass/fail readiness screen before adding intensity.")
@@ -1246,6 +1266,9 @@ def workout_plan_for_activity(
             "checkin_illness_flags_used": bool(illness_flags and not current_illness_flags),
             "localized_soreness_away_from_target": localized_soreness_away_from_target,
             "preserving_next_session": preserving_next_session,
+            "short_constrained_session": short_constrained_session,
+            "explicit_high_intensity_request": explicit_high_intensity_request,
+            "requested_duration_minutes": requested_duration_minutes,
             "goal": goal,
         },
         "questions_to_ask_if_uncertain": [
@@ -1947,10 +1970,13 @@ def _workout_plan_coach_response(
     illness_flags: list[str],
     stop_conditions: list[str],
 ) -> dict[str, Any]:
+    has_short_time_box = any("short time box" in item.lower() for item in limiting_factors)
     if illness_flags:
         short_answer = f"For {display_activity}, keep this as rest or very easy movement until symptoms improve."
     elif preserving_next_session:
         short_answer = f"For {display_activity}, train controlled enough that tomorrow still stays available."
+    elif has_short_time_box:
+        short_answer = f"For {display_activity}, make this compact and useful so it supports the rest of your day."
     elif intensity == "easy":
         short_answer = f"For {display_activity}, make the win leaving better than you started."
     elif intensity == "moderate":
@@ -2330,6 +2356,64 @@ def _time_limit_minutes_from_text(text: str) -> int | None:
         return None
     minutes = int(matches[0])
     return max(5, min(minutes, 180))
+
+
+def _short_constrained_session(text: str, minutes: int | None) -> bool:
+    lower = (text or "").lower()
+    if minutes is not None and minutes <= 25:
+        return True
+    return _mentions(
+        lower,
+        (
+            "between meetings",
+            "in between meetings",
+            "lunch break",
+            "coffee break",
+            "quick workout",
+            "quick session",
+            "quick lift",
+            "short on time",
+            "time crunch",
+            "limited time",
+            "busy day",
+            "squeeze it in",
+            "squeezed in",
+            "fit it in",
+            "only have",
+            "only got",
+        ),
+    )
+
+
+def _explicit_high_intensity_request(text: str) -> bool:
+    lower = (text or "").lower()
+    phrases = (
+        "hard workout",
+        "hard session",
+        "hard intervals",
+        "push hard",
+        "go hard",
+        "train hard",
+        "intense workout",
+        "intense session",
+        "high intensity",
+        "hiit",
+        "sprint workout",
+        "sprints",
+        "threshold run",
+        "tempo run",
+        "race pace",
+        "all-out",
+        "all out",
+        "max effort",
+        "heavy singles",
+        "heavy set",
+        "heavy lift",
+        "one rep max",
+        "1rm",
+        "metcon",
+    )
+    return any(_has_unnegated_phrase(lower, phrase) for phrase in phrases)
 
 
 def _high_movement_from_text(text: str) -> bool:

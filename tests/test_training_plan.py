@@ -91,6 +91,93 @@ def test_green_readiness_allows_normal_planned_session() -> None:
     assert any(block["exercise"] == "Machine chest press" for block in plan["exercise_blocks"])
 
 
+def test_short_between_meetings_plan_caps_intensity_without_hard_request() -> None:
+    context = {
+        "status": "ok",
+        "latest_date": "2026-07-03",
+        "activity_date": "2026-07-03",
+        "recovery_date": "2026-07-03",
+        "readiness": {
+            "score": 84,
+            "label": "green",
+            "recommendation": "A normal training day is reasonable if you feel good.",
+            "evidence": [
+                "Latest sleep is strong at 9.4h.",
+                "HRV is above recent baseline, but the baseline is low confidence.",
+                "Resting heart rate is steady: 60 bpm.",
+            ],
+        },
+        "today": {
+            "steps": 7200,
+            "active_minutes": 44,
+            "active_zone_minutes": 18,
+            "hrv_ms": 92.1,
+            "resting_heart_rate": 60,
+            "sleep": {"asleep_hours": 9.4, "sessions_count": 1},
+            "latest_training_load": {"date": "2026-07-03", "active_zone_minutes": 9},
+        },
+    }
+
+    plan = workout_plan_for_activity(
+        context=context,
+        planned_activity="useful movement session",
+        target_areas=[],
+        constraints="I feel normal today but only have 20 minutes between meetings.",
+        duration_minutes=20,
+    )
+    joined_guidance = " ".join(
+        [plan["coach_response"]["short_answer"], *plan["focus"], *plan["session_guidance"], *plan["avoid"]]
+    ).lower()
+
+    assert plan["recommended_intensity"] == "moderate"
+    assert plan["rpe_cap"] == 7
+    assert plan["data_used"]["short_constrained_session"] is True
+    assert plan["data_used"]["explicit_high_intensity_request"] is False
+    assert plan["data_used"]["requested_duration_minutes"] == 20
+    assert any("Short time box" in item for item in plan["limiting_factors"])
+    assert "compact and useful" in joined_guidance
+    assert "leave one gear unused" in joined_guidance
+    assert "all-out workout" in joined_guidance
+
+
+def test_short_session_keeps_high_intensity_when_user_explicitly_requests_it() -> None:
+    context = {
+        "status": "ok",
+        "latest_date": "2026-07-03",
+        "activity_date": "2026-07-03",
+        "recovery_date": "2026-07-03",
+        "readiness": {
+            "score": 86,
+            "label": "green",
+            "recommendation": "A normal training day is reasonable if you feel good.",
+            "evidence": ["Latest sleep is strong at 8.5h.", "Resting heart rate is steady."],
+        },
+        "today": {
+            "steps": 4500,
+            "active_minutes": 18,
+            "active_zone_minutes": 6,
+            "hrv_ms": 72.0,
+            "resting_heart_rate": 54,
+            "sleep": {"asleep_hours": 8.5, "sessions_count": 1},
+            "latest_training_load": {"date": "2026-07-03", "active_zone_minutes": 6},
+        },
+    }
+
+    plan = workout_plan_for_activity(
+        context=context,
+        planned_activity="hard intervals",
+        target_areas=[],
+        constraints="I only have 20 minutes and specifically want hard intervals.",
+        duration_minutes=20,
+    )
+
+    assert plan["recommended_intensity"] == "moderate-to-hard"
+    assert plan["rpe_cap"] == 8
+    assert plan["data_used"]["short_constrained_session"] is True
+    assert plan["data_used"]["explicit_high_intensity_request"] is True
+    assert not any("Short time box" in item for item in plan["limiting_factors"])
+
+
 def test_upper_body_plan_with_sore_legs_stays_useful_and_leg_sparing() -> None:
     context = {
         "status": "ok",
