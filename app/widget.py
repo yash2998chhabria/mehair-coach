@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 
 
-WIDGET_URI = "ui://mehair/today-v22.html"
+WIDGET_URI = "ui://mehair/today-v23.html"
 LEGACY_WIDGET_URIS = (
     "ui://mehair/today-v1.html",
     "ui://mehair/today-v2.html",
@@ -26,6 +26,7 @@ LEGACY_WIDGET_URIS = (
     "ui://mehair/today-v19.html",
     "ui://mehair/today-v20.html",
     "ui://mehair/today-v21.html",
+    "ui://mehair/today-v22.html",
 )
 WIDGET_RESOURCE_URIS = (WIDGET_URI, *LEGACY_WIDGET_URIS)
 WIDGET_MIME_TYPE = "text/html;profile=mcp-app"
@@ -731,7 +732,7 @@ TODAY_WIDGET_HTML = """
       async function initialize() {
         try {
           await rpcRequest("ui/initialize", {
-            appInfo: { name: "mehair coach", version: "0.7.3" },
+            appInfo: { name: "mehair coach", version: "0.7.4" },
             appCapabilities: {},
             protocolVersion: "2026-01-26",
           });
@@ -792,11 +793,13 @@ TODAY_WIDGET_HTML = """
           data.metrics ||
           data.clue_type ||
           data.comparison_type ||
-          data.requested_metrics
+          data.requested_metrics ||
+          data.suggested_card
         );
       }
 
       function toViewModel(data) {
+        if (data?.suggested_card && typeof data.suggested_card === "object") return toViewModel(data.suggested_card);
         if (data?.overview_type === "health_overview" && data?.sections) return healthOverviewModel(data);
         if (data?.clue_type === "health_question_clues") return questionCluesModel(data);
         if (data?.comparison_type === "sleep_heart_recovery") return recoveryComparisonModel(data);

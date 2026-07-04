@@ -53,6 +53,9 @@ SERVER_INSTRUCTIONS = (
     "and user-context axes instead of relying on exact words in the prompt. Avoid leading "
     "with raw tables or unexplained evidence logs. Do not say a tool was "
     "blocked unless the tool result itself has an error or setup-required status. "
+    "If get_health_question_clues returns suggested_card, treat suggested_card as the current "
+    "card-ready coaching result for that turn; answer from it or make the next recommended tool "
+    "call, but do not stop at a generic signals card when the user asked for a workout card. "
     "Match the user's actual situation: do not default to 'I feel off', fatigue, soreness, or recovery "
     "framing unless the user says it or the synced/check-in signals support it. For neutral or positive "
     "questions, give normal training permission with clear guardrails and the data that would change the call. "
@@ -517,7 +520,10 @@ def create_server(settings_override: Settings | None = None) -> ServerBundle:
         description=(
             "Natural-language routing helper for realistic health, recovery, sleep, heart, soreness, "
             "oxygen, or workout questions. Use it when the prompt is informal, broad, diagnostic-sounding, "
-            "or asks 'what data matters?' / 'what other signals are relevant?'. It identifies likely "
+            "or asks 'what data matters?' / 'what other signals are relevant?'. For direct workout-card "
+            "requests, prefer recommend_workout_today or plan_workout_with_health_context first. If this "
+            "tool is called first for an obvious workout-card request, use its suggested_card field as the "
+            "current card instead of stopping at a generic clues card. It identifies likely "
             "intents, the best synced Fitbit metrics to inspect, visible clues, recommended follow-up "
             "tools, and conversation flow options without forcing a brittle script."
         ),
@@ -528,7 +534,15 @@ def create_server(settings_override: Settings | None = None) -> ServerBundle:
         user_id = current_user_id()
         if not user_id:
             return setup_required()
-        return health_store.health_question_clues(user_id, question, max(1, min(days, 30)))
+        safe_days = max(1, min(days, 30))
+        clues = health_store.health_question_clues(user_id, question, safe_days)
+        return _augment_health_question_clues_for_card(
+            clues=clues,
+            question=question,
+            user_id=user_id,
+            health_store=health_store,
+            days=safe_days,
+        )
 
     @mcp.tool(
         title="Recovery signal comparison",
@@ -961,6 +975,158 @@ def create_server(settings_override: Settings | None = None) -> ServerBundle:
     )
 
 
+def _augment_health_question_clues_for_card(
+    *,
+    clues: dict[str, Any],
+    question: str,
+    user_id: str,
+    health_store: HealthStore,
+    days: int,
+) -> dict[str, Any]:
+    if clues.get("status") != "ok" or not _question_clues_should_attach_card(clues, question):
+        return clues
+
+    context = health_store.health_overview(user_id, days)
+    if context.get("status") != "ok":
+        return clues
+
+    question_text = str(question or "").strip()
+    if _question_prefers_specific_workout_card(question_text, clues):
+        planned_activity, target_areas = _workout_activity_from_question(question_text)
+        suggested_card = workout_plan_for_activity(
+            context=context,
+            planned_activity=planned_activity,
+            target_areas=target_areas,
+            constraints=question_text,
+            goal=health_store.latest_goal(user_id),
+            checkins=health_store.recent_checkins(user_id),
+        )
+        card_tool = "plan_workout_with_health_context"
+    else:
+        suggested_card = workout_recommendation(
+            context=context,
+            goal=health_store.latest_goal(user_id),
+            checkins=health_store.recent_checkins(user_id),
+            workout_history=health_store.workout_history(user_id, days),
+            current_feeling=question_text,
+        )
+        card_tool = "recommend_workout_today"
+
+    if suggested_card.get("status") != "ok":
+        return clues
+
+    guidance = list(clues.get("answering_guidance") or [])
+    guidance.insert(
+        0,
+        "This result includes suggested_card because the prompt asked for workout coaching; use suggested_card as the card-ready answer if you do not make another tool call.",
+    )
+    guidance.insert(
+        1,
+        "Do not say sync is unavailable. sync_latest_fitbit_data and sync_and_get_health_overview are available when a fresh cloud pull is actually needed.",
+    )
+
+    recommended_sequence = _dedupe([card_tool, *clues.get("recommended_tool_sequence", [])])
+    return {
+        **clues,
+        "recommended_tool_sequence": recommended_sequence,
+        "suggested_card": suggested_card,
+        "suggested_card_type": "workout_plan"
+        if card_tool == "plan_workout_with_health_context"
+        else "today_workout",
+        "suggested_card_tool": card_tool,
+        "answering_guidance": _dedupe(guidance),
+        "sync_tool_available": True,
+        "sync_guidance": (
+            "Use latest available synced data for normal coaching. If the user explicitly asks to sync, "
+            "refresh, pull, or update, call sync_latest_fitbit_data or sync_and_get_health_overview; "
+            "do not describe syncing as unavailable."
+        ),
+    }
+
+
+def _question_clues_should_attach_card(clues: dict[str, Any], question: str) -> bool:
+    intents = set(clues.get("intent_hints") or [])
+    if "active_workout" in intents:
+        return False
+    if not ({"workout_decision", "daily_plan"} & intents):
+        return False
+    text = str(question or "").lower()
+    return _mentions(
+        text,
+        (
+            "card",
+            "workout",
+            "work out",
+            "train",
+            "run",
+            "lift",
+            "gym",
+            "movement",
+            "session",
+            "what should i do",
+            "how hard",
+            "enough",
+        ),
+    )
+
+
+def _question_prefers_specific_workout_card(question: str, clues: dict[str, Any]) -> bool:
+    text = question.lower()
+    context_cues = clues.get("decision_frame", {}).get("user_context_cues", [])
+    if any(
+        item.get("cue") in {"time_budget", "reserve_energy_or_future_event", "load_stacking"}
+        for item in context_cues
+    ):
+        return True
+    return _mentions(
+        text,
+        (
+            "card",
+            "run",
+            "jog",
+            "lift",
+            "gym",
+            "upper",
+            "lower",
+            "chest",
+            "back",
+            "legs",
+            "mobility",
+            "stretch",
+            "class",
+            "meeting",
+            "work",
+        ),
+    )
+
+
+def _workout_activity_from_question(question: str) -> tuple[str, list[str]]:
+    text = question.lower()
+    target_areas: list[str] = []
+    if _mentions(text, ("upper", "upper body", "arms", "shoulders")):
+        target_areas.append("upper body")
+    if _mentions(text, ("chest",)):
+        target_areas.append("chest")
+    if _mentions(text, ("back",)):
+        target_areas.append("back")
+    if _mentions(text, ("core", "abs")):
+        target_areas.append("core")
+    if _mentions(text, ("legs", "leg day", "lower body")) and not _protect_lower_body_from_text(text):
+        target_areas.append("legs")
+
+    if _mentions(text, ("run", "running", "jog", "jogging")):
+        return "run", target_areas
+    if _mentions(text, ("walk", "walking")):
+        return "walk", target_areas
+    if _mentions(text, ("bike", "cycling", "cycle")):
+        return "bike", target_areas
+    if _mentions(text, ("mobility", "stretch", "stretching")):
+        return "mobility", target_areas
+    if target_areas:
+        return f"{' and '.join(target_areas)} lift", target_areas
+    return "general workout", target_areas
+
+
 def workout_recommendation(
     context: dict[str, Any],
     goal: dict[str, Any] | None = None,
@@ -987,6 +1153,9 @@ def workout_recommendation(
     subjective_limiter = _subjective_limiter_from_text(current_feeling_lower)
     stated_high_movement = _high_movement_from_text(current_feeling_lower)
     reserve_energy_obligation = _reserve_energy_obligation_from_text(current_feeling_lower)
+    deadline_movement_minutes = _movement_minutes_before_obligation(current_feeling_lower)
+    if deadline_movement_minutes is not None:
+        time_limit_minutes = deadline_movement_minutes
     soreness_rating = _first_present(stated_soreness, stated_pain, _latest_rating(checkins or [], "soreness"))
     energy_rating = _first_present(stated_energy, _latest_rating(checkins or [], "energy"))
     stress_rating = _latest_rating(checkins or [], "stress")
@@ -1070,6 +1239,10 @@ def workout_recommendation(
             "attention, and calm breathing for the rest of the day."
         )
         next_actions.append("Keep this to a minimum useful dose and finish feeling clearer than when you started.")
+        if deadline_movement_minutes is not None:
+            next_actions.append(
+                f"Use about {deadline_movement_minutes} minutes for movement, then leave time to cool down, hydrate, and switch contexts."
+            )
         avoid.append("A workout that leaves you rushed, sweaty, drained, or mentally foggy for the next obligation")
     if sleep_hours is not None and sleep_hours < 5:
         plan += " Keep impact low because the latest sleep block was short."
@@ -1195,6 +1368,7 @@ def workout_recommendation(
             "illness_flags": illness_flags,
             "current_feeling": current_feeling_text or None,
             "time_limit_minutes": time_limit_minutes,
+            "deadline_movement_minutes": deadline_movement_minutes,
             "subjective_limiter": subjective_limiter,
             "reserve_energy_obligation": reserve_energy_obligation,
             "latest_checkins": checkins or [],
@@ -1217,6 +1391,7 @@ def workout_recommendation(
             "stress_checkin": stress_rating,
             "current_feeling": current_feeling_text or None,
             "time_limit_minutes": time_limit_minutes,
+            "deadline_movement_minutes": deadline_movement_minutes,
             "subjective_limiter": subjective_limiter,
             "reserve_energy_obligation": reserve_energy_obligation,
             "stated_energy": stated_energy,
@@ -1265,6 +1440,12 @@ def workout_plan_for_activity(
     constraint_text = (constraints or "").lower()
     all_context_text = " ".join([planned, constraint_text])
     requested_duration_minutes = duration_minutes or _time_limit_minutes_from_text(all_context_text)
+    deadline_movement_minutes = _movement_minutes_before_obligation(all_context_text)
+    if deadline_movement_minutes is not None:
+        requested_duration_minutes = min(
+            requested_duration_minutes or deadline_movement_minutes,
+            deadline_movement_minutes,
+        )
     readiness_label = readiness.get("label", "pending")
     readiness_score = int(readiness.get("score", 0))
     stated_energy = _rating_from_text(constraint_text, ("energy", "energy level"))
@@ -1388,6 +1569,10 @@ def workout_plan_for_activity(
         limiting_factors.append(
             "User has a near-term class, meeting, work, travel, or social obligation, so the session should leave energy and focus available."
         )
+        if deadline_movement_minutes is not None:
+            limiting_factors.append(
+                f"Near-term obligation timing means the useful movement dose should be about {deadline_movement_minutes} minutes, not the full countdown window."
+            )
     if protect_lower_body:
         rpe_cap = min(rpe_cap, 6)
         limiting_factors.append(
@@ -1410,7 +1595,11 @@ def workout_plan_for_activity(
     if reserve_energy_obligation and _generic_workout_text(planned_activity):
         exercise_blocks = []
         substitutions.append("Generic workout -> easy zone 2, mobility, or light technique that does not need recovery.")
-    if requested_duration_minutes:
+    if deadline_movement_minutes is not None:
+        session.append(
+            f"Keep the movement dose around {deadline_movement_minutes} minutes, then stop with time to cool down, hydrate, and switch contexts."
+        )
+    elif requested_duration_minutes:
         session.append(f"Keep the session near {max(15, min(requested_duration_minutes, 120))} minutes including warm-up.")
     if short_constrained_session and not explicit_high_intensity_request:
         focus.insert(0, "Make the workout compact enough that you can return to the day clearer, not wrecked.")
@@ -1578,6 +1767,7 @@ def workout_plan_for_activity(
         "limiting_factors": deduped_limiting_factors,
         "training_decision": training_decision,
         "model_signal_context": model_signal_context(signal_snapshot),
+        "data_freshness": context.get("data_freshness", {}),
         "data_used": {
             "activity_date": activity_date,
             "recovery_date": recovery_date,
@@ -1608,6 +1798,7 @@ def workout_plan_for_activity(
             "short_constrained_session": short_constrained_session,
             "explicit_high_intensity_request": explicit_high_intensity_request,
             "requested_duration_minutes": requested_duration_minutes,
+            "deadline_movement_minutes": deadline_movement_minutes,
             "goal": goal,
             "available_signal_count": len(signal_snapshot.get("signals", [])),
             "available_signal_ids": signal_snapshot.get("available_signal_ids", []),
@@ -2315,6 +2506,7 @@ def _workout_session_blueprint(
     if subjective_limiter:
         blueprint.append("Readiness screen: after 10-15 minutes, continue only if you feel better, not worse.")
 
+    priority_session = _priority_session_line(session)
     block_names = _representative_exercise_names(exercise_blocks)
     if block_names:
         if _exercise_blocks_are_aerobic(exercise_blocks):
@@ -2326,7 +2518,9 @@ def _workout_session_blueprint(
     elif focus:
         blueprint.append(focus[0])
 
-    if len(session) > 1:
+    if priority_session and priority_session not in blueprint:
+        blueprint.append(priority_session)
+    elif len(session) > 1:
         blueprint.append(session[1])
     else:
         blueprint.append(f"Stop with energy in reserve; RPE stays <= {rpe_cap}/10.")
@@ -2335,6 +2529,14 @@ def _workout_session_blueprint(
         blueprint.append(f"Main coaching cue: {focus[0]}")
 
     return _dedupe(blueprint)[:5]
+
+
+def _priority_session_line(session: list[str]) -> str | None:
+    for item in session:
+        lower = item.lower()
+        if "movement dose" in lower or "switch contexts" in lower or "cool down" in lower:
+            return item
+    return None
 
 
 def _representative_exercise_names(exercise_blocks: list[dict[str, Any]]) -> list[str]:
@@ -2680,9 +2882,11 @@ def _workout_plan_coach_response(
     elif subjective_limiter and preserving_next_session and not illness_flags:
         short_answer += " If the warm-up feels bad, downshift immediately so tomorrow stays protected."
 
+    priority_session = _priority_session_line(session)
     what_to_do = [
         summary,
         f"RPE (how hard it feels) cap: {rpe_cap}/10, which means {_rpe_plain(rpe_cap)}.",
+        priority_session,
         *session[:2],
         *focus[:2],
     ]
@@ -3165,6 +3369,56 @@ def _time_limit_minutes_from_text(text: str) -> int | None:
         return None
     minutes = int(matches[0])
     return max(5, min(minutes, 180))
+
+
+def _movement_minutes_before_obligation(text: str) -> int | None:
+    lower = (text or "").lower()
+    if not lower:
+        return None
+    obligation_terms = (
+        "class",
+        "meeting",
+        "work",
+        "shift",
+        "call",
+        "appointment",
+        "travel",
+        "flight",
+        "commute",
+        "dinner",
+        "date",
+        "social",
+        "plans",
+        "reservation",
+        "event",
+    )
+    if not _mentions(lower, obligation_terms):
+        return None
+    obligation_pattern = (
+        "class|meeting|work|shift|call|appointment|travel|flight|commute|dinner|"
+        "date|social|plans|reservation|event"
+    )
+    match = re.search(
+        rf"\b(?:{obligation_pattern})\b.{{0,32}}?\b(?:in|within|starts in|begins in)\s+(\d{{1,3}})\s*(?:min|mins|minute|minutes)\b",
+        lower,
+    )
+    if not match:
+        match = re.search(
+            rf"\b(?:in|within)\s+(\d{{1,3}})\s*(?:min|mins|minute|minutes)\b.{{0,32}}?\b(?:{obligation_pattern})\b",
+            lower,
+        )
+    if not match:
+        return None
+    countdown = max(5, min(int(match.group(1)), 180))
+    if countdown <= 20:
+        return max(5, countdown - 10)
+    if countdown <= 45:
+        return 20
+    if countdown <= 75:
+        return 25
+    if countdown <= 120:
+        return 35
+    return None
 
 
 def _short_constrained_session(text: str, minutes: int | None) -> bool:

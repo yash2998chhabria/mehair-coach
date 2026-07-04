@@ -65,6 +65,7 @@ async def test_mcp_tool_list_matches_private_beta_plan() -> None:
     ].description
     assert "Narrow readiness score" in by_name["get_recovery_readiness"].description
     assert "what other signals are relevant" in by_name["get_health_question_clues"].description
+    assert "suggested_card" in by_name["get_health_question_clues"].description
     assert "without forcing a brittle script" in by_name["get_health_question_clues"].description
     assert "oxygen/breathing signals can be named as background" in by_name[
         "get_recovery_signal_comparison"
@@ -102,6 +103,7 @@ def test_server_instructions_keep_normal_latest_questions_fast() -> None:
     assert "include the date/window" in SERVER_INSTRUCTIONS
     assert "recorded step days" in SERVER_INSTRUCTIONS
     assert "When a tool returns coach_response" in SERVER_INSTRUCTIONS
+    assert "If get_health_question_clues returns suggested_card" in SERVER_INSTRUCTIONS
     assert "training_decision, model_signal_context, and available_signal_snapshot" in SERVER_INSTRUCTIONS
     assert "decision_frame.model_decision_policy" in SERVER_INSTRUCTIONS
     assert "safety, recovery, load, capacity" in SERVER_INSTRUCTIONS
@@ -137,14 +139,15 @@ async def test_widget_resource_is_registered() -> None:
 
     assert str(resources[0].uri) == WIDGET_URI
     assert resources[0].mimeType == "text/html;profile=mcp-app"
-    assert WIDGET_URI == "ui://mehair/today-v22.html"
-    assert "ui://mehair/today-v21.html" in LEGACY_WIDGET_URIS
+    assert WIDGET_URI == "ui://mehair/today-v23.html"
+    assert "ui://mehair/today-v22.html" in LEGACY_WIDGET_URIS
     assert "Preparing card" in html
-    assert 'appInfo: { name: "mehair coach", version: "0.7.3" }' in html
+    assert 'appInfo: { name: "mehair coach", version: "0.7.4" }' in html
     assert "mehair-coach-widget" not in html
     assert 'renderEmpty("Preparing the health card from the latest tool result.", "waiting")' in html
     assert "function hasCardData(data)" in html
     assert "function withDataWindow(model, data)" in html
+    assert "data?.suggested_card" in html
     assert "Latest Fitbit data pull was" in html
     assert "not fresh; sync recommended" in html
     assert "using Fitbit data through" in html

@@ -1,6 +1,11 @@
 from __future__ import annotations
 
-from app.main import active_workout_guidance, workout_plan_for_activity, workout_recommendation
+from app.main import (
+    _augment_health_question_clues_for_card,
+    active_workout_guidance,
+    workout_plan_for_activity,
+    workout_recommendation,
+)
 
 
 def test_planned_chest_day_downshifts_for_red_readiness_and_back_soreness() -> None:
@@ -1304,15 +1309,103 @@ def test_generic_workout_before_class_renders_as_minimum_useful_movement() -> No
     assert plan["recommended_intensity"] == "moderate"
     assert plan["rpe_cap"] <= 6
     assert plan["data_used"]["reserve_energy_obligation"] is True
+    assert plan["data_used"]["deadline_movement_minutes"] == 20
+    assert plan["data_used"]["requested_duration_minutes"] == 20
     assert plan["intent_context"]["primary_job"].startswith("get useful movement without draining")
     assert "smallest useful dose" in joined
     assert "breathing calm" in joined
+    assert "20 minutes" in joined
+    assert "40 minutes including warm-up" not in joined
     assert "moderate-to-hard" not in joined
     assert "normal session" not in joined
     assert "rpe 8" not in joined
     assert "main movement" not in joined
     assert "accessory circuit" not in joined
     assert not plan["exercise_blocks"]
+
+
+def test_health_question_clues_attaches_workout_card_for_before_class_prompt() -> None:
+    context = {
+        "status": "ok",
+        "latest_date": "2026-07-04",
+        "activity_date": "2026-07-04",
+        "recovery_date": "2026-07-03",
+        "readiness": {
+            "score": 78,
+            "label": "green",
+            "recommendation": "A normal training day is reasonable if you feel good.",
+            "evidence": ["Latest sleep is strong at 9.4h.", "HRV is above recent baseline."],
+        },
+        "today": {
+            "steps": 2787,
+            "active_minutes": 20,
+            "active_zone_minutes": 0,
+            "hrv_ms": 92.1,
+            "resting_heart_rate": 60,
+            "sleep": {"asleep_hours": 9.4, "sessions_count": 1},
+            "latest_training_load": {"date": "2026-07-03", "active_zone_minutes": 23},
+        },
+        "sections": {
+            "heart": {
+                "latest_hrv_ms": 92.1,
+                "average_hrv_ms": 61.7,
+                "latest_resting_heart_rate": 60,
+                "average_resting_heart_rate": 64,
+            }
+        },
+        "data_freshness": {
+            "freshness_level": "aging",
+            "freshness_label": "aging 15-60 min",
+            "needs_sync_before_time_sensitive_advice": True,
+        },
+        "available_signal_snapshot": {"status": "ok", "signals": []},
+    }
+
+    class FakeStore:
+        def health_overview(self, user_id: str, days: int) -> dict:
+            assert user_id == "user_1"
+            assert days == 14
+            return context
+
+        def latest_goal(self, user_id: str) -> dict:
+            return {"status": "empty"}
+
+        def recent_checkins(self, user_id: str) -> list:
+            return []
+
+        def workout_history(self, user_id: str, days: int) -> dict:
+            return {"status": "ok", "summary": {"workout_count": 0}}
+
+    clues = {
+        "status": "ok",
+        "clue_type": "health_question_clues",
+        "intent_hints": ["daily_plan", "workout_decision"],
+        "recommended_tool_sequence": ["get_health_overview"],
+        "answering_guidance": [],
+        "decision_frame": {
+            "user_context_cues": [
+                {"cue": "time_budget"},
+                {"cue": "reserve_energy_or_future_event"},
+            ]
+        },
+    }
+
+    result = _augment_health_question_clues_for_card(
+        clues=clues,
+        question="I have class in 40 minutes; what is enough movement today? Show a fresh workout card.",
+        user_id="user_1",
+        health_store=FakeStore(),
+        days=14,
+    )
+
+    assert result["suggested_card_tool"] == "plan_workout_with_health_context"
+    assert result["suggested_card"]["planned_activity"] == "Minimum Useful Movement"
+    assert result["suggested_card"]["rpe_cap"] <= 6
+    assert result["suggested_card"]["data_used"]["deadline_movement_minutes"] == 20
+    assert result["suggested_card"]["data_freshness"]["freshness_level"] == "aging"
+    assert result["recommended_tool_sequence"][0] == "plan_workout_with_health_context"
+    assert result["sync_tool_available"] is True
+    assert any("suggested_card" in item for item in result["answering_guidance"])
 
 
 def test_today_recommendation_returns_human_coach_response_without_losing_labels() -> None:
@@ -1643,7 +1736,10 @@ def test_today_recommendation_before_class_uses_minimum_effective_dose() -> None
     assert recommendation["intensity"] == "moderate"
     assert recommendation["rpe_cap"] <= 6
     assert recommendation["data_used"]["reserve_energy_obligation"] is True
+    assert recommendation["data_used"]["deadline_movement_minutes"] == 20
+    assert recommendation["data_used"]["time_limit_minutes"] == 20
     assert "smallest useful dose" in joined
+    assert "20 minutes" in joined
     assert "switch contexts" in joined
     assert any("next obligation" in item for item in recommendation["avoid"])
     assert not any("moderate-to-hard" in item.lower() for item in coach["what_to_do"])
