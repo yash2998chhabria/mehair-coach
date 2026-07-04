@@ -995,6 +995,47 @@ def test_today_recommendation_uses_high_steps_as_leg_load_context() -> None:
     assert "hard lower-body work" in joined
 
 
+def test_planned_workout_uses_high_movement_as_leg_load_context() -> None:
+    context = {
+        "status": "ok",
+        "latest_date": "2026-07-03",
+        "activity_date": "2026-07-03",
+        "recovery_date": "2026-07-03",
+        "readiness": {
+            "score": 84,
+            "label": "green",
+            "recommendation": "A normal training day is reasonable if you feel good.",
+            "evidence": ["Latest sleep is strong at 8.0h.", "Resting heart rate is steady."],
+        },
+        "today": {
+            "steps": 18500,
+            "active_minutes": 120,
+            "active_zone_minutes": 8,
+            "hrv_ms": 60,
+            "resting_heart_rate": 56,
+            "sleep": {"asleep_hours": 8.0, "sessions_count": 1},
+            "latest_training_load": {"date": "2026-07-03", "active_zone_minutes": 8},
+        },
+    }
+
+    plan = workout_plan_for_activity(
+        context=context,
+        planned_activity="upper body lift",
+        target_areas=["chest", "back"],
+        constraints="I walked a lot today and my legs feel okay.",
+        duration_minutes=45,
+    )
+    joined = " ".join([plan["summary"], *plan["focus"], *plan["session_guidance"], *plan["avoid"]]).lower()
+
+    assert plan["recommended_intensity"] == "moderate"
+    assert plan["rpe_cap"] == 7
+    assert plan["data_used"]["stated_high_movement"] is True
+    assert "18,500 steps on 2026-07-03 so far" in " ".join(plan["limiting_factors"])
+    assert "leg/load context" in joined
+    assert "hard lower-body work" in joined
+    assert any("upper-body lift" in item for item in plan["substitutions"])
+
+
 def test_workout_plan_does_not_flag_negated_illness_terms() -> None:
     context = {
         "status": "ok",

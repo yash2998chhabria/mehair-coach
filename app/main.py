@@ -953,6 +953,7 @@ def workout_plan_for_activity(
     stated_soreness = _rating_from_text(constraint_text, ("soreness", "sore", "tightness", "tight"))
     stated_pain = _rating_from_text(constraint_text, ("pain", "ache", "tightness", "tight"))
     subjective_limiter = _subjective_limiter_from_text(constraint_text)
+    stated_high_movement = _high_movement_from_text(constraint_text)
     soreness_rating = _first_present(stated_soreness, stated_pain, _latest_rating(checkins or [], "soreness"))
     energy_rating = _first_present(stated_energy, _latest_rating(checkins or [], "energy"))
     illness_flags = _dedupe(_illness_flags_from_text(all_context_text) + _illness_flags_from_checkins(checkins or []))
@@ -977,6 +978,8 @@ def workout_plan_for_activity(
     intensity = _base_intensity(readiness_label)
     rpe_cap = {"easy": 6, "moderate": 7, "moderate-to-hard": 8}.get(intensity, 6)
     limiting_factors = _normalized_readiness_evidence(context)
+    steps_today = _safe_int(today.get("steps"))
+    high_step_load = steps_today is not None and steps_today >= 15000
     if soreness_rating and soreness_rating >= 7:
         intensity = "easy"
         rpe_cap = min(rpe_cap, 6)
@@ -1008,6 +1011,17 @@ def workout_plan_for_activity(
             intensity = "moderate"
         rpe_cap = min(rpe_cap, 7)
         limiting_factors.append("User-stated they do not feel 100%, so the session should be useful but conservative.")
+    if stated_high_movement or high_step_load:
+        if intensity == "moderate-to-hard":
+            intensity = "moderate"
+        rpe_cap = min(rpe_cap, 7)
+        if high_step_load and steps_today is not None:
+            limiting_factors.append(
+                f"High-step movement context: {steps_today:,} steps on {activity_date} so far. "
+                "Treat steps as leg/load context, not a standalone recovery score."
+            )
+        else:
+            limiting_factors.append("User-stated high walking or step volume today should count as leg/load context.")
     if preserving_next_session:
         rpe_cap = min(rpe_cap, 6)
         limiting_factors.append("User wants to preserve readiness for another sport or workout soon.")
@@ -1031,6 +1045,11 @@ def workout_plan_for_activity(
         focus.insert(0, "Make this a minimum useful session, not a proving-ground session.")
         session.insert(0, "Use the first 10-15 minutes as a pass/fail readiness screen before adding intensity.")
         avoid.append("Chasing PRs, extra finishers, or high-volume work on a not-100% day")
+    if stated_high_movement or high_step_load:
+        focus.insert(0, "Account for today's walking or step volume as leg load before choosing the workout.")
+        session.insert(0, "If legs feel heavy in the warm-up, bias toward upper-body, technique, mobility, or easy zone 2.")
+        avoid.append("Stacking hard lower-body work, HIIT, or long conditioning on top of a high-step day")
+        substitutions.append("Leg-heavy lift or intervals -> upper-body lift, technique work, mobility, or easy zone 2.")
     if preserving_next_session:
         session.append("Leave the session feeling fresher than you started so tomorrow's sport session stays available.")
         avoid.append("Extra finishers that steal from tomorrow's squash or sport session")
@@ -1059,6 +1078,8 @@ def workout_plan_for_activity(
         summary += " Treat this as a quality/recovery-biased session because recovery signals are red."
     if illness_flags:
         summary += " Illness signs should override the workout plan until symptoms are clearly improving."
+    if stated_high_movement or high_step_load:
+        summary += " Today's walking or step volume should count as leg/load context, so avoid stacking extra hard lower-body work."
     stop_conditions = _workout_stop_conditions(
         rpe_cap,
         subjective_limiter=subjective_limiter,
@@ -1129,6 +1150,7 @@ def workout_plan_for_activity(
             "stated_soreness": stated_soreness,
             "stated_pain": stated_pain,
             "subjective_limiter": subjective_limiter,
+            "stated_high_movement": stated_high_movement,
             "illness_flags": illness_flags,
             "preserving_next_session": preserving_next_session,
             "goal": goal,
