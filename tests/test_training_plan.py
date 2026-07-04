@@ -1358,6 +1358,7 @@ def test_today_recommendation_returns_human_coach_response_without_losing_labels
     assert any("HRV (recovery stress signal)" in item for item in recommendation["coach_response"]["why"])
     assert any("Resting HR" in item for item in recommendation["coach_response"]["why"])
     assert any("SpO2" in item for item in recommendation["coach_response"]["why"])
+    assert not any("heart-recovery context" in item for item in recommendation["coach_response"]["why"] if "SpO2" in item)
     assert any("Respiratory rate" in item for item in recommendation["coach_response"]["why"])
     assert any("Sleep temperature" in item for item in recommendation["coach_response"]["why"])
     assert any("18,897 steps across 4 recorded days" in item for item in recommendation["coach_response"]["why"])

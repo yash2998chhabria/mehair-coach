@@ -1400,6 +1400,7 @@ class HealthStore:
             watchouts=watchouts,
             next_actions=next_actions,
         )
+        unusual_signals = _unusual_signal_summary(signal_snapshot, daily_brief)
         return {
             "status": "ok",
             "overview_type": "health_overview",
@@ -1419,6 +1420,7 @@ class HealthStore:
                 "workouts": workouts,
             },
             "daily_brief": daily_brief,
+            "unusual_signals": unusual_signals,
             "available_signal_snapshot": signal_snapshot,
             "model_signal_context": model_signal_context(signal_snapshot),
             "positives": positives,
@@ -1758,6 +1760,7 @@ class HealthStore:
             "readiness": context["readiness"],
             "today": _compact_today_context(context["today"]),
             "overview_context": _compact_overview_context(overview),
+            "unusual_signals": overview.get("unusual_signals", {}),
             "available_signal_snapshot": signal_snapshot,
             "model_signal_context": model_signal_context(signal_snapshot),
             "personal_context": personal_context,
@@ -1768,6 +1771,7 @@ class HealthStore:
                 "Prefer primary_conversation_flows over raw intent_hints when choosing tools for a natural user question.",
                 "Use conversation_flow_options when the user's wording is informal, broad, or not well captured by intent_hints.",
                 "Use available_signal_snapshot for broad, all-data, oxygen, breathing, or unusual-pattern questions so secondary signals are not ignored.",
+                "Use unusual_signals.ranked_watchouts first for questions like 'anything weird?' or 'what changed?' before falling back to a raw metric list.",
                 "Use decision_frame.model_decision_policy to choose data by safety, recovery, load, capacity, and user-context axes rather than by brittle wording alone.",
                 "Mention normal secondary signals briefly as context when they do not change the workout call.",
                 "Treat missing metrics as absent, not zero.",
@@ -2299,7 +2303,11 @@ def _available_signal_snapshot(
             latest_value=_round_optional(hrv, 1),
             unit="ms",
             latest_date=hrv_day.get("date"),
-            window_summary={"average_ms": _average(hrv_values), "days": len(hrv_values)},
+            window_summary={
+                "average_ms": _average(hrv_values),
+                "baseline_average_ms": _average(hrv_values[:-1]) if len(hrv_values) > 1 else None,
+                "days": len(hrv_values),
+            },
             why_it_matters="HRV is a recovery-stress clue that only becomes meaningful against your usual pattern.",
             coaching_use="Lower-than-usual HRV should reduce intensity; normal or high HRV supports training only when sleep, symptoms, and load agree.",
             use_when=["recovery", "hard_training", "fatigue", "stress"],
@@ -2316,7 +2324,11 @@ def _available_signal_snapshot(
             latest_value=rhr_day.get("resting_heart_rate"),
             unit="bpm",
             latest_date=rhr_day.get("date"),
-            window_summary={"average_bpm": _average(rhr_values), "days": len(rhr_values)},
+            window_summary={
+                "average_bpm": _average(rhr_values),
+                "baseline_average_bpm": _average(rhr_values[:-1]) if len(rhr_values) > 1 else None,
+                "days": len(rhr_values),
+            },
             why_it_matters="Resting heart rate can rise with stress, poor recovery, illness, or dehydration.",
             coaching_use="Elevated resting HR should make hard training harder to justify, especially with poor sleep or symptoms.",
             use_when=["recovery", "illness_clues", "fatigue", "hard_training"],
@@ -2346,6 +2358,11 @@ def _available_signal_snapshot(
     spo2_day = _last_with(daily_rows, ("spo2_avg", "spo2_sample"))
     if spo2_day:
         spo2 = spo2_day.get("spo2_avg") or (spo2_day.get("spo2_sample") or {}).get("avg")
+        spo2_values = [
+            value
+            for day in daily_rows
+            if (value := day.get("spo2_avg") or (day.get("spo2_sample") or {}).get("avg")) is not None
+        ]
         add_signal(
             signal_id="spo2",
             label="SpO2 / oxygen saturation",
@@ -2353,6 +2370,11 @@ def _available_signal_snapshot(
             latest_value=_round_optional(spo2, 1),
             unit="%",
             latest_date=spo2_day.get("date"),
+            window_summary={
+                "average_percentage": _average(spo2_values),
+                "baseline_average_percentage": _average(spo2_values[:-1]) if len(spo2_values) > 1 else None,
+                "days": len(spo2_values),
+            },
             details=spo2_day.get("spo2_sample") or {},
             why_it_matters="SpO2 is an oxygen-context signal; normal values are reassuring background but not a green light by themselves.",
             coaching_use="Use low or unusual SpO2 with respiratory rate, resting HR, sleep, and symptoms to lower intensity or recommend caution.",
@@ -2380,7 +2402,11 @@ def _available_signal_snapshot(
             latest_value=_round_optional(resp, 1),
             unit="breaths/min",
             latest_date=resp_day.get("date"),
-            window_summary={"average_breaths_per_minute": _average(resp_values), "days": len(resp_values)},
+            window_summary={
+                "average_breaths_per_minute": _average(resp_values),
+                "baseline_average_breaths_per_minute": _average(resp_values[:-1]) if len(resp_values) > 1 else None,
+                "days": len(resp_values),
+            },
             details=resp_sleep,
             why_it_matters="Overnight breathing rate can add recovery, illness, or stress context when it moves away from baseline.",
             coaching_use="Use elevated or unusual respiratory rate as a reason to cap intensity, especially with symptoms or low sleep.",
@@ -2428,6 +2454,11 @@ def _available_signal_snapshot(
     latest_load = _last_with(daily_rows, ("active_zone_minutes",))
     if latest_load:
         azm_values = [day.get("active_zone_minutes") for day in daily_rows if day.get("active_zone_minutes") is not None]
+        highest_azm_day = max(
+            (day for day in daily_rows if day.get("active_zone_minutes") is not None),
+            key=lambda day: _float({"value": day.get("active_zone_minutes")}, ["value"]),
+            default={},
+        )
         add_signal(
             signal_id="active_zone_minutes",
             label="Active Zone Minutes (AZM)",
@@ -2435,7 +2466,12 @@ def _available_signal_snapshot(
             latest_value=latest_load.get("active_zone_minutes"),
             unit="min",
             latest_date=latest_load.get("date"),
-            window_summary={"total_minutes": round(sum(azm_values), 1), "average_minutes": _average(azm_values)},
+            window_summary={
+                "total_minutes": round(sum(azm_values), 1),
+                "average_minutes": _average(azm_values),
+                "max_minutes": highest_azm_day.get("active_zone_minutes"),
+                "max_date": highest_azm_day.get("date"),
+            },
             why_it_matters="AZM are Fitbit's compact hard-work minutes from elevated heart-rate zones.",
             coaching_use="High recent AZM means recovery cost is already present; avoid stacking another hard conditioning block.",
             use_when=["workout_intensity", "load_stacking", "cardio", "recovery"],
@@ -4905,6 +4941,366 @@ def _daily_coaching_brief(
             "freshness_level": freshness.get("freshness_level"),
             "sections_with_data": section_count,
         },
+    }
+
+
+def _unusual_signal_summary(
+    snapshot: dict[str, Any],
+    daily_brief: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    if snapshot.get("status") != "ok":
+        return {
+            "status": "missing",
+            "ranked_watchouts": [],
+            "checked_context": [],
+            "model_guidance": "No signal snapshot is available; do not invent unusual patterns.",
+        }
+
+    signals = snapshot.get("signals") or []
+    watchouts: list[dict[str, Any]] = []
+    checked_context: list[dict[str, Any]] = []
+    seen_watchouts: set[str] = set()
+
+    priority = {
+        "data_freshness": 0,
+        "readiness": 1,
+        "sleep_duration": 2,
+        "hrv": 3,
+        "resting_heart_rate": 4,
+        "respiratory_rate": 5,
+        "sleep_temperature": 6,
+        "spo2": 7,
+        "active_zone_minutes": 8,
+        "heart_rate_zones": 9,
+        "steps": 10,
+        "active_minutes": 11,
+        "heart_rate_samples": 12,
+        "energy": 13,
+        "soreness": 14,
+        "stress": 15,
+        "vo2_max": 20,
+    }
+    severity_rank = {"high": 0, "moderate": 1, "context": 2}
+
+    def add_watchout(
+        *,
+        signal_id: str,
+        label: str,
+        latest: str | None,
+        latest_date: str | None,
+        severity: str,
+        role: str,
+        why_it_matters: str,
+        coaching_action: str,
+        confidence: str | None = None,
+    ) -> None:
+        if signal_id in seen_watchouts:
+            return
+        seen_watchouts.add(signal_id)
+        watchouts.append(
+            {
+                "id": signal_id,
+                "signal": label,
+                "latest": latest,
+                "latest_date": latest_date,
+                "severity": severity,
+                "role": role,
+                "why_it_matters": why_it_matters,
+                "coaching_action": coaching_action,
+                "confidence": confidence or "context",
+                "priority": priority.get(signal_id, 99),
+            }
+        )
+
+    def add_context(signal: dict[str, Any], *, role: str, meaning: str) -> None:
+        signal_id = str(signal.get("id") or "")
+        if signal_id in seen_watchouts:
+            return
+        checked_context.append(
+            {
+                "id": signal_id,
+                "signal": signal.get("label") or signal_id,
+                "latest": signal.get("display"),
+                "latest_date": signal.get("latest_date"),
+                "role": role,
+                "meaning": meaning,
+                "confidence": signal.get("confidence") or "context",
+                "priority": priority.get(signal_id, 99),
+            }
+        )
+
+    for item in (daily_brief or {}).get("priority_signals", []):
+        if item.get("status") != "watchout":
+            continue
+        label = str(item.get("label") or "")
+        signal_id = {
+            "Data freshness": "data_freshness",
+            "Readiness": "readiness",
+            "Energy": "energy",
+            "Soreness": "soreness",
+            "Stress": "stress",
+        }.get(label)
+        if not signal_id:
+            continue
+        add_watchout(
+            signal_id=signal_id,
+            label=label,
+            latest=item.get("detail"),
+            latest_date=None,
+            severity="high" if label in {"Data freshness", "Readiness"} else "moderate",
+            role="safety_or_user_context" if label != "Readiness" else "primary_recovery_driver",
+            why_it_matters=item.get("impact") or "This can change the training call.",
+            coaching_action=item.get("impact") or "Use this to cap intensity or ask for current context.",
+            confidence="high",
+        )
+
+    for signal in signals:
+        signal_id = str(signal.get("id") or "")
+        latest = _number_or_none(signal.get("latest"))
+        latest_display = signal.get("display")
+        latest_date = signal.get("latest_date")
+        window = signal.get("window_summary") or {}
+        details = signal.get("details") or {}
+        confidence = signal.get("confidence") or "context"
+
+        if signal_id == "sleep_duration":
+            average = _number_or_none(window.get("average_hours"))
+            if latest is not None and latest < 6:
+                add_watchout(
+                    signal_id=signal_id,
+                    label="Sleep",
+                    latest=latest_display,
+                    latest_date=latest_date,
+                    severity="high" if latest < 5.5 else "moderate",
+                    role="primary_recovery_driver",
+                    why_it_matters="Short sleep is one of the clearest reasons to lower the training ceiling.",
+                    coaching_action="Bias toward easy or controlled work unless there is a strong reason to train harder.",
+                    confidence=confidence,
+                )
+            elif latest is not None and average is not None and latest <= average - 0.75:
+                add_watchout(
+                    signal_id=signal_id,
+                    label="Sleep",
+                    latest=latest_display,
+                    latest_date=latest_date,
+                    severity="moderate",
+                    role="primary_recovery_driver",
+                    why_it_matters=f"Sleep is {abs(round(latest - average, 1))}h below the recent average.",
+                    coaching_action="Use the warm-up as a readiness test and avoid adding extra volume.",
+                    confidence=confidence,
+                )
+            else:
+                add_context(signal, role="primary_recovery_background", meaning="Sleep was checked as a primary recovery signal.")
+
+        elif signal_id == "hrv":
+            average = _number_or_none(window.get("baseline_average_ms") or window.get("average_ms"))
+            if latest is not None and average and latest <= average * 0.9:
+                add_watchout(
+                    signal_id=signal_id,
+                    label="HRV",
+                    latest=latest_display,
+                    latest_date=latest_date,
+                    severity="moderate",
+                    role="primary_recovery_driver",
+                    why_it_matters=f"HRV is about {round(((average - latest) / average) * 100)}% below recent average.",
+                    coaching_action="Cap RPE and prefer controlled work until the warm-up feels clearly good.",
+                    confidence=confidence,
+                )
+            else:
+                add_context(signal, role="primary_recovery_background", meaning="HRV was checked against the recent baseline.")
+
+        elif signal_id == "resting_heart_rate":
+            average = _number_or_none(window.get("baseline_average_bpm") or window.get("average_bpm"))
+            if latest is not None and average is not None and latest >= average + 5:
+                add_watchout(
+                    signal_id=signal_id,
+                    label="Resting HR",
+                    latest=latest_display,
+                    latest_date=latest_date,
+                    severity="moderate",
+                    role="primary_recovery_driver",
+                    why_it_matters=f"Resting heart rate is {round(latest - average, 1)} bpm above recent average.",
+                    coaching_action="Treat hard training as conditional; watch for fatigue, stress, dehydration, or illness signs.",
+                    confidence=confidence,
+                )
+            else:
+                add_context(signal, role="primary_recovery_background", meaning="Resting HR was checked for recovery stress.")
+
+        elif signal_id == "respiratory_rate":
+            average = _number_or_none(
+                window.get("baseline_average_breaths_per_minute") or window.get("average_breaths_per_minute")
+            )
+            if latest is not None and average is not None and latest >= average + 2:
+                add_watchout(
+                    signal_id=signal_id,
+                    label="Respiratory rate",
+                    latest=latest_display,
+                    latest_date=latest_date,
+                    severity="moderate",
+                    role="breathing_caution_context",
+                    why_it_matters=f"Respiratory rate is {round(latest - average, 1)} breaths/min above recent average.",
+                    coaching_action="Pair this with sleep, HRV, resting HR, SpO2, and symptoms; keep intensity predictable.",
+                    confidence=confidence,
+                )
+            else:
+                add_context(signal, role="breathing_background", meaning="Breathing rate was checked as recovery context.")
+
+        elif signal_id == "spo2":
+            average = _number_or_none(window.get("baseline_average_percentage") or window.get("average_percentage"))
+            if latest is not None and latest < 94:
+                add_watchout(
+                    signal_id=signal_id,
+                    label="SpO2 / oxygen saturation",
+                    latest=latest_display,
+                    latest_date=latest_date,
+                    severity="high",
+                    role="breathing_caution_context",
+                    why_it_matters="Low wearable oxygen context can matter when paired with breathing, sleep, heart signals, or symptoms.",
+                    coaching_action="Do not use this as a diagnosis; avoid hard training if breathing or symptoms feel abnormal.",
+                    confidence=confidence,
+                )
+            elif latest is not None and ((average is not None and latest <= average - 2) or latest < 96):
+                add_watchout(
+                    signal_id=signal_id,
+                    label="SpO2 / oxygen saturation",
+                    latest=latest_display,
+                    latest_date=latest_date,
+                    severity="moderate",
+                    role="breathing_caution_context",
+                    why_it_matters="Oxygen is lower than the usual/context range, so it deserves attention with the rest of the recovery picture.",
+                    coaching_action="Use it as a caution clue, not as a standalone reason to stop or train.",
+                    confidence=confidence,
+                )
+            else:
+                add_context(signal, role="breathing_background", meaning="SpO2 was checked and is background context, not a standalone green light.")
+
+        elif signal_id == "sleep_temperature":
+            delta = _number_or_none(details.get("delta_celsius"))
+            if delta is not None and abs(delta) >= 0.5:
+                add_watchout(
+                    signal_id=signal_id,
+                    label="Sleep temperature",
+                    latest=latest_display,
+                    latest_date=latest_date,
+                    severity="moderate",
+                    role="temperature_caution_context",
+                    why_it_matters="Sleep temperature is meaningfully different from baseline.",
+                    coaching_action="Use this as a stress or illness clue and avoid unpredictable max-effort work.",
+                    confidence=confidence,
+                )
+            else:
+                add_context(signal, role="temperature_background", meaning="Sleep temperature was checked as secondary recovery context.")
+
+        elif signal_id == "active_zone_minutes":
+            max_minutes = _number_or_none(window.get("max_minutes"))
+            max_date = window.get("max_date")
+            if latest is not None and latest > 45:
+                add_watchout(
+                    signal_id=signal_id,
+                    label="Active Zone Minutes (AZM)",
+                    latest=latest_display,
+                    latest_date=latest_date,
+                    severity="moderate",
+                    role="load_driver",
+                    why_it_matters="High AZM means recent hard-work minutes are already loaded into the day.",
+                    coaching_action="Avoid stacking another hard conditioning block unless recovery and the warm-up are clearly supportive.",
+                    confidence=confidence,
+                )
+            elif max_minutes is not None and max_minutes > 45:
+                add_watchout(
+                    signal_id=signal_id,
+                    label="Active Zone Minutes (AZM)",
+                    latest=f"{_round_optional(max_minutes, 0)} min on {max_date}" if max_date else f"{_round_optional(max_minutes, 0)} min",
+                    latest_date=max_date or latest_date,
+                    severity="moderate",
+                    role="load_driver",
+                    why_it_matters="A hard recent AZM day is still recovery load even if today's current AZM is low.",
+                    coaching_action="Use the recent load window to avoid stacking hard conditioning back-to-back.",
+                    confidence=confidence,
+                )
+            else:
+                add_context(signal, role="load_background", meaning="AZM was checked for recent hard-work load.")
+
+        elif signal_id == "steps":
+            average = _number_or_none(window.get("average_steps_per_recorded_day"))
+            if latest is not None and (latest >= 15000 or (average is not None and average >= 12000)):
+                add_watchout(
+                    signal_id=signal_id,
+                    label="Steps",
+                    latest=latest_display,
+                    latest_date=latest_date,
+                    severity="moderate",
+                    role="movement_load_context",
+                    why_it_matters="High step volume can become leg load, especially before runs, hikes, or lower-body sessions.",
+                    coaching_action="Protect legs and avoid adding hard lower-body volume without a good warm-up.",
+                    confidence=confidence,
+                )
+            else:
+                add_context(signal, role="movement_background", meaning="Steps were checked with the date/window so they are not overinterpreted.")
+
+        elif signal_id == "active_minutes":
+            if latest is not None and latest >= 90:
+                add_watchout(
+                    signal_id=signal_id,
+                    label="Active minutes",
+                    latest=latest_display,
+                    latest_date=latest_date,
+                    severity="moderate",
+                    role="movement_load_context",
+                    why_it_matters="A high active-minute day adds total workload even if intensity is not extreme.",
+                    coaching_action="Keep extra training controlled unless recovery and legs feel clearly good.",
+                    confidence=confidence,
+                )
+            else:
+                add_context(signal, role="movement_background", meaning="Active minutes were checked as total day-load context.")
+
+        elif signal_id == "heart_rate_samples":
+            max_bpm = _number_or_none(details.get("max_bpm"))
+            if max_bpm is not None and max_bpm >= 180:
+                add_watchout(
+                    signal_id=signal_id,
+                    label="Heart rate samples",
+                    latest=latest_display,
+                    latest_date=latest_date,
+                    severity="context",
+                    role="heart_intensity_context",
+                    why_it_matters=f"Recent sampled heart rate included a high point around {max_bpm:.0f} bpm.",
+                    coaching_action="Use live user-reported HR/RPE/pain for in-session decisions; this is background context.",
+                    confidence=confidence,
+                )
+            else:
+                add_context(signal, role="heart_background", meaning="Recent heart samples were checked for intensity context.")
+
+        elif signal_id == "vo2_max":
+            add_context(signal, role="capacity_background", meaning="VO2 max was checked for capacity/progress, not same-day readiness.")
+
+    watchouts = sorted(
+        watchouts,
+        key=lambda item: (
+            item.get("priority", 99),
+            severity_rank.get(str(item.get("severity")), 9),
+        ),
+    )
+    checked_context = sorted(checked_context, key=lambda item: item.get("priority", 99))
+    for item in watchouts:
+        item.pop("priority", None)
+    for item in checked_context:
+        item.pop("priority", None)
+
+    return {
+        "status": "ok",
+        "ranked_watchouts": watchouts[:8],
+        "checked_context": checked_context[:8],
+        "summary": (
+            "Potentially unusual signals are ranked by likely impact on today's training call."
+            if watchouts
+            else "No major unusual signal was flagged in the synced window; checked context is still available."
+        ),
+        "model_guidance": (
+            "For 'anything unusual', 'what changed', or broad data-quality questions, lead with "
+            "ranked_watchouts and translate each into a training action. Mention checked_context only "
+            "when it explains why a normal signal did not change the recommendation."
+        ),
     }
 
 

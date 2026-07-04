@@ -2758,6 +2758,14 @@ def _prioritize_coach_evidence(evidence: list[str]) -> list[str]:
 def _humanize_evidence_item(item: str) -> str:
     text = str(item)
     lower = text.lower()
+    if "spo2" in lower or "oxygen saturation" in lower:
+        return f"{text} Oxygen is useful context with breathing, symptoms, and heart signals; it is not a standalone green light."
+    if "respiratory rate" in lower:
+        return f"{text} Breathing rate matters most when it is unusual for you or paired with symptoms."
+    if "sleep temperature" in lower:
+        return f"{text} Temperature can add a stress or illness clue, but it does not diagnose anything by itself."
+    if "vo2 max" in lower:
+        return f"{text} VO2 max helps plan endurance work and progress, not today's recovery ceiling."
     if "hrv" in lower:
         expanded = text if "recovery stress signal" in lower else text.replace("HRV", "HRV (recovery stress signal)")
         if "that supports" in lower or "recovery caution" in lower or "neutral-to-supportive" in lower:
@@ -2792,14 +2800,6 @@ def _humanize_evidence_item(item: str) -> str:
         if "high" in lower or "latest training load" in lower:
             return f"{expanded} More AZM means more recent training stress to account for."
         return expanded
-    if "spo2" in lower or "oxygen saturation" in lower:
-        return f"{text} Oxygen is useful context with breathing, symptoms, and heart signals; it is not a standalone green light."
-    if "respiratory rate" in lower:
-        return f"{text} Breathing rate matters most when it is unusual for you or paired with symptoms."
-    if "sleep temperature" in lower:
-        return f"{text} Temperature can add a stress or illness clue, but it does not diagnose anything by itself."
-    if "vo2 max" in lower:
-        return f"{text} VO2 max helps plan endurance work and progress, not today's recovery ceiling."
     if "steps across" in lower or "recorded step days" in lower:
         return f"{text} This is movement-load context, and the recorded-day window keeps the average honest."
     if "rpe" in lower:

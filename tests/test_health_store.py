@@ -613,6 +613,8 @@ def test_synthetic_records_calculate_context(tmp_path, monkeypatch) -> None:
     assert spo2_signal["latest"] == 98.4
     assert "not a green light by themselves" in spo2_signal["why_it_matters"]
     assert overview["data_used"]["available_signal_count"] == len(snapshot["signals"])
+    assert overview["unusual_signals"]["status"] == "ok"
+    assert overview["unusual_signals"]["checked_context"]
     signal_context = overview["model_signal_context"]
     assert signal_context["status"] == "ok"
     assert "spo2" in signal_context["all_available_signal_ids"]
@@ -921,6 +923,19 @@ def test_question_clues_choose_recovery_heart_and_load_metrics(tmp_path, monkeyp
     assert any("HRV" in item for item in clues["clues"] + clues["watchouts"])
     assert any("SpO2" in item for item in clues["clues"])
     assert any("Respiratory rate" in item for item in clues["clues"] + clues["watchouts"])
+    unusual = clues["unusual_signals"]
+    assert unusual["status"] == "ok"
+    unusual_labels = {item["signal"] for item in unusual["ranked_watchouts"]}
+    assert {
+        "Sleep",
+        "HRV",
+        "Resting HR",
+        "Respiratory rate",
+        "Sleep temperature",
+        "Active Zone Minutes (AZM)",
+    } <= unusual_labels
+    assert unusual["ranked_watchouts"][0]["signal"] in {"Readiness", "Sleep"}
+    assert any("anything unusual" in item.lower() or "what changed" in item.lower() for item in [unusual["model_guidance"]])
     assert "spo2" in clues["data_used"]["available_signal_ids"]
     assert any(
         "Movement context: 27,000 steps across 3 recorded days in the 7-day lookback" in item
