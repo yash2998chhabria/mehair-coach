@@ -222,10 +222,10 @@ async def test_widget_resource_is_registered() -> None:
 
     assert str(resources[0].uri) == WIDGET_URI
     assert resources[0].mimeType == "text/html;profile=mcp-app"
-    assert WIDGET_URI == "ui://mehair/today-v33.html"
-    assert "ui://mehair/today-v32.html" in LEGACY_WIDGET_URIS
+    assert WIDGET_URI == "ui://mehair/today-v34.html"
+    assert "ui://mehair/today-v33.html" in LEGACY_WIDGET_URIS
     assert "Preparing card" in html
-    assert 'appInfo: { name: "mehair coach", version: "0.8.0" }' in html
+    assert 'appInfo: { name: "mehair coach", version: "0.8.1" }' in html
     assert "mehair-coach-widget" not in html
     assert "\x08" not in html
     assert "text-transform: none" in html
@@ -265,7 +265,8 @@ async def test_widget_resource_is_registered() -> None:
     assert "source-note" in html
     assert "User-reported current HR" in html
     assert "label-key" in html
-    assert "Metric labels, translated" in html
+    assert "Labels, in plain English" in html
+    assert "Why This Recommendation" in html
     assert "score-state::before" in html
     assert "const showScore = model.showScore !== false && isReadinessScore" in html
     assert 'class="hero ${showScore ? "" : "no-score"}"' in html
@@ -461,12 +462,13 @@ async def test_widget_preview_route_renders_real_card_state() -> None:
     assert "Readiness thresholds: green 75+, yellow 55-74, red <55" in overview.text
     assert today_workout.status_code == 200
     assert "Today's Workout" in today_workout.text
-    assert "Next Session" in today_workout.text
+    assert "Do This" in today_workout.text
     assert "The useful read: sleep is limiting recovery" in today_workout.text
     assert "Metric label explanations" in today_workout.text
     assert "Goal progress: 2/4 sessions logged; 2 remaining." in today_workout.text
     assert workout_plan.status_code == 200
-    assert "Session Blueprint" in workout_plan.text
+    assert "Do This" in workout_plan.text
+    assert "Why This Recommendation" in workout_plan.text
     assert "Machine chest press" in workout_plan.text
     assert "Chest-supported row" in workout_plan.text
     assert "Exercise prescription" in workout_plan.text

@@ -38,8 +38,9 @@ SERVER_INSTRUCTIONS = (
     "Everyday prompts like 'should I run today', 'I want to get fitter but not feel wrecked', "
     "'what should I do today?', or 'I only have 30 minutes' are coaching requests, not requests "
     "for a metric dump. "
-    "Use plain English before statistics. Keep metric labels such as HRV, RPE, AZM, and resting "
-    "heart rate, but briefly explain what they mean when they appear in user-facing advice. "
+    "Use plain English before statistics: the first sentence should be the human coaching call, "
+    "not a score recap, metric list, or dashboard narration. Keep metric labels such as HRV, RPE, "
+    "AZM, and resting heart rate visible for trust, but explain them only after the action is clear. "
     "Treat phrases like 'include oxygen/breathing/heart/load if they matter' or 'use all the band "
     "signals intelligently' as metric-selection and answer-shaping instructions, not as user symptoms "
     "or a request for medical diagnosis. Do not put those metric-selection phrases into "
@@ -55,7 +56,7 @@ SERVER_INSTRUCTIONS = (
     "total does or does not matter for the decision. If a step average is based on recorded days, "
     "say recorded step days instead of implying it is averaged across every day in the lookback. "
     "When a tool returns coach_response, use it as the answer skeleton: direct human answer first, "
-    "then the session_blueprint or what_to_do, then the explained metric labels, then stop conditions "
+    "then action_first, what_to_do, or session_blueprint, then why_this_matters, then the explained metric labels, then stop conditions "
     "or caveats. Shape the answer as decision, do now, why the data matters, and what would change "
     "the call. Also use training_decision, readiness_attribution, model_signal_context, "
     "and available_signal_snapshot as response contract fields: summarize the relevant parts, "
@@ -3262,8 +3263,11 @@ def _today_workout_coach_response(
     )
 
     return {
+        "plain_english_summary": short_answer,
         "short_answer": short_answer,
         "data_story": _coach_data_story(readiness, evidence),
+        "action_first": _dedupe(what_to_do)[:4],
+        "why_this_matters": _coach_why_this_matters(readiness, evidence),
         "session_blueprint": session_blueprint,
         "what_to_do": _dedupe(what_to_do)[:5],
         "why": _humanized_evidence(_prioritize_coach_evidence(evidence))[:10],
@@ -3272,8 +3276,8 @@ def _today_workout_coach_response(
         "avoid": avoid[:5],
         "answer_style": (
             "Use this as a flexible coaching contract, not wording to copy. Answer like a personal "
-            "coach: direct recommendation first, concrete next move second, then explain the kept "
-            "metric labels in one short why section. Match the current user-stated situation exactly. "
+            "coach: direct recommendation first, concrete next move second, then explain only the "
+            "metrics that changed or checked the call in one short why section. Match the current user-stated situation exactly. "
             "Do not default to walking, hiking, or running language unless the user brought up that "
             "activity; for generic low-dose advice, say easy movement, mobility, low-impact cardio, "
             "or light technique instead. Do not paraphrase generic movement into an easy walk. "
@@ -3691,6 +3695,46 @@ def _split_training_reasons(evidence: list[str]) -> tuple[list[str], list[str]]:
     return _dedupe(reasons_for), _dedupe(reasons_against)
 
 
+def _coach_why_this_matters(readiness: dict[str, Any], evidence: list[str]) -> list[str]:
+    story = _coach_data_story(readiness, evidence)
+    reasons_for, reasons_against = _split_training_reasons(evidence)
+    background = _training_background_context(evidence)
+    lines = [story]
+
+    if reasons_against and not reasons_against[0].lower().startswith("no major synced red flag"):
+        lines.append(f"What changes the plan: {reasons_against[0]}")
+    if reasons_for and not reasons_for[0].lower().startswith("enough synced context"):
+        lines.append(f"What supports the plan: {reasons_for[0]}")
+    if background:
+        checked = _plain_checked_context_summary(background)
+        if checked:
+            lines.append(checked)
+
+    return _dedupe(lines)[:4]
+
+
+def _plain_checked_context_summary(items: list[str]) -> str | None:
+    text = " ".join(item.lower() for item in items)
+    checked: list[str] = []
+    if "spo2" in text or "oxygen saturation" in text:
+        checked.append("oxygen")
+    if "respiratory rate" in text:
+        checked.append("breathing")
+    if "sleep temperature" in text:
+        checked.append("temperature")
+    if "vo2 max" in text:
+        checked.append("capacity")
+    if not checked:
+        return None
+    if len(checked) == 1:
+        subject = checked[0]
+    elif len(checked) == 2:
+        subject = " and ".join(checked)
+    else:
+        subject = ", ".join(checked[:-1]) + f", and {checked[-1]}"
+    return f"Checked but not decisive: {subject} did not change the main recommendation."
+
+
 def _workout_plan_coach_response(
     *,
     display_activity: str,
@@ -3752,8 +3796,11 @@ def _workout_plan_coach_response(
         illness_flags=illness_flags,
     )
     return {
+        "plain_english_summary": short_answer,
         "short_answer": short_answer,
         "data_story": _coach_data_story(readiness, limiting_factors),
+        "action_first": _dedupe(what_to_do)[:4],
+        "why_this_matters": _coach_why_this_matters(readiness, limiting_factors),
         "session_blueprint": session_blueprint,
         "what_to_do": _dedupe(what_to_do)[:5],
         "why": _humanized_evidence(limiting_factors)[:6],
@@ -3767,7 +3814,7 @@ def _workout_plan_coach_response(
             "assuming they feel off. Separate source types: Fitbit/Google Health signals are wearable "
             "evidence; goals, injuries, symptoms, preferences, and prior details are user-stated or "
             "conversation context unless a tool result explicitly marks them as synced data. Prefer a "
-            "usable session blueprint over a stats recap. Use readiness_attribution to explain what "
+            "usable action-first plan over a stats recap. Use readiness_attribution to explain what "
             "moved the score versus what only caps intensity."
             " Do not default to walking, hiking, or running language unless the user brought up that "
             "activity; for generic low-dose advice, say easy movement, mobility, low-impact cardio, "
@@ -3837,8 +3884,11 @@ def _active_workout_coach_response(
         live_context.append(f"Time: {elapsed_minutes} minutes into the session.")
 
     return {
+        "plain_english_summary": short_answer,
         "short_answer": short_answer,
         "data_story": _coach_data_story(readiness, safety_flags or evidence),
+        "action_first": _dedupe([headline, *immediate_actions])[:4],
+        "why_this_matters": _coach_why_this_matters(readiness, safety_flags or evidence),
         "next_check": _active_workout_next_check(
             decision=decision,
             rpe=rpe,
