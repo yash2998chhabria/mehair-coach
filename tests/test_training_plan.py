@@ -1178,6 +1178,9 @@ def test_active_workout_translates_high_rpe_into_human_next_action() -> None:
     joined = " ".join([coach["short_answer"], *coach["what_to_do"], *coach["next_check"]])
     assert guidance["decision"] == "continue_controlled"
     assert "RPE 8/10 is already challenging" in coach["short_answer"]
+    assert coach["plain_english_summary"] == coach["short_answer"]
+    assert coach["action_first"][0].startswith("You can keep the session useful")
+    assert coach["why_this_matters"]
     assert "only the next 3-5 minutes" in joined
     assert "back off one notch" in joined
     assert any(item["label"] == "AZM" for item in coach["labels_explained"])
@@ -1575,6 +1578,10 @@ def test_generic_workout_payload_stays_human_readable_for_cached_cards() -> None
     assert plan["coach_response"]["session_blueprint"]
     assert any("RPE <=" in item for item in plan["coach_response"]["session_blueprint"])
     assert "The useful read:" in plan["coach_response"]["data_story"]
+    assert plan["coach_response"]["plain_english_summary"] == plan["coach_response"]["short_answer"]
+    assert plan["coach_response"]["action_first"]
+    assert plan["coach_response"]["why_this_matters"]
+    assert plan["coach_response"]["why_this_matters"][0].startswith("The useful read:")
     assert any("RPE (how hard it feels)" in item for item in plan["coach_response"]["what_to_do"])
     assert any("recovery stress signal" in item for item in plan["coach_response"]["why"])
     assert any("HRV (recovery stress signal)" in item for item in plan["limiting_factors"])
@@ -1934,6 +1941,11 @@ def test_today_recommendation_returns_human_coach_response_without_losing_labels
 
     assert recommendation["intensity"] == "moderate"
     assert "let the first 10-15 minutes decide" in recommendation["coach_response"]["short_answer"]
+    assert recommendation["coach_response"]["plain_english_summary"] == recommendation["coach_response"]["short_answer"]
+    assert recommendation["coach_response"]["action_first"]
+    assert "RPE (how hard it feels)" in " ".join(recommendation["coach_response"]["action_first"])
+    assert recommendation["coach_response"]["why_this_matters"]
+    assert recommendation["coach_response"]["why_this_matters"][0].startswith("The useful read:")
     assert any(item["label"] == "Readiness" for item in recommendation["coach_response"]["labels_explained"])
     assert any(item["label"] == "AZM" for item in recommendation["coach_response"]["labels_explained"])
     assert any(item["label"] == "SpO2" for item in recommendation["coach_response"]["labels_explained"])

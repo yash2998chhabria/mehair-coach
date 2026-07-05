@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 
 
-WIDGET_URI = "ui://mehair/today-v33.html"
+WIDGET_URI = "ui://mehair/today-v34.html"
 LEGACY_WIDGET_URIS = (
     "ui://mehair/today-v1.html",
     "ui://mehair/today-v2.html",
@@ -37,6 +37,7 @@ LEGACY_WIDGET_URIS = (
     "ui://mehair/today-v30.html",
     "ui://mehair/today-v31.html",
     "ui://mehair/today-v32.html",
+    "ui://mehair/today-v33.html",
 )
 WIDGET_RESOURCE_URIS = (WIDGET_URI, *LEGACY_WIDGET_URIS)
 WIDGET_MIME_TYPE = "text/html;profile=mcp-app"
@@ -809,7 +810,7 @@ TODAY_WIDGET_HTML = """
         updateFromResponse(window.openai?.toolOutput);
         try {
           await rpcRequest("ui/initialize", {
-            appInfo: { name: "mehair coach", version: "0.8.0" },
+            appInfo: { name: "mehair coach", version: "0.8.1" },
             appCapabilities: {},
             protocolVersion: "2026-01-26",
           });
@@ -1153,8 +1154,8 @@ TODAY_WIDGET_HTML = """
           score,
           primaryLabel: "Readiness",
           headline: coach.short_answer || workoutHeadline(data),
-          focusTitle: reserveEnergy ? "Minimum Dose" : coach.session_blueprint ? "Next Session" : "What To Do",
-          focus: coach.session_blueprint || coach.what_to_do || data.next_actions || [],
+          focusTitle: reserveEnergy ? "Smallest Useful Dose" : "Do This",
+          focus: coach.action_first || coach.what_to_do || coach.session_blueprint || data.next_actions || [],
           labels: coach.labels_explained || defaultLabelKey(["Readiness", "RPE", "HRV", "Resting HR", "AZM"]),
           metrics: [
             ["Steps", stepsValue != null ? `${intText(stepsValue)} steps` : null, activityWindowLabel, "Movement load in this window; mostly useful for leg fatigue."],
@@ -1165,8 +1166,8 @@ TODAY_WIDGET_HTML = """
             ["Goal", goal.remaining_sessions != null ? intText(goal.remaining_sessions) : "No goal", goalDetail],
           ],
           signalStrip: prioritySignalStrip(signalSnapshot.signals || []),
-          evidenceTitle: "What This Means",
-          evidence: [coach.data_story, ...(coach.why || prioritizeWorkoutEvidence(data.evidence || data.why || []))].filter(Boolean),
+          evidenceTitle: "Why This Recommendation",
+          evidence: coach.why_this_matters || [coach.data_story, ...(coach.why || prioritizeWorkoutEvidence(data.evidence || data.why || []))].filter(Boolean),
           secondaryTitle: coach.stop_if ? "Stop If" : "Avoid",
           secondary: coach.stop_if || coach.avoid || data.avoid || [],
         };
@@ -1290,8 +1291,8 @@ TODAY_WIDGET_HTML = """
           score,
           primaryLabel: "Readiness",
           headline: coach.short_answer || workoutHeadline(data),
-          focusTitle: coach.session_blueprint ? "Session Blueprint" : "What To Do",
-          focus: coach.session_blueprint || coach.what_to_do || planFocus,
+          focusTitle: "Do This",
+          focus: coach.action_first || coach.what_to_do || coach.session_blueprint || planFocus,
           blocks: data.exercise_blocks || [],
           labels: coach.labels_explained || defaultLabelKey(["Readiness", "RPE", "HRV", "Resting HR", "AZM"]),
           metrics: [
@@ -1303,8 +1304,8 @@ TODAY_WIDGET_HTML = """
             ["Latest load", dataUsed.latest_training_load?.active_zone_minutes != null ? `${dataUsed.latest_training_load.active_zone_minutes} AZM` : null, dataUsed.latest_training_load?.date || "", "AZM = Fitbit hard-work minutes."],
           ],
           signalStrip: prioritySignalStrip(signalSnapshot.signals || []),
-          evidenceTitle: "What This Means",
-          evidence: [coach.data_story, ...(coach.why || data.limiting_factors || data.why || [])].filter(Boolean).slice(0, 5),
+          evidenceTitle: "Why This Recommendation",
+          evidence: (coach.why_this_matters || [coach.data_story, ...(coach.why || data.limiting_factors || data.why || [])].filter(Boolean)).slice(0, 5),
           secondaryTitle: substitutions.length ? "Substitutions" : "Avoid",
           secondary: (substitutions.length ? substitutions : coach.avoid || data.avoid || []).slice(0, 5),
         };
@@ -1353,7 +1354,7 @@ TODAY_WIDGET_HTML = """
           ],
           signalStrip: prioritySignalStrip(signalSnapshot.signals || []),
           evidenceTitle: safety.length ? "Safety Flags" : "Evidence",
-          evidence: [coach.data_story, ...evidence].filter(Boolean),
+          evidence: coach.why_this_matters || [coach.data_story, ...evidence].filter(Boolean),
           secondaryTitle: safety.length || coach.next_check ? "Next Check" : "Modify / Avoid",
           secondary: (coach.next_check || (safety.length ? coach.stop_if || safety : [...(data.modifications || []), ...(coach.avoid || data.avoid || [])])).slice(0, 5),
         };
@@ -1657,7 +1658,7 @@ TODAY_WIDGET_HTML = """
         root.style.setProperty("--sync-dot", syncColor);
         root.style.setProperty("--sync-soft", softFor(syncColor));
         root.style.setProperty("--score", String(score));
-        const primaryFocus = listItems(model.focus, "Health context synced.");
+        const primaryFocus = listItems(model.actionFirst || model.focus, "Health context synced.");
         const secondaryTitle = model.secondaryTitle || "Evidence";
         const secondary = model.secondary || model.evidence || [];
         const blocks = renderBlocks(model.blocks);
@@ -1776,7 +1777,7 @@ TODAY_WIDGET_HTML = """
         if (!usable.length) return "";
         return `
           <div class="label-key" aria-label="Metric label explanations">
-            <div class="label-heading">Metric labels, translated</div>
+            <div class="label-heading">Labels, in plain English</div>
             ${usable.map((item) => `
               <div class="label-pill">
                 <b>${escapeHtml(item.label)}</b>
